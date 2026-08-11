@@ -36,7 +36,6 @@ OpenClaw 是一个多 Agent 系统，每个 Agent 都拥有自己的 `workspace/
 | **跨 Agent 同步** | 先生成同步计划，再只执行你确认的文件 —— 选择性合并，绝不整文件覆盖。 |
 | **备份与回滚** | 每次写入前自动备份，支持保留策略、完整历史与一键回滚。 |
 | **Lint 检查** | 内置 8 条规则，包括 L4 反模式检测（时间戳 / 版本号 / 修复叙述）与核心文件缺失检查。 |
-| **模板系统** | 从内置模板（标准 / 极简 / 律师 / 作家）快速创建新 Agent。 |
 | **统计与审计** | 仪表盘指标（Agent / 文件 / 备份 / 警告）与每次写操作的完整审计日志。 |
 | **配置中心** | 在界面中直接读写 `config.toml`，无需手工编辑文件。 |
 | **安全护栏** | 路径穿越防护、SHA-256 乐观锁、写操作强制先备份。 |
@@ -130,7 +129,6 @@ npm run dev        # Vite 开发服务器，将 /api 代理到 http://127.0.0.1:
 | `GET` | `/api/backups/{id}` | 列出 Agent 的所有备份 |
 | `POST` | `/api/backups/{id}/{path}/rollback` | 回滚文件到指定备份 |
 | `GET` | `/api/lint/{id}` / `/api/lint/file/{id}/{path}` / `/api/lint/all` | 对 Agent / 文件 / 全部执行 lint |
-| `GET` | `/api/templates` · `POST` `/api/templates/apply` | 列出 / 应用模板 |
 | `GET` | `/api/stats` | 仪表盘统计数据 |
 | `GET` | `/api/audit` | 审计日志 |
 | `GET` / `PUT` | `/api/config` | 读取 / 更新配置 |
@@ -155,7 +153,6 @@ soulforge/
 │   ├── src/                  # 组件、hooks、api 客户端、样式
 │   ├── dist/                 # 构建产物（由后端托管）
 │   └── package.json
-├── templates/                # 内置 prompt-pack 模板
 ├── docs/                     # 详细文档（架构、API、数据模型…）
 ├── .github/                  # Issue 与 PR 模板
 ├── README.md                 # 本文件

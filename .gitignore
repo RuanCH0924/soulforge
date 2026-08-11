@@ -38,6 +38,9 @@ pnpm-debug.log*
 .soulforge/
 .soulforge-data/
 
+# ---------- 私人 Agent 模板配置（公开仓库不入库） ----------
+templates/
+
 # ---------- IDE / 编辑器 ----------
 .vscode/
 .idea/

@@ -46,7 +46,7 @@ if defined SOULFORGE_OPENCLAW_DIR (
         echo [OpenClaw] ?????????????????%OPENCLAW_DIR%
     ) else (
         rem ???????��??
-        for %%C in ("C:\syncthing\OpenClaw Root" "D:\syncthing\OpenClaw Root" "%USERPROFILE%\.openclaw") do (
+        for %%C in ("%USERPROFILE%\.openclaw") do (
             if not defined OPENCLAW_DIR if exist "%%~C\openclaw.json" set "OPENCLAW_DIR=%%~C"
         )
         if defined OPENCLAW_DIR echo [OpenClaw] ??????????!OPENCLAW_DIR!

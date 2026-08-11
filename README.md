@@ -36,7 +36,6 @@ OpenClaw is a multi-Agent system in which every Agent owns a `workspace/` contai
 | **Cross-Agent sync**    | Generate a sync plan first, then execute only the files you confirm — selective merge, never a whole-file overwrite.                                            |
 | **Backup & rollback**   | Automatic backup before every write, retention policy, full history, and one-click rollback.                                                                    |
 | **Lint**                | 8 built-in rules, including L4 anti-pattern detection (timestamps, version numbers, narrative) and required-core-file checks.                                   |
-| **Template system**     | Create new Agents from built-in templates (standard / minimal / lawyer / writer).                                                                               |
 | **Stats & audit**       | Dashboard metrics (agents, files, backups, warnings) and a full audit log for every write operation.                                                            |
 | **Config center**       | Read and edit `config.toml` from the UI without touching files by hand.                                                                                         |
 | **Security guardrails** | Path-traversal protection, SHA-256 optimistic locking, and mandatory backup before any write.                                                                   |
@@ -130,7 +129,6 @@ Base URL: `http://127.0.0.1:8848/api` · Interactive OpenAPI docs: <http://127.0
 | `GET`         | `/api/backups/{id}`                                               | List an Agent's backups                     |
 | `POST`        | `/api/backups/{id}/{path}/rollback`                               | Roll back a file to a backup                |
 | `GET`         | `/api/lint/{id}` / `/api/lint/file/{id}/{path}` / `/api/lint/all` | Lint an Agent / a file / all Agents         |
-| `GET`         | `/api/templates` · `POST` `/api/templates/apply`                  | List / apply templates                      |
 | `GET`         | `/api/stats`                                                      | Dashboard statistics                        |
 | `GET`         | `/api/audit`                                                      | Audit log                                   |
 | `GET` / `PUT` | `/api/config`                                                     | Read / update configuration                 |
