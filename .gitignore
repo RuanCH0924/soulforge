@@ -1,0 +1,51 @@
+# ---------- Python（后端） ----------
+# 虚拟环境
+backend/.venv/
+.venv/
+# 字节码缓存
+__pycache__/
+*.py[cod]
+*$py.class
+# 打包产物
+*.egg-info/
+.eggs/
+build/
+dist/
+# 测试与静态检查缓存
+.pytest_cache/
+.ruff_cache/
+backend/test-out.txt
+
+# ---------- Node（前端） ----------
+# 依赖包
+frontend/node_modules/
+# 构建产物（由后端托管 frontend/dist，不入库）
+frontend/dist/
+# 日志
+npm-debug.log*
+yarn-error.log*
+yarn-debug.log*
+yarn-error.log
+pnpm-debug.log*
+*.log
+
+# ---------- 环境变量 / 本地配置文件 ----------
+.env
+.env.*
+!.env.example
+
+# ---------- Soulforge 运行时数据（数据库、备份、上传、日志、配置） ----------
+.soulforge/
+.soulforge-data/
+
+# ---------- IDE / 编辑器 ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------- 操作系统 ----------
+.DS_Store
+Thumbs.db
+Desktop.ini
