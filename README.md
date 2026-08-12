@@ -39,6 +39,22 @@ OpenClaw is a multi-Agent system in which every Agent owns a `workspace/` contai
 | **Stats & audit**       | Dashboard metrics (agents, files, backups, warnings) and a full audit log for every write operation.                                                            |
 | **Config center**       | Read and edit `config.toml` from the UI without touching files by hand.                                                                                         |
 | **Security guardrails** | Path-traversal protection, SHA-256 optimistic locking, and mandatory backup before any write.                                                                   |
+| **Document presets** *(Phase 2.5)*     | Save reusable structure templates for `SOUL.md`, `AGENTS.md`, `MEMORY.md`, work logs, and more; apply them via plan + confirm. |
+| **LLM providers** *(Phase 2.5)*        | Plug in any OpenAI-compatible LLM (OpenAI / Anthropic / DeepSeek / Ollama) with encrypted API keys and hot reload.                                                |
+| **AI organise** *(Phase 2.5)*          | Run an Agent on a chosen file against a preset, review the diff, then write — keeps every soul file consistently structured.                                       |
+
+## Roadmap
+
+Soulforge ships in three phases:
+
+| Phase | Scope | Status |
+|---|---|---|
+| **Phase 1 · MVP** | Browse + edit + backup + lint + sync + import/export + templates + dashboard | ✅ Shipped (v0.1 → v1.0) |
+| **Phase 2 · UI polish** | Layout refinements, theming, keyboard shortcuts, real-time status bar | 🚧 In progress |
+| **Phase 2.5 · AI Editor** | Document presets → LLM provider plug-in → AI-powered document organising (3-step plan) | 🚧 In progress |
+| **Phase 3 · Far future** | Team collaboration / cloud sync / third-party plugins | 📋 Planned |
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the full plan.
 
 ## Tech Stack
 

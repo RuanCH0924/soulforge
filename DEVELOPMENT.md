@@ -106,6 +106,26 @@ Soulforge 内置一套 lint 检查，发现违规主动提示：
 
 ## 三、功能模块
 
+### 3.0 模块矩阵
+
+| ID | 模块 | Phase | 状态 |
+|---|---|---|---|
+| M1 | Agent 管理 | 1 | ✅ |
+| M2 | 文件浏览/编辑 | 1 | ✅ |
+| M3 | 跨 Agent 搜索 | 1 | ✅ |
+| M4 | Diff 对比 | 1 | ✅ |
+| M5 | 跨 Agent 同步 | 1 | ✅ |
+| M6 | 导入导出 | 1 | ✅ |
+| M7 | 备份/回滚 | 1 | ✅ |
+| M8 | Lint | 1 | ✅ |
+| M9 | 模板系统 | 1 | ✅ |
+| M10 | 统计/仪表盘 | 1 | ✅ |
+| **M11** | **文档预设系统** | **2.5** | **🚧** |
+| **M12** | **LLM Provider 接入** | **2.5** | **🚧** |
+| **M13** | **AI 自动整理** | **2.5** | **🚧** |
+
+---
+
 ### 模块 M1：Agent 管理
 
 | 命令 | UI 入口 | 功能 |
@@ -200,6 +220,135 @@ Diff 渲染用 `diff2html`（业界标准）。
 | 命令 | UI 入口 | 功能 |
 |---|---|---|
 | `GET /api/stats` | 首页仪表盘 | 汇总数据：Agent 数、文件数、最大文件、Lint 警告数等 |
+
+---
+
+### 模块 M11：文档预设系统（Phase 2.5 · Step 1）
+
+> 老板诉求：保存「文档应该长什么样」的预设（SOUL/AGENTS/MEMORY/工作日志等），让所有文档结构统一。
+
+**核心数据**：
+
+```json
+{
+  "name": "SOUL.md 标准结构",
+  "target_file_type": "SOUL",
+  "sections": [
+    {"title": "核心行为准则", "required": true,  "order": 1, "hint": "简洁优先、目标导向"},
+    {"title": "工作态度和原则", "required": true,  "order": 2, "hint": "先想后做、不吹嘘"},
+    {"title": "学习与连续性",   "required": true,  "order": 3, "hint": "记录、更新、演进"},
+    {"title": "核心边界",       "required": true,  "order": 4, "hint": "隐私、操作授权"}
+  ],
+  "frontmatter": {
+    "schema": "soulforge.preset/v1",
+    "owner":  "user"
+  },
+  "style_rules": ["emoji-in-section-title=false", "口语化禁令", "必须带应用范例"]
+}
+```
+
+**端点**：`GET/POST/PUT/DELETE /api/presets[/{id}]`、`POST /api/presets/{id}/apply`、`POST /api/presets/{id}/apply/execute`。
+
+**UI 入口**：
+- 顶部菜单 → 「预设」 → 列表 + 新建/编辑/删除
+- 文件编辑页 → 「应用预设」按钮 → 选预设 → 生成 diff plan → 老板确认 → 写入
+
+**关键护栏**：
+- 系统预设不可删（前端隐藏按钮，后端 403）
+- 应用预设走 plan + execute 两步，**绝不直接覆盖**
+- 预设 version 字段自增，老板可迭代升级
+
+---
+
+### 模块 M12：LLM Provider 接入（Phase 2.5 · Step 2）
+
+> 让 Soulforge 能调任意 OpenAI 兼容协议的 LLM（OpenAI / Anthropic / DeepSeek / Ollama），配置变更可热加载。
+
+**核心数据**：见 `docs/DATA-MODEL.md` 中 `llm_providers` 表。
+
+**协议适配器**：
+
+```python
+class LLMProvider(Protocol):
+    id: str
+    protocol: Literal["openai-completions", "anthropic-messages"]
+    base_url: str
+    api_key: SecretStr
+    model: str
+
+    async def chat(self, messages: list[dict], **kwargs) -> str: ...
+```
+
+**OpenAI 协议**：`POST {base_url}/chat/completions`，`Authorization: Bearer {key}`
+**Anthropic 协议**：`POST {base_url}/v1/messages`，`x-api-key: {key}` + `anthropic-version: 2023-06-01`
+
+**端点**：`GET/POST/PUT/DELETE /api/llm/providers[/{id}]`、`POST /api/llm/providers/{id}/test`、`POST /api/llm/chat`。
+
+**关键护栏**：
+- API key **Fernet 加密存储**（密钥来自 `SOULFORGE_SECRET` 环境变量或首次启动生成 `.soulforge/secrets/key`）
+- API key 在 UI 永远显示掩码 `sk-****...****`
+- `.gitignore` 加 `.soulforge/secrets/`，备份也排除
+- 配置中心 UI 有「泄露检测」按钮：扫描日志/审计里是否泄露过明文 key
+
+---
+
+### 模块 M13：AI 自动整理（Phase 2.5 · Step 3）
+
+> 老板选预设 + 选文件 + 选 provider → AI Agent 按预设重写 → 生成 diff → 老板确认 → 写入。
+
+**完整流程**：
+
+```
+1. 老板在文件编辑页点「AI 整理」
+2. 弹出向导：选预设（默认按文件类型过滤）→ 选 provider → 附加指令（可选）
+3. POST /api/ai/jobs  (status: pending)
+4. 后台异步执行：
+   a. 读取原文件 → input_snapshot
+   b. 构造 prompt：原文件 + preset.sections + preset.style_rules + 附加指令
+   c. 调 LLM → output_content
+   d. 计算 unified diff → diff_plan_json
+   e. status: awaiting_confirm
+5. UI 收到通知 → 跳 diff plan 预览页
+6. 老板点「应用」→ POST /api/ai/jobs/{id}/apply → status: applied（写入 + 备份 + 审计）
+   老板点「拒绝」→ POST /api/ai/jobs/{id}/reject → status: rejected
+   老板点「重新生成」→ 回到第 3 步，带新指令
+```
+
+**端点**：`POST /api/ai/jobs`、`GET /api/ai/jobs/{id}`、`POST /api/ai/jobs/{id}/apply`、`POST /api/ai/jobs/{id}/reject`、`POST /api/ai/jobs/{id}/regenerate`。
+
+**关键护栏**：
+- AI 输出**绝不直接覆盖原文件**，必须经老板 diff 确认
+- AI 输出过 lint 才能写入（违规拒绝写入 + 提示老板）
+- 大文件（> 30KB）拒绝 AI 整理（token 成本 + 质量风险）
+- 单文件 AI 调用**默认单次**，老板可点「重新生成」
+- 每次调用记录 provider + token 消耗 + 成本（审计日志）
+
+**Prompt 构造模板**：
+
+```text
+你是 Soulforge 的 AI 文档整理助手。
+
+【任务】按以下预设结构，重新整理用户的文档，保留原意，不要丢失信息。
+
+【预设：{preset.name}】
+适用文件类型：{preset.target_file_type}
+必须章节（按顺序）：
+{preset.sections_json}
+
+【风格规则】
+{preset.style_rules}
+
+【附加指令】（老板可选）
+{user_extra_instructions}
+
+【原文档】
+```markdown
+{file_content}
+```
+
+【输出】
+只输出整理后的 Markdown 内容，不要解释，不要前缀。
+```
 
 ---
 

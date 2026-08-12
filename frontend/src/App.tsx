@@ -1,22 +1,22 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { api } from './api';
 import { ApiError } from './api/client';
 import { AgentTree } from './components/AgentTree';
-import { AuditModal } from './components/AuditModal';
-import { CrossEditModal } from './components/CrossEditModal';
-import { DiffModal } from './components/DiffModal';
+import { ApplyAIModal } from './components/ApplyAIModal';
+import { ApplyPresetModal } from './components/ApplyPresetModal';
+import { CommandPalette } from './components/CommandPalette';
+import type { CommandItem } from './components/CommandPalette';
 import { FileTree } from './components/FileTree';
-import { GlobalLintModal } from './components/GlobalLintModal';
 import { HistoryModal } from './components/HistoryModal';
-import { ImportModal } from './components/ImportModal';
 import { SearchModal } from './components/SearchModal';
-import { SettingsModal } from './components/SettingsModal';
-import { StatsModal } from './components/StatsModal';
 import { StatusBar } from './components/StatusBar';
-import { SyncModal } from './components/SyncModal';
-import { TemplateModal } from './components/TemplateModal';
 import { TopBar } from './components/TopBar';
+import { SideNav } from './components/SideNav';
+import { DataPage } from './pages/DataPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { ToolsPage } from './pages/ToolsPage';
+import { useHashRoute } from './hooks/useHashRoute';
 import { useSettings } from './hooks/useSettings';
 import { useToast } from './hooks/useToast';
 import type { AgentInfo, FileContent, FileInfo, StatsResult } from './types';
@@ -26,19 +26,13 @@ const EditorPane = lazy(() =>
   import('./components/EditorPane').then((m) => ({ default: m.EditorPane })),
 );
 
+// Workbench 弹窗收敛：仅保留与当前文件上下文相关的弹窗
 type ModalState =
   | null
   | 'search'
   | 'history'
-  | 'diff'
-  | 'sync'
-  | 'import'
-  | 'template'
-  | 'stats'
-  | 'lint-all'
-  | 'audit'
-  | 'settings'
-  | 'cross-edit';
+  | 'apply-preset'
+  | 'ai-cleanup';
 
 /** 拖拽调整分栏宽度 */
 function startDrag(e: ReactMouseEvent, onMove: (dx: number) => void): void {
@@ -62,7 +56,7 @@ function clamp(v: number, min: number, max: number): number {
 }
 
 export default function App() {
-  const { settings, resolvedTheme, toggleTheme } = useSettings();
+  const { settings } = useSettings();
   const { push: toast } = useToast();
 
   // ---- 全局数据 ----
@@ -96,6 +90,24 @@ export default function App() {
 
   // ---- 弹窗 ----
   const [modal, setModal] = useState<ModalState>(null);
+  // ---- 命令面板（Cmd+K，P1 收敛） ----
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const closePalette = useCallback(() => setPaletteOpen(false), []);
+  // ---- 路由（P2：四页面） ----
+  const [route, navigate] = useHashRoute();
+  const goWorkbench = useCallback(() => navigate('workbench'), [navigate]);
+  // ---- 首次使用引导（P5：一次性提示快捷键） ----
+  const [showIntro, setShowIntro] = useState(
+    () => !window.localStorage.getItem('soulforge.intro-v1'),
+  );
+  const dismissIntro = useCallback(() => {
+    try {
+      window.localStorage.setItem('soulforge.intro-v1', '1');
+    } catch {
+      // ignore
+    }
+    setShowIntro(false);
+  }, []);
 
   useEffect(() => {
     dirtyRef.current = dirty;
@@ -311,6 +323,19 @@ export default function App() {
     [selectedAgentId, selectAgent],
   );
 
+  // ---- 自动保存（P5：开启后编辑暂停 2s 自动写入） ----
+  const autoSaveTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!settings.autoSave || !dirtyRef.current || !selectedAgentId || !selectedFile) return;
+    if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = window.setTimeout(() => {
+      void saveFile();
+    }, 2000);
+    return () => {
+      if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [editorContent, settings.autoSave, selectedAgentId, selectedFile, saveFile]);
+
   // ---- 快捷键 ----
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -321,13 +346,13 @@ export default function App() {
         if (dirtyRef.current) void saveFile();
       } else if (mod && key === 'k') {
         e.preventDefault();
-        setModal('search');
+        setPaletteOpen(true);
       } else if (mod && key === 'b') {
         e.preventDefault();
         setLeftCollapsed((c) => !c);
       } else if (mod && e.shiftKey && key === 'e') {
         e.preventDefault();
-        setModal('cross-edit');
+        navigate('tools');
       }
     };
     window.addEventListener('keydown', handler);
@@ -360,97 +385,161 @@ export default function App() {
   const filesTotal = stats?.files_total ?? agents.reduce((s, a) => s + a.file_count, 0);
   const closeModal = useCallback(() => setModal(null), []);
 
+  // ---- 命令面板索引（P1：功能动作；P2：页面导航） ----
+  const paletteItems = useMemo<CommandItem[]>(
+    () => [
+      // 页面导航
+      { type: 'action', id: 'nav-workbench', label: '前往主工作台', keywords: 'editor edit', group: '导航', onSelect: () => navigate('workbench') },
+      { type: 'action', id: 'nav-tools', label: '前往业务工具', keywords: 'sync diff batch import', group: '导航', onSelect: () => navigate('tools') },
+      { type: 'action', id: 'nav-data', label: '前往数据中心', keywords: 'stats audit lint', group: '导航', onSelect: () => navigate('data') },
+      { type: 'action', id: 'nav-settings', label: '前往系统配置', keywords: 'setting preset llm', group: '导航', onSelect: () => navigate('settings') },
+      // 操作
+      { type: 'action', id: 'rescan', label: '重新扫描 workspace', keywords: 'scan', group: '操作', onSelect: () => void rescan() },
+      { type: 'action', id: 'search', label: '高级搜索文件内容', keywords: 'find', hint: 'Ctrl+K', group: '操作', onSelect: () => setModal('search') },
+      { type: 'action', id: 'sync', label: '跨 Agent 同步文件', group: '操作', onSelect: () => navigate('tools') },
+      { type: 'action', id: 'cross-edit', label: '跨 Agent 批量编辑', keywords: 'batch', hint: 'Ctrl+Shift+E', group: '操作', onSelect: () => navigate('tools') },
+      { type: 'action', id: 'diff', label: '对比两个 Agent', group: '操作', onSelect: () => navigate('tools') },
+      { type: 'action', id: 'import', label: '导入 Prompt Pack', group: '操作', onSelect: () => navigate('tools') },
+      { type: 'action', id: 'export-all', label: '导出全部 Agent', group: '操作', onSelect: () => void exportAll() },
+      { type: 'action', id: 'new-agent', label: '新建 Agent', keywords: 'template', group: '操作', onSelect: () => navigate('tools') },
+      { type: 'action', id: 'lint-all', label: '健康检查（全量 Lint）', group: '数据', onSelect: () => navigate('data') },
+      { type: 'action', id: 'stats', label: '统计仪表盘', group: '数据', onSelect: () => navigate('data') },
+      { type: 'action', id: 'audit', label: '审计日志', group: '数据', onSelect: () => navigate('data') },
+      { type: 'action', id: 'preset', label: '管理文档预设', group: '管理', onSelect: () => navigate('settings') },
+      { type: 'action', id: 'settings', label: '打开系统设置', group: '管理', onSelect: () => navigate('settings') },
+    ],
+    // 回调均为稳定引用或空依赖动作，使用 eslint 豁免
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const searchFilesForPalette = useCallback(async (q: string) => {
+    const res = await api.search({ query: q, limit: 30 });
+    return res.hits;
+  }, []);
+
   return (
     <div className="app">
       <TopBar
         agentCount={agentsTotal}
-        resolvedTheme={resolvedTheme}
         scanning={scanning}
-        onOpenSearch={() => setModal('search')}
+        onOpenSearch={() => setPaletteOpen(true)}
         onRescan={() => void rescan()}
-        onCrossEdit={() => setModal('cross-edit')}
-        onDiff={() => setModal('diff')}
-        onSync={() => setModal('sync')}
-        onExportAll={() => void exportAll()}
-        onImport={() => setModal('import')}
-        onNewAgent={() => setModal('template')}
-        onLintAll={() => setModal('lint-all')}
-        onStats={() => setModal('stats')}
-        onAudit={() => setModal('audit')}
-        onSettings={() => setModal('settings')}
-        onToggleTheme={toggleTheme}
+        onNavigateTools={() => navigate('tools')}
+        onNavigateData={() => navigate('data')}
+        onNavigateSettings={() => navigate('settings')}
       />
 
-      <div className="main">
-        {!leftCollapsed && (
-          <>
-            <div className="pane" style={{ width: leftWidth, flex: 'none' }}>
-              <AgentTree
-                agents={agents}
-                loading={agentsLoading}
-                selectedAgentId={selectedAgentId}
-                warningCounts={warningCounts}
-                onSelect={handleSelectAgent}
-                onRefresh={() => void rescan()}
+      <div className="app-body">
+        <SideNav route={route} onNavigate={navigate} />
+
+        {route === 'workbench' ? (
+          <div className="workbench">
+            {showIntro && (
+              <div className="intro-banner">
+                <span>
+                  <b>Ctrl+K</b> 命令面板（搜索功能 / 文件 / 页面） · <b>Ctrl+S</b> 保存 ·{' '}
+                  <b>Ctrl+B</b> 折叠左侧 · 左侧导航切换页面
+                </span>
+                <button className="btn btn-ghost btn-sm" onClick={dismissIntro}>
+                  知道了
+                </button>
+              </div>
+            )}
+            <div className="main">
+            {!leftCollapsed && (
+              <>
+                <div className="pane" style={{ width: leftWidth, flex: 'none' }}>
+                  <AgentTree
+                    agents={agents}
+                    loading={agentsLoading}
+                    selectedAgentId={selectedAgentId}
+                    warningCounts={warningCounts}
+                    onSelect={handleSelectAgent}
+                    onRefresh={() => void rescan()}
+                  />
+                </div>
+                <div className="divider" onMouseDown={startLeftResize} />
+              </>
+            )}
+
+            <div className="pane" style={{ width: midWidth, flex: 'none' }}>
+              <FileTree
+                agentId={selectedAgentId}
+                files={files}
+                loading={filesLoading}
+                selectedPath={selectedFile?.path ?? null}
+                showSkills={settings.showSkills}
+                showMeta={settings.showMeta}
+                showMemory={settings.showMemory}
+                showOther={settings.showOther}
+                onSelect={handleSelectFile}
               />
             </div>
-            <div className="divider" onMouseDown={startLeftResize} />
-          </>
-        )}
 
-        <div className="pane" style={{ width: midWidth, flex: 'none' }}>
-          <FileTree
-            agentId={selectedAgentId}
-            files={files}
-            loading={filesLoading}
-            selectedPath={selectedFile?.path ?? null}
-            showSkills={settings.showSkills}
-            showMeta={settings.showMeta}
-            showMemory={settings.showMemory}
-            showOther={settings.showOther}
-            onSelect={handleSelectFile}
-          />
-        </div>
+            <div className="divider" onMouseDown={startMidResize} />
 
-        <div className="divider" onMouseDown={startMidResize} />
-
-        <Suspense
-          fallback={
-            <section className="editor-pane">
-              <div className="pane-header">编辑器</div>
-              <div className="state-block">
-                <div className="spinner-lg" />
-                <div>正在加载编辑器…</div>
-              </div>
-            </section>
-          }
-        >
-          <EditorPane
-            agentId={selectedAgentId}
-            file={selectedFile}
-            content={editorContent}
-            onChange={(v) => {
-              setEditorContent(v);
-              setDirty(true);
-            }}
-            dirty={dirty}
-            saving={saving}
-            fileKey={fileKey}
-            reveal={reveal}
-            onSave={() => void saveFile()}
-            onHistory={() => setModal('history')}
-            onExport={() => void exportCurrent()}
-            onLintDone={(count) => {
-              if (selectedAgentId) {
-                setFiles((prev) =>
-                  prev.map((f) =>
-                    f.path === selectedFile?.path ? { ...f, lint_warnings: count } : f,
-                  ),
-                );
+            <Suspense
+              fallback={
+                <section className="editor-pane">
+                  <div className="pane-header">编辑器</div>
+                  <div className="state-block">
+                    <div className="spinner-lg" />
+                    <div>正在加载编辑器…</div>
+                  </div>
+                </section>
               }
+            >
+              <EditorPane
+                agentId={selectedAgentId}
+                file={selectedFile}
+                content={editorContent}
+                onChange={(v) => {
+                  setEditorContent(v);
+                  setDirty(true);
+                }}
+                dirty={dirty}
+                saving={saving}
+                fileKey={fileKey}
+                reveal={reveal}
+                onSave={() => void saveFile()}
+                onHistory={() => setModal('history')}
+                onExport={() => void exportCurrent()}
+                onApplyPreset={() => setModal('apply-preset')}
+                onApplyAI={() => setModal('ai-cleanup')}
+                onLintDone={(count) => {
+                  if (selectedAgentId) {
+                    setFiles((prev) =>
+                      prev.map((f) =>
+                        f.path === selectedFile?.path ? { ...f, lint_warnings: count } : f,
+                      ),
+                    );
+                  }
+                }}
+              />
+            </Suspense>
+          </div>
+          </div>
+        ) : route === 'settings' ? (
+          <SettingsPage onBack={goWorkbench} />
+        ) : route === 'data' ? (
+          <DataPage
+            onBack={goWorkbench}
+            onOpenResult={(a, p, line) => {
+              void openFile(a, p, line);
+              navigate('workbench');
             }}
           />
-        </Suspense>
+        ) : (
+          <ToolsPage
+            agents={agents}
+            initialPath={selectedFile?.path}
+            initialContent={editorContent}
+            onBack={goWorkbench}
+            onDone={() => void handleDataChanged()}
+            onExportAll={() => void exportAll()}
+          />
+        )}
       </div>
 
       <StatusBar
@@ -480,44 +569,33 @@ export default function App() {
           onRolledBack={() => void handleDataChanged()}
         />
       )}
-      {modal === 'diff' && (
-        <DiffModal agents={agents} initialAgent={selectedAgentId} onClose={closeModal} />
-      )}
-      {modal === 'sync' && (
-        <SyncModal agents={agents} onClose={closeModal} onDone={() => void handleDataChanged()} />
-      )}
-      {modal === 'import' && (
-        <ImportModal agents={agents} onClose={closeModal} onDone={() => void handleDataChanged()} />
-      )}
-      {modal === 'template' && (
-        <TemplateModal
-          onClose={closeModal}
-          onDone={() => {
-            void rescan();
-          }}
-        />
-      )}
-      {modal === 'stats' && <StatsModal onClose={closeModal} />}
-      {modal === 'lint-all' && (
-        <GlobalLintModal
-          onClose={closeModal}
-          onOpenResult={(a, p, l) => {
-            void openFile(a, p, l);
-            closeModal();
-          }}
-        />
-      )}
-      {modal === 'audit' && <AuditModal onClose={closeModal} />}
-      {modal === 'settings' && <SettingsModal onClose={closeModal} />}
-      {modal === 'cross-edit' && (
-        <CrossEditModal
-          agents={agents}
-          initialPath={selectedFile?.path}
-          initialContent={editorContent}
+      {modal === 'apply-preset' && selectedAgentId && selectedFile && (
+        <ApplyPresetModal
+          agentId={selectedAgentId}
+          filePath={selectedFile.path}
           onClose={closeModal}
           onDone={() => void handleDataChanged()}
         />
       )}
+      {modal === 'ai-cleanup' && selectedAgentId && selectedFile && (
+        <ApplyAIModal
+          agentId={selectedAgentId}
+          filePath={selectedFile.path}
+          onClose={closeModal}
+          onDone={() => void handleDataChanged()}
+        />
+      )}
+
+      {/* ---- 命令面板（Ctrl+K） ---- */}
+      <CommandPalette
+        open={paletteOpen}
+        onClose={closePalette}
+        items={paletteItems}
+        onSearchFiles={searchFilesForPalette}
+        onOpenFile={(a, p, line) => {
+          void openFile(a, p, line);
+        }}
+      />
     </div>
   );
 }

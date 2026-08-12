@@ -7,9 +7,11 @@ import { formatBytes, formatTime } from '../utils/format';
 
 interface StatsModalProps {
   onClose: () => void;
+  /** 页面内嵌模式（P2 页面化） */
+  embedded?: boolean;
 }
 
-export function StatsModal({ onClose }: StatsModalProps) {
+export function StatsModal({ onClose, embedded }: StatsModalProps) {
   const { push: toast } = useToast();
   const [stats, setStats] = useState<StatsResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,6 +37,7 @@ export function StatsModal({ onClose }: StatsModalProps) {
       title="统计仪表盘"
       onClose={onClose}
       width={720}
+      embedded={embedded}
       footer={
         <button className="btn" onClick={load} disabled={loading}>
           {loading && <span className="spinner" />}

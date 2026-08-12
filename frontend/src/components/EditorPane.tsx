@@ -25,6 +25,8 @@ interface EditorPaneProps {
   onSave: () => void;
   onHistory: () => void;
   onExport: () => void;
+  onApplyPreset: () => void;
+  onApplyAI: () => void;
   onLintDone: (count: number) => void;
 }
 
@@ -40,6 +42,8 @@ export function EditorPane({
   onSave,
   onHistory,
   onExport,
+  onApplyPreset,
+  onApplyAI,
   onLintDone,
 }: EditorPaneProps) {
   const { resolvedTheme } = useSettings();
@@ -192,6 +196,12 @@ export function EditorPane({
         </button>
         <button className="btn" onClick={onHistory}>
           历史
+        </button>
+        <button className="btn" onClick={onApplyPreset} title="应用文档预设：按预设结构补齐缺失章节，生成 diff 预览后确认写入">
+          应用预设
+        </button>
+        <button className="btn" onClick={onApplyAI} title="AI 自动整理：选预设+LLM Provider，AI 重写后生成 diff 预览，确认后写入">
+          AI 整理
         </button>
         <button className="btn" onClick={runLint} disabled={linting}>
           {linting && <span className="spinner" />}

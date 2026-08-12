@@ -15,6 +15,8 @@ interface CrossEditModalProps {
   initialContent?: string;
   onClose: () => void;
   onDone: () => void;
+  /** 页面内嵌模式（P3 页面化） */
+  embedded?: boolean;
 }
 
 export function CrossEditModal({
@@ -23,6 +25,7 @@ export function CrossEditModal({
   initialContent = '',
   onClose,
   onDone,
+  embedded,
 }: CrossEditModalProps) {
   const { push: toast } = useToast();
   const { resolvedTheme } = useSettings();
@@ -77,6 +80,7 @@ export function CrossEditModal({
       title="跨 Agent 编辑"
       onClose={onClose}
       width={820}
+      embedded={embedded}
       footer={
         step === 1 ? (
           <button className="btn btn-primary" onClick={next}>

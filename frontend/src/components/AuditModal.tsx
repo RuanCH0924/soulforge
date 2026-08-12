@@ -7,9 +7,11 @@ import { formatTime } from '../utils/format';
 
 interface AuditModalProps {
   onClose: () => void;
+  /** 页面内嵌模式（P2 页面化） */
+  embedded?: boolean;
 }
 
-export function AuditModal({ onClose }: AuditModalProps) {
+export function AuditModal({ onClose, embedded }: AuditModalProps) {
   const { push: toast } = useToast();
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,7 +35,7 @@ export function AuditModal({ onClose }: AuditModalProps) {
   }, [toast]);
 
   return (
-    <Modal title="审计日志（最近 100 条）" onClose={onClose} width={880}>
+    <Modal title="审计日志（最近 100 条）" onClose={onClose} width={880} embedded={embedded}>
       {loading ? (
         <div className="state-block">
           <div className="spinner-lg" />

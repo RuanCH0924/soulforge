@@ -8,9 +8,11 @@ interface TemplateModalProps {
   onClose: () => void;
   /** 应用成功后回调（重新扫描 Agent 列表） */
   onDone: () => void;
+  /** 页面内嵌模式（P3 页面化） */
+  embedded?: boolean;
 }
 
-export function TemplateModal({ onClose, onDone }: TemplateModalProps) {
+export function TemplateModal({ onClose, onDone, embedded }: TemplateModalProps) {
   const { push: toast } = useToast();
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,6 +67,7 @@ export function TemplateModal({ onClose, onDone }: TemplateModalProps) {
       title="新建 Agent（从模板）"
       onClose={onClose}
       width={680}
+      embedded={embedded}
       footer={
         <button className="btn btn-primary" onClick={apply} disabled={applying || !selected}>
           {applying && <span className="spinner" />}

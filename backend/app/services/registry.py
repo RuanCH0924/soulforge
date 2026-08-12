@@ -6,14 +6,18 @@ import time
 from loguru import logger
 
 from app.config import Config
+from app.core.key_vault import KeyVault
 from app.models.db import Database
 from app.services.agent_discovery import AgentDiscovery
+from app.services.ai_job_service import AIJobService
 from app.services.audit_service import AuditService
 from app.services.backup_service import BackupService
 from app.services.diff_service import DiffService
 from app.services.file_manager import FileManager
 from app.services.import_export import ImportExportService
 from app.services.lint_service import LintService
+from app.services.llm_registry import LLMRegistry
+from app.services.preset_service import PresetService
 from app.services.search_service import SearchService
 from app.services.stats_service import StatsService
 from app.services.sync_service import SyncService
@@ -40,13 +44,19 @@ class Registry:
         self.import_export = ImportExportService(config, self.discovery, self.file_manager, self.backup, self.audit)
         self.templates = TemplateService(self.backup, self.audit)
         self.stats = StatsService(config, self.db, self.discovery)
+        self.presets = PresetService(self.db, self.file_manager, self.backup, self.lint, self.audit)
+        self.key_vault = KeyVault(config.data_dir)
+        self.llm = LLMRegistry(self.db, self.key_vault)
+        self.ai_jobs = AIJobService(self.db, self.file_manager, self.backup, self.lint, self.audit, self.presets, self.llm)
 
     def startup(self) -> None:
-        """启动流程：清理过期备份 + 重建索引。"""
+        """启动流程：清理过期备份 + 播种内置预设 + 重建索引。"""
         t0 = time.time()
         removed = self.backup.cleanup_old()
         if removed:
             self.db.vacuum()
+        self.presets.seed_builtins()
+        self.llm.load_from_db()
         scan = self.file_manager.scan_all()
         logger.info(
             "启动完成：清理备份 {} 个，扫描 {} 个 Agent / {} 个文件（{:.0f}ms）",

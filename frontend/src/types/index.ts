@@ -239,3 +239,155 @@ export interface ConfigSnapshot {
   };
   openclaw: { dir: string };
 }
+
+// ---- Phase 2.5 · M11 文档预设 ----
+export type PresetTargetType =
+  | 'SOUL' | 'AGENTS' | 'MEMORY' | 'USER' | 'IDENTITY' | 'TOOLS' | 'WORKLOG' | 'ANY';
+
+export interface PresetSection {
+  title: string;
+  required: boolean;
+  order: number;
+  hint?: string | null;
+}
+
+export interface FormatViolation {
+  rule_id: string;
+  rule_name: string;
+  line?: number | null;
+  message: string;
+}
+
+export interface FormatReport {
+  ok: boolean;
+  violations: FormatViolation[];
+}
+
+export interface PresetSummary {
+  id: string;
+  name: string;
+  target_file_type: PresetTargetType;
+  description?: string | null;
+  is_system: boolean;
+  version: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Preset extends PresetSummary {
+  template_md?: string | null;
+  sections_json: PresetSection[];
+  frontmatter_json: Record<string, string>;
+  style_rules: string[];
+}
+
+export interface PresetApplyPlan {
+  plan_id: string;
+  agent_id: string;
+  file_path: string;
+  preset_id: string;
+  current_snapshot: string;
+  proposed_content: string;
+  unified_diff: string;
+  lint_warnings: LintWarning[];
+  format_report: FormatReport;
+}
+
+export interface PresetApplyResult {
+  backup_id?: number | null;
+  applied_at: number;
+  file_size: number;
+}
+
+export interface PresetVersionInfo {
+  id: number;
+  preset_id: string;
+  version: number;
+  created_at: number;
+  user: string;
+  name: string;
+  target_file_type: PresetTargetType;
+  description?: string | null;
+  template_md?: string | null;
+  sections_json: PresetSection[];
+  frontmatter_json: Record<string, string>;
+  style_rules: string[];
+}
+
+// ---- Phase 2.5 · M12 LLM Provider ----
+export type LLMProtocol = 'openai-completions' | 'anthropic-messages';
+
+export interface LLMProvider {
+  id: string;
+  base_url: string;
+  api_key_masked: string;
+  model: string;
+  protocol: LLMProtocol;
+  enabled: boolean;
+  max_tokens: number;
+  temperature: number;
+  timeout_seconds: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface LLMTestResult {
+  ok: boolean;
+  latency_ms: number;
+  response_preview: string;
+  error?: string | null;
+}
+
+export interface LLMResponseOut {
+  content: string;
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  cost_estimate_usd: number;
+}
+
+// ---- Phase 2.5 · M13 AI 自动整理 ----
+export type AIJobStatus =
+  | 'pending' | 'running' | 'awaiting_confirm' | 'applied' | 'rejected' | 'failed' | 'superseded';
+
+export interface AIJobDiffPlan {
+  unified_diff: string;
+  lint_warnings: LintWarning[];
+  format_report: FormatReport;
+}
+
+export interface AIJobSummary {
+  id: string;
+  agent_id: string;
+  file_path: string;
+  preset_id: string;
+  provider_id: string;
+  status: AIJobStatus;
+  created_at: number;
+  updated_at: number;
+  finished_at?: number | null;
+  superseded_by?: string | null;
+}
+
+export interface AIJob extends AIJobSummary {
+  input_snapshot?: string | null;
+  output_content?: string | null;
+  diff_plan_json?: AIJobDiffPlan | null;
+  extra_instructions?: string | null;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  total_tokens?: number | null;
+  cost_estimate_usd?: number | null;
+  error?: string | null;
+}
+
+export interface AIJobCreateResult {
+  job_id: string;
+  status: AIJobStatus;
+  created_at: number;
+}
+
+export interface AIJobApplyResult {
+  job_id: string;
+  status: AIJobStatus;
+  backup_id?: number | null;
+  file_size: number;
+}

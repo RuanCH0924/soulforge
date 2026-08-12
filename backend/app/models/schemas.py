@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 Role = Literal["CORE", "MEMORY", "SKILL", "META", "OTHER"]
 Severity = Literal["warning", "error"]
 ImportStrategy = Literal["skip", "merge", "overwrite"]
+PresetTargetType = Literal["SOUL", "AGENTS", "MEMORY", "USER", "IDENTITY", "TOOLS", "WORKLOG", "ANY"]
 
 
 class AgentInfo(BaseModel):
@@ -225,6 +226,273 @@ class RollbackResult(BaseModel):
     rolled_back_to: int
     new_backup_id: int
     sha256: str
+
+
+# ---------- Phase 2.5 · M11 文档预设系统 ----------
+
+
+class PresetSection(BaseModel):
+    """预设的章节定义。"""
+
+    title: str
+    required: bool = True
+    order: int = 1
+    hint: str | None = None
+
+
+class PresetCreate(BaseModel):
+    name: str = Field(..., min_length=1, description="预设名")
+    target_file_type: PresetTargetType
+    description: str | None = None
+    template_md: str | None = Field(None, description="标准 Markdown 模板文档（YAML 规则+骨架）")
+    sections_json: list[PresetSection] = Field(default_factory=list, description="章节列表（由模板派生，可省略）")
+    frontmatter_json: dict[str, str] = Field(default_factory=dict, description="frontmatter 模板")
+    style_rules: list[str] = Field(default_factory=list, description="风格规则")
+
+
+class PresetUpdate(BaseModel):
+    """编辑预设（所有预设均可修改全部字段）。"""
+
+    name: str | None = Field(None, min_length=1)
+    target_file_type: PresetTargetType | None = None
+    description: str | None = None
+    template_md: str | None = None
+    sections_json: list[PresetSection] | None = None
+    frontmatter_json: dict[str, str] | None = None
+    style_rules: list[str] | None = None
+
+
+class PresetSummary(BaseModel):
+    """列表项（不含 sections 等大字段）。"""
+
+    id: str
+    name: str
+    target_file_type: PresetTargetType
+    description: str | None = None
+    is_system: bool = False
+    version: int = 1
+    created_at: int
+    updated_at: int
+
+
+class Preset(BaseModel):
+    """预设完整详情。"""
+
+    id: str
+    name: str
+    target_file_type: PresetTargetType
+    description: str | None = None
+    template_md: str | None = None
+    sections_json: list[PresetSection] = Field(default_factory=list)
+    frontmatter_json: dict[str, str] = Field(default_factory=dict)
+    style_rules: list[str] = Field(default_factory=list)
+    is_system: bool = False
+    version: int = 1
+    created_at: int
+    updated_at: int
+
+
+class PresetApplyRequest(BaseModel):
+    agent_id: str
+    file_path: str
+    extra_instructions: str | None = None
+
+
+class PresetApplyExecuteRequest(BaseModel):
+    plan_id: str
+    agent_id: str
+    file_path: str
+
+
+class FormatViolation(BaseModel):
+    rule_id: str
+    rule_name: str
+    line: int | None = None
+    message: str = ""
+
+
+class FormatReport(BaseModel):
+    ok: bool
+    violations: list[FormatViolation] = Field(default_factory=list)
+
+
+class PresetApplyPlan(BaseModel):
+    """应用预设生成的计算结果（不入库）。"""
+
+    plan_id: str
+    agent_id: str
+    file_path: str
+    preset_id: str
+    current_snapshot: str
+    proposed_content: str
+    unified_diff: str
+    lint_warnings: list[LintWarning] = Field(default_factory=list)
+    format_report: FormatReport = Field(default_factory=lambda: FormatReport(ok=True))
+
+
+class PresetApplyResult(BaseModel):
+    backup_id: int | None
+    applied_at: int
+    file_size: int
+
+
+class PresetVersionInfo(BaseModel):
+    """预设版本历史条目（含快照，可恢复）。"""
+
+    id: int
+    preset_id: str
+    version: int
+    created_at: int
+    user: str = "local"
+    name: str
+    target_file_type: PresetTargetType
+    description: str | None = None
+    template_md: str | None = None
+    sections_json: list[PresetSection] = Field(default_factory=list)
+    frontmatter_json: dict[str, str] = Field(default_factory=dict)
+    style_rules: list[str] = Field(default_factory=list)
+
+
+# ---------- Phase 2.5 · M12 LLM Provider 接入 ----------
+
+LLMProtocol = Literal["openai-completions", "anthropic-messages"]
+
+
+class LLMProviderCreate(BaseModel):
+    id: str = Field(..., min_length=1, pattern=r"^[\w\-./]+$", description="provider 名（业务唯一）")
+    base_url: str = Field(..., min_length=1, description="API 端点")
+    api_key: str = Field(..., min_length=1, description="API key（明文，服务端加密存储）")
+    model: str = Field(..., min_length=1)
+    protocol: LLMProtocol
+    enabled: bool = True
+    max_tokens: int = Field(4096, ge=1, le=1_000_000)
+    temperature: float = Field(0.3, ge=0.0, le=2.0)
+    timeout_seconds: int = Field(60, ge=1, le=600)
+
+
+class LLMProviderUpdate(BaseModel):
+    base_url: str | None = None
+    api_key: str | None = Field(None, description="留空/None = 保留旧 key")
+    model: str | None = None
+    protocol: LLMProtocol | None = None
+    enabled: bool | None = None
+    max_tokens: int | None = Field(None, ge=1, le=1_000_000)
+    temperature: float | None = Field(None, ge=0.0, le=2.0)
+    timeout_seconds: int | None = Field(None, ge=1, le=600)
+
+
+class LLMProviderOut(BaseModel):
+    """Provider 输出（api_key 永远以掩码呈现）。"""
+
+    id: str
+    base_url: str
+    api_key_masked: str
+    model: str
+    protocol: LLMProtocol
+    enabled: bool
+    max_tokens: int
+    temperature: float
+    timeout_seconds: int
+    created_at: int
+    updated_at: int
+
+
+class LLMChatMessage(BaseModel):
+    role: Literal["system", "user", "assistant"]
+    content: str
+
+
+class LLMChatRequest(BaseModel):
+    provider_id: str
+    messages: list[LLMChatMessage] = Field(..., min_length=1)
+    max_tokens: int | None = None
+    temperature: float | None = None
+
+
+class LLMTokenUsage(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+class LLMResponseOut(BaseModel):
+    content: str
+    usage: LLMTokenUsage = Field(default_factory=LLMTokenUsage)
+    cost_estimate_usd: float = 0.0
+
+
+class LLMTestResult(BaseModel):
+    ok: bool
+    latency_ms: int
+    response_preview: str
+    error: str | None = None
+
+
+# ---------- Phase 2.5 · M13 AI 自动整理 ----------
+
+AIJobStatus = Literal[
+    "pending", "running", "awaiting_confirm", "applied", "rejected", "failed", "superseded"
+]
+
+
+class AIJobCreate(BaseModel):
+    agent_id: str
+    file_path: str
+    preset_id: str
+    provider_id: str
+    extra_instructions: str | None = None
+
+
+class AIRegenerateRequest(BaseModel):
+    extra_instructions: str = Field(..., description="重新生成时的新指令")
+
+
+class AIJobDiffPlan(BaseModel):
+    unified_diff: str
+    lint_warnings: list[LintWarning] = Field(default_factory=list)
+    format_report: FormatReport = Field(default_factory=lambda: FormatReport(ok=True))
+
+
+class AIJobSummary(BaseModel):
+    """列表项。"""
+
+    id: str
+    agent_id: str
+    file_path: str
+    preset_id: str
+    provider_id: str
+    status: AIJobStatus
+    created_at: int
+    updated_at: int
+    finished_at: int | None = None
+    superseded_by: str | None = None
+
+
+class AIJob(AIJobSummary):
+    """任务完整详情。"""
+
+    input_snapshot: str | None = None
+    output_content: str | None = None
+    diff_plan_json: AIJobDiffPlan | None = None
+    extra_instructions: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    cost_estimate_usd: float | None = None
+    error: str | None = None
+
+
+class AIJobCreateResult(BaseModel):
+    job_id: str
+    status: AIJobStatus
+    created_at: int
+
+
+class AIJobApplyResult(BaseModel):
+    job_id: str
+    status: AIJobStatus
+    backup_id: int | None = None
+    file_size: int = 0
 
 
 class AgentBackupGroup(BaseModel):

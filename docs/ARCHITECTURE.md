@@ -423,6 +423,204 @@ class ImportExport:
 
 ---
 
+## 三点八、Phase 2.5 新增模块设计
+
+> 与三、节并列，为 Phase 2.5 AI Editor 引入。
+
+### 3.8 PresetService（M11 · 文档预设系统）
+
+```python
+class PresetService:
+    """管理文档预设的 CRUD + 应用"""
+
+    def list(self, target_file_type: str | None = None) -> list[Preset]:
+        """列出预设（系统 + 用户）"""
+
+    def get(self, preset_id: str) -> Preset: ...
+
+    def create(self, payload: PresetCreate) -> Preset:
+        """创建用户预设，is_system=False"""
+
+    def update(self, preset_id: str, payload: PresetUpdate) -> Preset:
+        """更新预设，系统预设仅允许改 description + style_rules
+        版本号 version 自增 +1，保留历史"""
+
+    def delete(self, preset_id: str) -> None:
+        """删除用户预设，系统预设 → 403"""
+
+    def apply_plan(
+        self,
+        preset_id: str,
+        agent_id: str,
+        file_path: str,
+        extra_instructions: str | None = None,
+    ) -> PresetApplyPlan:
+        """生成应用 plan（不写入文件）"""
+        # 1) 读取原文件 → current_content
+        # 2) 加载预设 sections_json + style_rules
+        # 3) 按预设结构补齐缺失章节（不动原内容）
+        # 4) 生成 unified diff → diff_plan.unified_diff
+        # 5) 跑 lint → diff_plan.lint_warnings
+        # 返回 PresetApplyPlan（不入库）
+
+    def apply_execute(self, plan_id: str, agent_id: str, file_path: str) -> ApplyResult:
+        """执行应用：备份 → 写入 → 审计"""
+```
+
+**关键设计**：
+- 预设与应用计划**解耦**：`apply_plan` 只读不写，生成纯计算结果
+- `apply_execute` 是唯一会写文件的入口，复用 `BackupService` 链路
+- 预设版本化：每次 `update` 自增 `version`，供老板迭代升级
+
+---
+
+### 3.9 LLMRegistry + LLMClient（M12 · LLM Provider 接入）
+
+```python
+class LLMRegistry:
+    """管理 llm_providers 注册表，支持热加载"""
+
+    _providers: dict[str, LLMProvider]
+    _lock: asyncio.Lock
+
+    async def load_from_db(self) -> None:
+        """启动时从 llm_providers 表加载"""
+
+    async def reload_one(self, provider_id: str) -> None:
+        """热加载单个 provider（PUT/POST/DELETE 后调用）"""
+
+    def get(self, provider_id: str) -> LLMProvider: ...
+
+    async def reload_all(self) -> None:
+        """热加载全部（配置中心手动触发）"""
+
+
+class LLMClient:
+    """LLM 调用客户端，支持多协议"""
+
+    def __init__(self, provider: LLMProvider): ...
+
+    async def chat(
+        self,
+        messages: list[dict],
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> LLMResponse:
+        """根据 provider.protocol 调用对应适配器"""
+        if self.provider.protocol == "openai-completions":
+            return await self._openai_completions(messages, ...)
+        elif self.provider.protocol == "anthropic-messages":
+            return await self._anthropic_messages(messages, ...)
+        else:
+            raise UnsupportedProtocolError(...)
+
+
+class LLMResponse:
+    content: str
+    usage: TokenUsage       # prompt / completion / total
+    cost_estimate_usd: float
+```
+
+**密钥解密**：
+
+```python
+class KeyVault:
+    """API key 加解密"""
+
+    def __init__(self):
+        # 读取 SOULFORGE_SECRET 环境变量
+        # 缺失则读 .soulforge/secrets/key
+        # 都没有则首次启动生成（权限 600）
+        self._fernet = Fernet(self._load_or_create_key())
+
+    def encrypt(self, plaintext: str) -> str:
+        return self._fernet.encrypt(plaintext.encode()).decode()
+
+    def decrypt(self, ciphertext: str) -> str:
+        return self._fernet.decrypt(ciphertext.encode()).decode()
+```
+
+**热加载机制**：
+
+```
+[Soulforge 启动]
+  ↓
+LLMRegistry.load_from_db()  → 初始化内存表
+  ↓
+[PUT /api/llm/providers/{id}]
+  ↓
+PresetService.update()  → 写 DB
+  ↓
+LLMRegistry.reload_one()  → 内存更新（不重启）
+```
+
+---
+
+### 3.10 AIJobService（M13 · AI 自动整理）
+
+```python
+class AIJobService:
+    """管理 AI 整理任务的生命周期"""
+
+    async def create(
+        self,
+        agent_id: str,
+        file_path: str,
+        preset_id: str,
+        provider_id: str,
+        extra_instructions: str | None,
+    ) -> AIJob:
+        """创建任务，status=pending，提交到后台队列"""
+
+    async def execute(self, job_id: str) -> None:
+        """后台异步执行：
+        1. job.status = running
+        2. 读取原文件 → input_snapshot
+        3. 加载预设 → 构造 prompt
+        4. 调 LLMClient.chat() → output_content
+        5. 计算 unified diff + lint
+        6. job.status = awaiting_confirm
+        异常 → job.status = failed + error
+        """
+
+    async def apply(self, job_id: str) -> ApplyResult:
+        """老板点应用：
+        1. 校验 status == awaiting_confirm
+        2. 跑 lint，不通过 → status=failed + 报错
+        3. 备份原文件（复用 BackupService）
+        4. 写入新内容
+        5. job.status = applied
+        6. 写审计日志（action='ai_apply'）
+        """
+
+    async def reject(self, job_id: str) -> None:
+        """老板点拒绝：status=rejected"""
+
+    async def regenerate(
+        self,
+        job_id: str,
+        extra_instructions: str,
+    ) -> AIJob:
+        """老板点重新生成：
+        旧 job.superseded_by = 新 job.id
+        新 job.status = pending
+        提交到后台队列
+        """
+```
+
+**异步队列选型**：
+
+```
+v1.0: asyncio.create_task()  ──── 单进程够用
+v1.x: ARQ / Celery / RQ       ──── 多 worker 时换
+```
+
+当前 MVP 阶段用 `asyncio.create_task()`，单进程足够。
+
+**Prompt 构造**（见 DEVELOPMENT.md M13 节）。
+
+---
+
 ## 四、错误处理
 
 ### 4.1 后端

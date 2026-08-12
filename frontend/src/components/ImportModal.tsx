@@ -10,6 +10,8 @@ interface ImportModalProps {
   agents: AgentInfo[];
   onClose: () => void;
   onDone: () => void;
+  /** 页面内嵌模式（P3 页面化） */
+  embedded?: boolean;
 }
 
 const STRATEGY_LABEL: Record<ImportStrategy, string> = {
@@ -18,7 +20,7 @@ const STRATEGY_LABEL: Record<ImportStrategy, string> = {
   overwrite: '覆盖',
 };
 
-export function ImportModal({ agents, onClose, onDone }: ImportModalProps) {
+export function ImportModal({ agents, onClose, onDone, embedded }: ImportModalProps) {
   const { push: toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState('');
@@ -82,6 +84,7 @@ export function ImportModal({ agents, onClose, onDone }: ImportModalProps) {
       title="导入 Prompt Pack"
       onClose={onClose}
       width={720}
+      embedded={embedded}
       footer={
         preview ? (
           <div style={{ display: 'flex', gap: 8 }}>

@@ -125,6 +125,197 @@ CREATE INDEX idx_audit_action ON audit_log(action);
 
 ---
 
+## 二点五、Schema（Phase 2.5 新增 3 张表）
+
+> 与二、节并列，为 Phase 2.5 AI Editor 引入。
+
+### 2.5 `presets` —— 文档预设
+
+保存「文档应该长什么样」的格式预设。系统预设 + 用户自定义。
+
+```sql
+CREATE TABLE presets (
+    id                  TEXT PRIMARY KEY,          -- UUID
+    name                TEXT NOT NULL,             -- 预设名
+    target_file_type    TEXT NOT NULL,             -- 适用文件类型：SOUL/AGENTS/MEMORY/USER/IDENTITY/TOOLS/WORKLOG/ANY
+    description         TEXT,                      -- 用途说明
+    sections_json       TEXT NOT NULL,             -- 章节列表 JSON，例：[{title, required, order, hint}]
+    frontmatter_json    TEXT,                      -- YAML frontmatter 模板 JSON
+    style_rules         TEXT,                      -- 风格规则（自由文本）
+    is_system            INTEGER NOT NULL DEFAULT 0,-- 1=系统预设（不可删），0=用户预设
+    version             INTEGER NOT NULL DEFAULT 1,-- 预设版本（编辑后自增）
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL
+);
+
+CREATE INDEX idx_presets_target ON presets(target_file_type);
+CREATE INDEX idx_presets_system ON presets(is_system);
+```
+
+**sections_json 示例**：
+
+```json
+[
+  {"title": "核心行为准则", "required": true,  "order": 1, "hint": "简洁优先、目标驱动"},
+  {"title": "工作态度和原则", "required": true,  "order": 2, "hint": "先想后做、不吹嘘"},
+  {"title": "学习与连续性",   "required": true,  "order": 3, "hint": "记录、更新、演进"},
+  {"title": "核心边界",       "required": true,  "order": 4, "hint": "隐私、操作授权"}
+]
+```
+
+**完整记录示例**：
+
+```json
+{
+  "id": "preset-soul-std",
+  "name": "SOUL.md 标准结构",
+  "target_file_type": "SOUL",
+  "description": "核心行为准则 + 工作态度 + 学习连续性 + 核心边界",
+  "sections_json": "[{...}]",
+  "frontmatter_json": "{\"schema\": \"soulforge.preset/v1\", \"owner\": \"user\"}",
+  "style_rules": "emoji-in-section-title=false;口语化禁令;必须带应用范例",
+  "is_system": 1,
+  "version": 2,
+  "created_at": 1754478700,
+  "updated_at": 1754478800
+}
+```
+
+**约束**：
+- `is_system=1` 的预设不能 DELETE，只能 PUT（且只能改 `description` 和 `style_rules`）
+- `version` 在 PUT 后自增，保留历史
+- 内置预设 id 前缀 `preset-`（如 `preset-soul-std`、`preset-agents-std`、`preset-mem-std`、`preset-wlog-summary`）
+
+---
+
+### 2.6 `llm_providers` —— LLM Provider 配置
+
+记录可用的 LLM provider。API key 加密存储。
+
+```sql
+CREATE TABLE llm_providers (
+    id                  TEXT PRIMARY KEY,          -- provider 名（业务唯一，如 "openai-main"）
+    base_url            TEXT NOT NULL,
+    api_key_encrypted   TEXT NOT NULL,             -- Fernet 加密后的密文
+    model               TEXT NOT NULL,
+    protocol            TEXT NOT NULL,             -- openai-completions | anthropic-messages
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    max_tokens          INTEGER NOT NULL DEFAULT 4096,
+    temperature         REAL NOT NULL DEFAULT 0.3,
+    timeout_seconds     INTEGER NOT NULL DEFAULT 60,
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL
+);
+
+CREATE INDEX idx_llm_providers_enabled ON llm_providers(enabled);
+```
+
+**API key 加密机制**：
+- 加密密钥来自环境变量 `SOULFORGE_SECRET`，**或**首次启动生成 `.soulforge/secrets/key`（权限 600）
+- Fernet（cryptography 库）对称加密
+- 数据库只存密文，UI 只显示掩码 `sk-****...****`
+
+**完整记录示例**（加密后）：
+
+```json
+{
+  "id": "openai-main",
+  "base_url": "https://api.openai.com/v1",
+  "api_key_encrypted": "gAAAAABl...（密文，例 200+ 字符）",
+  "model": "gpt-4o",
+  "protocol": "openai-completions",
+  "enabled": 1,
+  "max_tokens": 4096,
+  "temperature": 0.3,
+  "timeout_seconds": 60
+}
+```
+
+**约束**：
+- 有关联 `ai_jobs` 的 provider 不可删（`409 Conflict`）
+- `api_key_encrypted` 字段不出现在任何 GET 响应里，UI 走专用 `/api/llm/providers/{id}/reveal` 端点（需二次确认）
+
+---
+
+### 2.7 `ai_jobs` —— AI 整理任务
+
+记录每次 AI 自动整理任务的完整生命周期。
+
+```sql
+CREATE TABLE ai_jobs (
+    id                  TEXT PRIMARY KEY,          -- UUID
+    agent_id            TEXT NOT NULL,
+    file_path           TEXT NOT NULL,
+    preset_id           TEXT NOT NULL,
+    provider_id         TEXT NOT NULL,
+    status              TEXT NOT NULL,             -- pending|running|awaiting_confirm|applied|rejected|failed|superseded
+    input_snapshot      TEXT,                      -- 原文件快照（生成时锁定）
+    output_content      TEXT,                      -- AI 输出（待确认）
+    diff_plan_json      TEXT,                      -- unified diff + lint warnings
+    extra_instructions  TEXT,                      -- 老板附加指令
+    prompt_tokens       INTEGER,
+    completion_tokens   INTEGER,
+    total_tokens        INTEGER,
+    cost_estimate_usd   REAL,
+    error               TEXT,                      -- 失败原因
+    superseded_by       TEXT,                      -- regenerate 时指向新 job
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL,
+    finished_at         INTEGER,
+
+    FOREIGN KEY (preset_id)    REFERENCES presets(id),
+    FOREIGN KEY (provider_id)  REFERENCES llm_providers(id)
+);
+
+CREATE INDEX idx_ai_jobs_status      ON ai_jobs(status);
+CREATE INDEX idx_ai_jobs_agent_file ON ai_jobs(agent_id, file_path);
+CREATE INDEX idx_ai_jobs_created    ON ai_jobs(created_at);
+```
+
+**状态机**：
+
+```
+pending ──► running ──► awaiting_confirm ──┬─► applied   （老板点应用）
+                                            ├─► rejected  （老板点拒绝）
+                                            └─► superseded（老板点重新生成）
+                                           
+任意状态可跳转：
+- pending|running ──► failed    （LLM 调用失败 / lint 违规）
+- awaiting_confirm ──► failed    （老板点应用时 lint 拒绝）
+```
+
+**典型记录示例**：
+
+```json
+{
+  "id": "job-uuid-1234",
+  "agent_id": "main",
+  "file_path": "SOUL.md",
+  "preset_id": "preset-soul-std",
+  "provider_id": "openai-main",
+  "status": "awaiting_confirm",
+  "input_snapshot": "# SOUL.md\n\n当前内容...",
+  "output_content": "# SOUL.md\n\n## 核心行为准则\n\n简洁优先...",
+  "diff_plan_json": "{\"unified_diff\": \"--- SOUL.md\\n+++ SOUL.md\\n@@ ...\", \"lint_warnings\": []}",
+  "extra_instructions": "保留「阅读策略」章节原内容不动",
+  "prompt_tokens": 1230,
+  "completion_tokens": 856,
+  "total_tokens": 2086,
+  "cost_estimate_usd": 0.021,
+  "created_at": 1754478700,
+  "updated_at": 1754478710
+}
+```
+
+**约束**：
+- `status=awaiting_confirm` 的 job 才允许 `apply` / `reject`
+- `apply` 时：走 lint（L1-L8 全部跑），不通过则 `409 Conflict` + 提示老板
+- `apply` 后写审计日志：`action='ai_apply'`
+- `apply` 前必须先备份原文件（复用 M7 备份流程）
+- `regenerate` 创建新 job，旧 job `superseded_by` 指向新 job
+
+---
+
 ## 三、文件分类规则（role 字段判定）
 
 **`FileManager.list()` 时同步给每个文件打 role 标签**：

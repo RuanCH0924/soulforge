@@ -1,6 +1,11 @@
 /** 全部后端 API 的封装（见 docs/API.md） */
 import { downloadFile, encodePath, request } from './client';
 import type {
+  AIJob,
+  AIJobApplyResult,
+  AIJobCreateResult,
+  AIJobStatus,
+  AIJobSummary,
   AgentInfo,
   AuditEntry,
   BackupEntry,
@@ -16,6 +21,16 @@ import type {
   LintAgentResult,
   LintAllResult,
   LintFileResult,
+  LLMProtocol,
+  LLMProvider,
+  LLMResponseOut,
+  LLMTestResult,
+  Preset,
+  PresetApplyPlan,
+  PresetApplyResult,
+  PresetSummary,
+  PresetTargetType,
+  PresetVersionInfo,
   RollbackResult,
   ScanResult,
   SearchResult,
@@ -115,4 +130,91 @@ export const api = {
   getConfig: () => request<ConfigSnapshot>('GET', '/api/config'),
   updateConfig: (patch: Record<string, Record<string, unknown>>) =>
     request<ConfigSnapshot>('PUT', '/api/config', { json: patch }),
+
+  // ---- M11 文档预设（Phase 2.5） ----
+  listPresets: (targetFileType?: PresetTargetType) =>
+    request<PresetSummary[]>(
+      'GET',
+      targetFileType ? `/api/presets?target_file_type=${encodeURIComponent(targetFileType)}` : '/api/presets',
+    ),
+  getPreset: (id: string) => request<Preset>('GET', `/api/presets/${encodeURIComponent(id)}`),
+  createPreset: (body: {
+    name: string;
+    target_file_type: PresetTargetType;
+    description?: string;
+    template_md?: string;
+    sections_json?: Preset['sections_json'];
+    frontmatter_json?: Preset['frontmatter_json'];
+    style_rules?: string[];
+  }) => request<Preset>('POST', '/api/presets', { json: body }),
+  updatePreset: (id: string, body: Record<string, unknown>) =>
+    request<Preset>('PUT', `/api/presets/${encodeURIComponent(id)}`, { json: body }),
+  deletePreset: (id: string) =>
+    request<{ id: string; deleted: boolean }>('DELETE', `/api/presets/${encodeURIComponent(id)}`),
+  presetApplyPlan: (presetId: string, agentId: string, filePath: string, extraInstructions?: string) =>
+    request<PresetApplyPlan>('POST', `/api/presets/${encodeURIComponent(presetId)}/apply`, {
+      json: { agent_id: agentId, file_path: filePath, extra_instructions: extraInstructions ?? null },
+    }),
+  presetApplyExecute: (presetId: string, planId: string, agentId: string, filePath: string) =>
+    request<PresetApplyResult>('POST', `/api/presets/${encodeURIComponent(presetId)}/apply/execute`, {
+      json: { plan_id: planId, agent_id: agentId, file_path: filePath },
+    }),
+  listPresetVersions: (presetId: string) =>
+    request<PresetVersionInfo[]>('GET', `/api/presets/${encodeURIComponent(presetId)}/versions`),
+  restorePresetVersion: (presetId: string, versionId: number) =>
+    request<Preset>('POST', `/api/presets/${encodeURIComponent(presetId)}/versions/${versionId}/restore`),
+
+  // ---- M12 LLM Provider（Phase 2.5） ----
+  listLLMProviders: () => request<LLMProvider[]>('GET', '/api/llm/providers'),
+  createLLMProvider: (body: {
+    id: string;
+    base_url: string;
+    api_key: string;
+    model: string;
+    protocol: LLMProtocol;
+    enabled?: boolean;
+    max_tokens?: number;
+    temperature?: number;
+    timeout_seconds?: number;
+  }) => request<LLMProvider>('POST', '/api/llm/providers', { json: body }),
+  updateLLMProvider: (id: string, body: Record<string, unknown>) =>
+    request<LLMProvider>('PUT', `/api/llm/providers/${encodeURIComponent(id)}`, { json: body }),
+  deleteLLMProvider: (id: string) =>
+    request<{ id: string; deleted: boolean }>('DELETE', `/api/llm/providers/${encodeURIComponent(id)}`),
+  testLLMProvider: (id: string) =>
+    request<LLMTestResult>('POST', `/api/llm/providers/${encodeURIComponent(id)}/test`),
+  llmChat: (providerId: string, messages: { role: string; content: string }[], maxTokens?: number, temperature?: number) =>
+    request<LLMResponseOut>('POST', '/api/llm/chat', {
+      json: {
+        provider_id: providerId,
+        messages,
+        max_tokens: maxTokens ?? null,
+        temperature: temperature ?? null,
+      },
+    }),
+
+  // ---- M13 AI 自动整理（Phase 2.5） ----
+  createAIJob: (body: {
+    agent_id: string;
+    file_path: string;
+    preset_id: string;
+    provider_id: string;
+    extra_instructions?: string;
+  }) => request<AIJobCreateResult>('POST', '/api/ai/jobs', { json: body }),
+  getAIJob: (jobId: string) => request<AIJob>('GET', `/api/ai/jobs/${encodeURIComponent(jobId)}`),
+  listAIJobs: (params?: { agent_id?: string; status?: AIJobStatus; limit?: number }) =>
+    request<AIJobSummary[]>(
+      'GET',
+      `/api/ai/jobs?${new URLSearchParams(
+        Object.fromEntries(Object.entries(params ?? {}).map(([k, v]) => [k, String(v)])) as Record<string, string>,
+      )}`,
+    ),
+  applyAIJob: (jobId: string) =>
+    request<AIJobApplyResult>('POST', `/api/ai/jobs/${encodeURIComponent(jobId)}/apply`),
+  rejectAIJob: (jobId: string) =>
+    request<AIJob>('POST', `/api/ai/jobs/${encodeURIComponent(jobId)}/reject`),
+  regenerateAIJob: (jobId: string, extraInstructions: string) =>
+    request<AIJobCreateResult>('POST', `/api/ai/jobs/${encodeURIComponent(jobId)}/regenerate`, {
+      json: { extra_instructions: extraInstructions },
+    }),
 };

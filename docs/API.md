@@ -635,6 +635,337 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 
 ---
 
+### 3.11 文档预设（Phase 2.5 · Step 1）
+
+> 数据模型见 `DATA-MODEL.md` 的 `presets` 表。
+
+#### `GET /api/presets`
+
+列出全部预设（系统预设 + 用户自定义）。
+
+**Query**：`?target_file_type=SOUL`（可选，过滤）
+
+```json
+{
+  "data": [
+    {
+      "id": "preset-soul-std",
+      "name": "SOUL.md 标准结构",
+      "target_file_type": "SOUL",
+      "is_system": true,
+      "version": 1,
+      "description": "核心行为准则 + 工作态度 + 学习连续性 + 核心边界",
+      "created_at": 1754478700,
+      "updated_at": 1754478700
+    },
+    {
+      "id": "preset-mem-wlog",
+      "name": "工作日志汇总",
+      "target_file_type": "WORKLOG",
+      "is_system": true,
+      "version": 2,
+      "description": "按时间倒序归档 memory/YYYY-MM-DD.md，提取关键决策"
+    }
+  ]
+}
+```
+
+#### `POST /api/presets`
+
+创建用户预设。
+
+```json
+{
+  "name": "AGENTS.md 老板风格",
+  "target_file_type": "AGENTS",
+  "description": "符合老板偏好的 AGENTS.md 结构",
+  "sections_json": [
+    {"title": "首次运行", "required": true, "order": 1},
+    {"title": "会话启动", "required": true, "order": 2},
+    {"title": "执行原则：三档授权", "required": true, "order": 3}
+  ],
+  "frontmatter_json": {"schema": "soulforge.preset/v1", "owner": "user"},
+  "style_rules": ["emoji-in-section-title=false", "口语化禁令"]
+}
+```
+
+**响应**：`201 Created` + 新预设详情（含 id、version=1、is_system=false）。
+
+#### `GET /api/presets/{id}`
+
+查看预设完整内容（含 sections_json / frontmatter_json / style_rules）。
+
+#### `PUT /api/presets/{id}`
+
+编辑预设。**version 自增 +1**。
+
+**约束**：
+- 系统预设（`is_system=true`）只能编辑 `description` 和 `style_rules`，不能改 sections
+- 用户预设可改全部字段
+
+```json
+{
+  "name": "AGENTS.md 老板风格（v2）",
+  "sections_json": [...],
+  "style_rules": [...]
+}
+```
+
+**响应**：`200 OK` + 更新后预设（含新 version）。
+
+#### `DELETE /api/presets/{id}`
+
+删除用户预设。
+
+**约束**：系统预设 → `403 Forbidden`。
+
+#### `POST /api/presets/{id}/apply`
+
+生成应用 plan（不写入文件）。
+
+**请求**：
+
+```json
+{
+  "agent_id": "main",
+  "file_path": "SOUL.md",
+  "extra_instructions": "保留『阅读策略』章节原内容不动"
+}
+```
+
+**响应**：
+
+```json
+{
+  "data": {
+    "plan_id": "plan-uuid",
+    "agent_id": "main",
+    "file_path": "SOUL.md",
+    "preset_id": "preset-soul-std",
+    "current_snapshot": "# 当前内容前 200 字符...",
+    "proposed_content": "# 新内容...",
+    "unified_diff": "--- SOUL.md\n+++ SOUL.md\n@@ -1,3 +1,5 @@\n...",
+    "lint_warnings": []
+  }
+}
+```
+
+#### `POST /api/presets/{id}/apply/execute`
+
+执行应用（写入文件 + 自动备份 + 审计）。
+
+**请求**：
+
+```json
+{
+  "plan_id": "plan-uuid",
+  "agent_id": "main",
+  "file_path": "SOUL.md"
+}
+```
+
+**响应**：
+
+```json
+{
+  "data": {
+    "backup_id": "bak-uuid",
+    "applied_at": 1754478700,
+    "file_size": 1234
+  }
+}
+```
+
+---
+
+### 3.12 LLM Provider（Phase 2.5 · Step 2）
+
+> 数据模型见 `DATA-MODEL.md` 的 `llm_providers` 表。
+
+#### `GET /api/llm/providers`
+
+列出所有 provider（**api_key 字段返回掩码 `sk-****...****`**）。
+
+```json
+{
+  "data": [
+    {
+      "id": "openai-main",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_masked": "sk-****1234",
+      "model": "gpt-4o",
+      "protocol": "openai-completions",
+      "enabled": true,
+      "max_tokens": 4096,
+      "temperature": 0.3,
+      "timeout_seconds": 60
+    }
+  ]
+}
+```
+
+#### `POST /api/llm/providers`
+
+新增 provider。
+
+```json
+{
+  "id": "openai-main",
+  "base_url": "https://api.openai.com/v1",
+  "api_key": "sk-...",
+  "model": "gpt-4o",
+  "protocol": "openai-completions",
+  "max_tokens": 4096,
+  "temperature": 0.3
+}
+```
+
+**约束**：
+- `protocol` ∈ `{openai-completions, anthropic-messages}`
+- `api_key` 加密存储，**永不回显明文**
+
+#### `PUT /api/llm/providers/{id}`
+
+编辑 provider。
+
+**特殊规则**：`api_key` 字段**留空 = 保留旧 key**（前端 UX：密码框可空）。
+
+#### `DELETE /api/llm/providers/{id}`
+
+**约束**：有关联 `ai_jobs` 的 provider 不可删（避免历史断链）→ `409 Conflict`。
+
+#### `POST /api/llm/providers/{id}/test`
+
+测试连通性。发一条 `{"role":"user","content":"ping"}`，期望收到非空回复。
+
+```json
+{
+  "data": {
+    "ok": true,
+    "latency_ms": 1234,
+    "response_preview": "pong"
+  }
+}
+```
+
+#### `POST /api/llm/chat`
+
+通用 chat 端点（内部用，AI Editor 调用）。
+
+```json
+{
+  "provider_id": "openai-main",
+  "messages": [
+    {"role": "system", "content": "..."},
+    {"role": "user", "content": "..."}
+  ],
+  "max_tokens": 4096,
+  "temperature": 0.3
+}
+```
+
+**响应**：
+
+```json
+{
+  "data": {
+    "content": "...",
+    "usage": {"prompt_tokens": 123, "completion_tokens": 456, "total_tokens": 579},
+    "cost_estimate_usd": 0.0123
+  }
+}
+```
+
+---
+
+### 3.13 AI 自动整理（Phase 2.5 · Step 3）
+
+> 数据模型见 `DATA-MODEL.md` 的 `ai_jobs` 表。
+
+#### `POST /api/ai/jobs`
+
+创建 AI 整理任务（异步执行）。
+
+```json
+{
+  "agent_id": "main",
+  "file_path": "SOUL.md",
+  "preset_id": "preset-soul-std",
+  "provider_id": "openai-main",
+  "extra_instructions": "保留「阅读策略」章节原内容不动"
+}
+```
+
+**响应**：`202 Accepted`：
+
+```json
+{
+  "data": {
+    "job_id": "job-uuid",
+    "status": "pending",
+    "created_at": 1754478700
+  }
+}
+```
+
+#### `GET /api/ai/jobs/{id}`
+
+查询任务状态。
+
+```json
+{
+  "data": {
+    "job_id": "job-uuid",
+    "status": "awaiting_confirm",
+    "agent_id": "main",
+    "file_path": "SOUL.md",
+    "preset_id": "preset-soul-std",
+    "provider_id": "openai-main",
+    "input_snapshot": "# 原内容...",
+    "output_content": "# AI 整理后...",
+    "diff_plan_json": {...},
+    "lint_warnings": [],
+    "usage": {"prompt_tokens": 123, "completion_tokens": 456, "total_tokens": 579},
+    "created_at": 1754478700,
+    "updated_at": 1754478710
+  }
+}
+```
+
+#### `POST /api/ai/jobs/{id}/apply`
+
+应用 AI 输出（写入文件 + 自动备份 + 审计）。
+
+**约束**：
+- `status` 必须是 `awaiting_confirm`，否则 `409 Conflict`
+- 输出必须通过 lint 规则，否则 `422 Unprocessable Entity`
+
+#### `POST /api/ai/jobs/{id}/reject`
+
+拒绝 AI 输出（不写入）。
+
+#### `POST /api/ai/jobs/{id}/regenerate`
+
+重新生成（带新指令）。
+
+```json
+{
+  "extra_instructions": "上次漏了「核心边界」章节，请补上"
+}
+```
+
+**响应**：新建 job（status=pending），原 job 标记为 `superseded`。
+
+#### `GET /api/ai/jobs`
+
+列出 AI 任务历史（按时间倒序）。
+
+**Query**：`?agent_id=main&status=applied&limit=50`
+
+---
+
+---
+
 ## 四、给 AI 编程助手的指令
 
 **生成路由时**：

@@ -39,6 +39,22 @@ OpenClaw 是一个多 Agent 系统，每个 Agent 都拥有自己的 `workspace/
 | **统计与审计** | 仪表盘指标（Agent / 文件 / 备份 / 警告）与每次写操作的完整审计日志。 |
 | **配置中心** | 在界面中直接读写 `config.toml`，无需手工编辑文件。 |
 | **安全护栏** | 路径穿越防护、SHA-256 乐观锁、写操作强制先备份。 |
+| **文档预设** *(Phase 2.5)*     | 为 `SOUL.md` / `AGENTS.md` / `MEMORY.md` / 工作日志等保存可复用的结构模板，通过 plan + confirm 两步应用。 |
+| **LLM 接入** *(Phase 2.5)*     | 接入任意 OpenAI 兼容协议的 LLM（OpenAI / Anthropic / DeepSeek / Ollama），API key 加密存储 + 配置热加载。       |
+| **AI 整理** *(Phase 2.5)*       | 选预设 + 选 provider → Agent 按预设重写文档 → diff 预览 → 老板确认后写入，保证所有灵魂文档结构一致。       |
+
+## 路线图
+
+Soulforge 分四个阶段交付：
+
+| 阶段 | 范围 | 状态 |
+|---|---|---|
+| **Phase 1 · MVP** | 浏览 + 编辑 + 备份 + lint + 同步 + 导入导出 + 模板 + 仪表盘 | ✅ 已交付（v0.1 → v1.0） |
+| **Phase 2 · UI 优化** | 布局微调、主题、快捷键、实时状态条 | 🚧 进行中 |
+| **Phase 2.5 · AI Editor** | 文档预设 → LLM 接入 → AI 自动整理（三步走） | 🚧 进行中 |
+| **Phase 3 · 远期** | 团队协作 / 云端同步 / 第三方插件 | 📋 规划中 |
+
+完整规划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ## 技术栈
 

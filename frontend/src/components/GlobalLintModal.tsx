@@ -7,9 +7,11 @@ import type { LintWarning } from '../types';
 interface GlobalLintModalProps {
   onClose: () => void;
   onOpenResult: (agentId: string, path: string, line?: number) => void;
+  /** 页面内嵌模式（P2 页面化） */
+  embedded?: boolean;
 }
 
-export function GlobalLintModal({ onClose, onOpenResult }: GlobalLintModalProps) {
+export function GlobalLintModal({ onClose, onOpenResult, embedded }: GlobalLintModalProps) {
   const { push: toast } = useToast();
   const [warnings, setWarnings] = useState<LintWarning[]>([]);
   const [checkedFiles, setCheckedFiles] = useState(0);
@@ -44,6 +46,7 @@ export function GlobalLintModal({ onClose, onOpenResult }: GlobalLintModalProps)
       title="全局健康检查"
       onClose={onClose}
       width={820}
+      embedded={embedded}
       footer={
         <button className="btn" onClick={load} disabled={loading}>
           {loading && <span className="spinner" />}

@@ -16,6 +16,8 @@ dependencies = [
     "loguru>=0.7",
     "tomli>=2.0; python_version < '3.11'",
     "send2trash>=1.8",
+    "cryptography>=42",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]

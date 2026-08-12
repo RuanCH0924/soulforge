@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
-from app.api import agents, audit, backups, config, diff, export_import, files, lint, search, stats, sync, templates
+from app.api import agents, ai, audit, backups, config, diff, export_import, files, lint, llm, presets, search, stats, sync, templates
 from app.core.errors import SoulforgeError
 from app.core.logging import setup_logging
 from app.deps import init_registry
@@ -77,6 +77,9 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.include_router(stats.router)
     app.include_router(audit.router)
     app.include_router(config.router)
+    app.include_router(presets.router)
+    app.include_router(llm.router)
+    app.include_router(ai.router)
 
     # 健康检查（不发外部请求）
     @app.get("/api/health")

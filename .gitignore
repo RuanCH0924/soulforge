@@ -37,6 +37,8 @@ pnpm-debug.log*
 # ---------- Soulforge 运行时数据（数据库、备份、上传、日志、配置） ----------
 .soulforge/
 .soulforge-data/
+# LLM API 密钥加密密钥（Fernet），严禁入库
+.soulforge/secrets/
 
 # ---------- 私人 Agent 模板配置（公开仓库不入库） ----------
 templates/

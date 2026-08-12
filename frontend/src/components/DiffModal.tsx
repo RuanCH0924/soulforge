@@ -10,9 +10,11 @@ interface DiffModalProps {
   agents: AgentInfo[];
   initialAgent: string | null;
   onClose: () => void;
+  /** 页面内嵌模式（P3 页面化） */
+  embedded?: boolean;
 }
 
-export function DiffModal({ agents, initialAgent, onClose }: DiffModalProps) {
+export function DiffModal({ agents, initialAgent, onClose, embedded }: DiffModalProps) {
   const { push: toast } = useToast();
   const { settings } = useSettings();
   const [agentA, setAgentA] = useState<string>(initialAgent ?? agents[0]?.id ?? '');
@@ -102,6 +104,7 @@ export function DiffModal({ agents, initialAgent, onClose }: DiffModalProps) {
       title="文件对比"
       onClose={onClose}
       width={860}
+      embedded={embedded}
       footer={
         <button className="btn btn-primary" onClick={runDiff} disabled={!agentA || !agentB || !file || loading}>
           {loading && <span className="spinner" />}

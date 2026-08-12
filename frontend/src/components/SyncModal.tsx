@@ -11,9 +11,11 @@ interface SyncModalProps {
   agents: AgentInfo[];
   onClose: () => void;
   onDone: () => void;
+  /** 页面内嵌模式（P3 页面化） */
+  embedded?: boolean;
 }
 
-export function SyncModal({ agents, onClose, onDone }: SyncModalProps) {
+export function SyncModal({ agents, onClose, onDone, embedded }: SyncModalProps) {
   const { push: toast } = useToast();
   const { settings } = useSettings();
   const [src, setSrc] = useState<string>(agents[0]?.id ?? '');
@@ -114,6 +116,7 @@ export function SyncModal({ agents, onClose, onDone }: SyncModalProps) {
       title="跨 Agent 同步"
       onClose={onClose}
       width={820}
+      embedded={embedded}
       footer={
         plan ? (
           <div style={{ display: 'flex', gap: 8 }}>

@@ -4,10 +4,13 @@ import { useSettings } from '../hooks/useSettings';
 import type { ThemeMode } from '../hooks/useSettings';
 import { useToast } from '../hooks/useToast';
 import type { ConfigSnapshot } from '../types';
+import { LLMProvidersModal } from './LLMProvidersModal';
 import { Modal } from './Modal';
 
 interface SettingsModalProps {
   onClose: () => void;
+  /** 页面内嵌模式（P2 页面化） */
+  embedded?: boolean;
 }
 
 const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
@@ -17,13 +20,14 @@ const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
 ];
 
 /** 设置弹窗 = 本地界面偏好（localStorage）+ 配置中心（config.toml 服务端读写） */
-export function SettingsModal({ onClose }: SettingsModalProps) {
+export function SettingsModal({ onClose, embedded }: SettingsModalProps) {
   const { settings, set } = useSettings();
   const { push } = useToast();
 
   const [cfg, setCfg] = useState<ConfigSnapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [showLLM, setShowLLM] = useState(false);
 
   useEffect(() => {
     api
@@ -76,6 +80,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       title="设置 · 配置中心"
       onClose={onClose}
       width={560}
+      embedded={embedded}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose} disabled={saving}>
@@ -134,11 +139,22 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         />
         显示 OTHER 文件
       </label>
+      <label className="checkbox-row" style={{ marginTop: 6 }}>
+        <input
+          type="checkbox"
+          checked={settings.autoSave}
+          onChange={(e) => set({ autoSave: e.target.checked })}
+        />
+        自动保存（编辑暂停 2 秒后自动写入，建议开启）
+      </label>
 
       {/* ---- 服务端配置（config.toml） ---- */}
       <div className="section-title" style={{ marginTop: 20 }}>
         服务端配置（写入 config.toml，全端生效）
       </div>
+      <button className="btn" style={{ marginBottom: 12 }} onClick={() => setShowLLM(true)}>
+        管理 LLM Provider（AI 模型接入）
+      </button>
       {loadError ? (
         <div className="hint" style={{ color: 'var(--danger, #d9534f)' }}>
           读取服务端配置失败：{loadError}
@@ -204,6 +220,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       <div className="hint">
         提示：备份保留天数 / 自动备份 / Lint 开关保存后立即生效；host / port 等监听设置需重启服务。
       </div>
+      {showLLM && <LLMProvidersModal onClose={() => setShowLLM(false)} />}
     </Modal>
   );
 }

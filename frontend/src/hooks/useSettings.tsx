@@ -10,6 +10,8 @@ export interface Settings {
   showMeta: boolean;
   showMemory: boolean;
   showOther: boolean;
+  /** P5：自动保存（防抖 2s，编辑后自动写入） */
+  autoSave: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -18,6 +20,7 @@ const DEFAULT_SETTINGS: Settings = {
   showMeta: false,
   showMemory: false,
   showOther: false,
+  autoSave: false,
 };
 
 /** 文件角色在当前显示设置下是否可见（CORE 始终可见） */
@@ -44,7 +47,6 @@ interface SettingsContextValue {
   settings: Settings;
   set: (patch: Partial<Settings>) => void;
   resolvedTheme: 'light' | 'dark';
-  toggleTheme: () => void;
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -93,17 +95,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const toggleTheme = useCallback(() => {
-    setSettings((prev) => {
-      const nextTheme: ThemeMode =
-        prev.theme === 'auto' ? (resolvedTheme === 'dark' ? 'light' : 'dark') : prev.theme === 'dark' ? 'light' : 'dark';
-      return { ...prev, theme: nextTheme };
-    });
-  }, [resolvedTheme, setSettings]);
-
   const value = useMemo(
-    () => ({ settings, set, resolvedTheme, toggleTheme }),
-    [settings, set, resolvedTheme, toggleTheme],
+    () => ({ settings, set, resolvedTheme }),
+    [settings, set, resolvedTheme],
   );
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
