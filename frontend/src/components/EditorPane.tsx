@@ -122,6 +122,60 @@ export function EditorPane({
         {dirty && <span className="dirty-mark">● 未保存</span>}
       </div>
 
+      <div className="editor-toolbar">
+        <button className="btn btn-primary" onClick={onSave} disabled={!dirty || saving}>
+          {saving && <span className="spinner" />}
+          保存
+        </button>
+        <button className="btn" onClick={onHistory}>
+          历史
+        </button>
+        <button className="btn" onClick={onApplyPreset} title="应用文档预设：按预设结构补齐缺失章节，生成 diff 预览后确认写入">
+          应用预设
+        </button>
+        <button className="btn" onClick={onApplyAI} title="AI 自动整理：选预设+LLM Provider，AI 重写后生成 diff 预览，确认后写入">
+          AI 整理
+        </button>
+        <button className="btn" onClick={runLint} disabled={linting}>
+          {linting && <span className="spinner" />}
+          检查
+        </button>
+        <button className="btn" onClick={onExport}>
+          导出
+        </button>
+        <div className="mode-toggle" role="tablist" aria-label="编辑器模式">
+          <button
+            type="button"
+            className={mode === 'edit' ? 'active' : ''}
+            onClick={() => setMode('edit')}
+          >
+            编辑
+          </button>
+          <button
+            type="button"
+            className={mode === 'preview' ? 'active' : ''}
+            onClick={() => setMode('preview')}
+          >
+            预览
+          </button>
+        </div>
+        <div className="right">
+          {warnings.length > 0 && (
+            <button className="btn" onClick={() => setLintOpen(true)}>
+              警告 {warnings.length}
+            </button>
+          )}
+          {mode === 'preview' && (
+            <span className="muted" style={{ fontSize: 11 }}>
+              预览中可直接编辑，实时同步 Markdown
+            </span>
+          )}
+          <span className="muted" style={{ fontSize: 11 }}>
+            Ctrl+S 保存
+          </span>
+        </div>
+      </div>
+
       <div className="editor-host">
         {mode === 'edit' ? (
           <Editor
@@ -187,60 +241,6 @@ export function EditorPane({
             </div>
           </div>
         )}
-      </div>
-
-      <div className="editor-toolbar">
-        <button className="btn btn-primary" onClick={onSave} disabled={!dirty || saving}>
-          {saving && <span className="spinner" />}
-          保存
-        </button>
-        <button className="btn" onClick={onHistory}>
-          历史
-        </button>
-        <button className="btn" onClick={onApplyPreset} title="应用文档预设：按预设结构补齐缺失章节，生成 diff 预览后确认写入">
-          应用预设
-        </button>
-        <button className="btn" onClick={onApplyAI} title="AI 自动整理：选预设+LLM Provider，AI 重写后生成 diff 预览，确认后写入">
-          AI 整理
-        </button>
-        <button className="btn" onClick={runLint} disabled={linting}>
-          {linting && <span className="spinner" />}
-          检查
-        </button>
-        <button className="btn" onClick={onExport}>
-          导出
-        </button>
-        <div className="mode-toggle" role="tablist" aria-label="编辑器模式">
-          <button
-            type="button"
-            className={mode === 'edit' ? 'active' : ''}
-            onClick={() => setMode('edit')}
-          >
-            编辑
-          </button>
-          <button
-            type="button"
-            className={mode === 'preview' ? 'active' : ''}
-            onClick={() => setMode('preview')}
-          >
-            预览
-          </button>
-        </div>
-        <div className="right">
-          {warnings.length > 0 && (
-            <button className="btn" onClick={() => setLintOpen(true)}>
-              警告 {warnings.length}
-            </button>
-          )}
-          {mode === 'preview' && (
-            <span className="muted" style={{ fontSize: 11 }}>
-              预览中可直接编辑，实时同步 Markdown
-            </span>
-          )}
-          <span className="muted" style={{ fontSize: 11 }}>
-            Ctrl+S 保存
-          </span>
-        </div>
       </div>
     </section>
   );
