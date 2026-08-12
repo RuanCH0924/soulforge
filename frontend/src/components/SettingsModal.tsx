@@ -55,7 +55,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         },
         lint: { enabled: cfg.lint.enabled, strict_mode: cfg.lint.strict_mode },
         ui: { default_theme: settings.theme, default_view: cfg.ui.default_view },
-        advanced: { show_skills: settings.showSkills, show_meta: settings.showMeta },
+        advanced: {
+          show_skills: settings.showSkills,
+          show_meta: settings.showMeta,
+          show_memory: settings.showMemory,
+          show_other: settings.showOther,
+        },
       });
       push('配置已保存（host/port 修改需重启服务后生效）', 'success');
       onClose();
@@ -112,6 +117,22 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           onChange={(e) => set({ showMeta: e.target.checked })}
         />
         显示 META 文件（如 openclaw.json，修改需谨慎）
+      </label>
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          checked={settings.showMemory}
+          onChange={(e) => set({ showMemory: e.target.checked })}
+        />
+        显示 MEMORY 文件
+      </label>
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          checked={settings.showOther}
+          onChange={(e) => set({ showOther: e.target.checked })}
+        />
+        显示 OTHER 文件
       </label>
 
       {/* ---- 服务端配置（config.toml） ---- */}

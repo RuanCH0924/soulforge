@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { isRoleVisible, useSettings } from '../hooks/useSettings';
 import { useToast } from '../hooks/useToast';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Modal } from './Modal';
@@ -14,6 +15,7 @@ interface SyncModalProps {
 
 export function SyncModal({ agents, onClose, onDone }: SyncModalProps) {
   const { push: toast } = useToast();
+  const { settings } = useSettings();
   const [src, setSrc] = useState<string>(agents[0]?.id ?? '');
   const [dst, setDst] = useState<string>(agents[1]?.id ?? agents[0]?.id ?? '');
   const [srcFiles, setSrcFiles] = useState<string[]>([]);
@@ -31,9 +33,14 @@ export function SyncModal({ agents, onClose, onDone }: SyncModalProps) {
       .listFiles(src)
       .then((fs) => {
         if (!cancelled) {
-          const paths = fs.map((f) => f.path).sort((a, b) => a.localeCompare(b));
+          // 与文件面板保持一致：隐藏的角色（MEMORY/SKILL/META/OTHER）不进入待选列表
+          const paths = fs
+            .filter((f) => isRoleVisible(f.role, settings))
+            .map((f) => f.path)
+            .sort((a, b) => a.localeCompare(b));
           setSrcFiles(paths);
-          setPlanFiles(new Set(paths));
+          // 默认不勾选任何文件，由用户按需选择要生成计划的文件
+          setPlanFiles(new Set());
         }
       })
       .catch((e) => {
@@ -42,7 +49,7 @@ export function SyncModal({ agents, onClose, onDone }: SyncModalProps) {
     return () => {
       cancelled = true;
     };
-  }, [src, toast]);
+  }, [src, settings, toast]);
 
   function togglePlanFile(p: string) {
     setPlanFiles((prev) => {
@@ -162,7 +169,7 @@ export function SyncModal({ agents, onClose, onDone }: SyncModalProps) {
             {srcFiles.map((p) => (
               <label key={p} className="checkbox-row">
                 <input type="checkbox" checked={planFiles.has(p)} onChange={() => togglePlanFile(p)} />
-                <span className="mono" style={{ fontSize: 12 }}>
+                <span className="mono" style={{ fontSize: 12 }} title={p}>
                   {p}
                 </span>
               </label>
@@ -188,12 +195,12 @@ export function SyncModal({ agents, onClose, onDone }: SyncModalProps) {
               >
                 <label className="checkbox-row" style={{ padding: '8px 10px', cursor: 'pointer' }}>
                   <input type="checkbox" checked={isChecked} onChange={() => toggleChecked(f.path)} />
-                  <span className="mono" style={{ fontWeight: 700 }}>
+                  <span className="mono sync-plan-path" style={{ fontWeight: 700 }} title={f.path}>
                     {f.path}
                   </span>
                   <span
                     className={`similarity-bar ${similarityColor(f.similarity)}`}
-                    style={{ margin: 0, flex: 1, minWidth: 120 }}
+                    style={{ margin: 0, flex: 'none', minWidth: 120 }}
                   >
                     <div className="similarity-track">
                       <div className="similarity-fill" style={{ width: similarityPercent(f.similarity) }} />

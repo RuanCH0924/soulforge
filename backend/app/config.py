@@ -55,6 +55,8 @@ class UIConfig:
 class AdvancedConfig:
     show_skills: bool = False
     show_meta: bool = False
+    show_memory: bool = False
+    show_other: bool = False
 
 
 @dataclass
@@ -143,6 +145,8 @@ def load_config() -> Config:
         advanced=AdvancedConfig(
             show_skills=bool(advanced_raw.get("show_skills", False)),
             show_meta=bool(advanced_raw.get("show_meta", False)),
+            show_memory=bool(advanced_raw.get("show_memory", False)),
+            show_other=bool(advanced_raw.get("show_other", False)),
         ),
         openclaw=OpenClawConfig(dir=str(openclaw_dir)),
     )

@@ -231,6 +231,11 @@ export interface ConfigSnapshot {
   backup: { retention_days: number; auto_backup_on_write: boolean };
   lint: { enabled: boolean; strict_mode: boolean };
   ui: { default_theme: 'auto' | 'light' | 'dark'; default_view: 'tree' | 'list' };
-  advanced: { show_skills: boolean; show_meta: boolean };
+  advanced: {
+    show_skills: boolean;
+    show_meta: boolean;
+    show_memory: boolean;
+    show_other: boolean;
+  };
   openclaw: { dir: string };
 }

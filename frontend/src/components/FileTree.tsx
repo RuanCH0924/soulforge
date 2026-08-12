@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FileInfo, FileRole } from '../types';
+import { isRoleVisible } from '../hooks/useSettings';
 import { formatBytes } from '../utils/format';
 
 interface FileTreeProps {
@@ -9,6 +10,8 @@ interface FileTreeProps {
   selectedPath: string | null;
   showSkills: boolean;
   showMeta: boolean;
+  showMemory: boolean;
+  showOther: boolean;
   onSelect: (path: string) => void;
 }
 
@@ -27,6 +30,8 @@ export function FileTree({
   selectedPath,
   showSkills,
   showMeta,
+  showMemory,
+  showOther,
   onSelect,
 }: FileTreeProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -59,11 +64,8 @@ export function FileTree({
             <div>这个 Agent 的 workspace 是空的</div>
           </div>
         ) : (
-          GROUPS.filter((g) => {
-            if (g.role === 'SKILL' && !showSkills) return false;
-            if (g.role === 'META' && !showMeta) return false;
-            return true;
-          }).map((group) => {
+          GROUPS.filter((g) => isRoleVisible(g.role, { showSkills, showMeta, showMemory, showOther })).map(
+            (group) => {
             const groupFiles = files
               .filter((f) => f.role === group.role)
               .sort((a, b) => a.path.localeCompare(b.path));

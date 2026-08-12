@@ -157,7 +157,7 @@ export function SearchModal({ agents, onClose, onOpenResult }: SearchModalProps)
                     <span className="badge-warn" style={{ background: 'var(--accent)' }}>
                       {h.agent_id}
                     </span>
-                    <span className="mono">{h.file_path}</span>
+                    <span className="mono" title={h.file_path}>{h.file_path}</span>
                     <span className="muted">第 {h.line_number} 行</span>
                   </div>
                   <div className="item-sub">

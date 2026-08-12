@@ -66,7 +66,12 @@ class Registry:
             },
             "lint": {"enabled": c.lint.enabled, "strict_mode": c.lint.strict_mode},
             "ui": {"default_theme": c.ui.default_theme, "default_view": c.ui.default_view},
-            "advanced": {"show_skills": c.advanced.show_skills, "show_meta": c.advanced.show_meta},
+            "advanced": {
+                "show_skills": c.advanced.show_skills,
+                "show_meta": c.advanced.show_meta,
+                "show_memory": c.advanced.show_memory,
+                "show_other": c.advanced.show_other,
+            },
             "openclaw": {"dir": str(c.openclaw_dir)},
         }
 
@@ -101,6 +106,10 @@ class Registry:
                 c.advanced.show_skills = patch["advanced"]["show_skills"]
             if "show_meta" in patch["advanced"]:
                 c.advanced.show_meta = patch["advanced"]["show_meta"]
+            if "show_memory" in patch["advanced"]:
+                c.advanced.show_memory = patch["advanced"]["show_memory"]
+            if "show_other" in patch["advanced"]:
+                c.advanced.show_other = patch["advanced"]["show_other"]
 
         self._persist_config(patch)
         logger.info("配置已更新：{}", patch)

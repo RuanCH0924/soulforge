@@ -39,6 +39,8 @@ class UICfg(BaseModel):
 class AdvancedCfg(BaseModel):
     show_skills: bool | None = None
     show_meta: bool | None = None
+    show_memory: bool | None = None
+    show_other: bool | None = None
 
 
 class OpenClawCfg(BaseModel):

@@ -48,7 +48,7 @@ export function EditorPane({
   const [lintOpen, setLintOpen] = useState(false);
   const [linting, setLinting] = useState(false);
   const [warnings, setWarnings] = useState<LintWarning[]>([]);
-  const [mode, setMode] = useState<EditorMode>('edit');
+  const [mode, setMode] = useState<EditorMode>('preview');
 
   // 打开文件后定位到指定行
   useEffect(() => {
@@ -60,10 +60,11 @@ export function EditorPane({
     ed.focus();
   }, [reveal, fileKey]);
 
-  // 切换文件时重置 lint 面板
+  // 切换文件时重置 lint 面板，并默认回到预览模式
   useEffect(() => {
     setLintOpen(false);
     setWarnings([]);
+    setMode('preview');
   }, [fileKey]);
 
   const handleMount: OnMount = (ed) => {
@@ -112,7 +113,7 @@ export function EditorPane({
   return (
     <section className="editor-pane">
       <div className="editor-pathbar">
-        <span className="path">{file.path}</span>
+        <span className="path" title={file.path}>{file.path}</span>
         <span className={`role-badge role-${file.role}`}>{file.role}</span>
         {dirty && <span className="dirty-mark">● 未保存</span>}
       </div>

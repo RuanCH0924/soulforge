@@ -48,41 +48,41 @@ export function TopBar(props: TopBarProps) {
       </div>
 
       <div className="topbar-actions">
-        <button className="btn" onClick={onRescan} disabled={scanning}>
+        <button className="btn" onClick={onRescan} disabled={scanning} title="重新扫描 OpenClaw workspace，发现新增/变更的 Agent">
           {scanning && <span className="spinner" />}
           重新扫描
         </button>
-        <button className="btn" onClick={onCrossEdit}>
+        <button className="btn" onClick={onCrossEdit} title="在多个 Agent 间批量编辑相同路径的文件">
           跨Agent编辑
         </button>
-        <button className="btn" onClick={onDiff}>
+        <button className="btn" onClick={onDiff} title="对比两个 Agent 的文件内容与目录差异">
           对比
         </button>
-        <button className="btn" onClick={onSync}>
+        <button className="btn" onClick={onSync} title="将当前 Agent 的文件变更同步到其他 Agent">
           同步
         </button>
-        <button className="btn" onClick={onExportAll}>
+        <button className="btn" onClick={onExportAll} title="将所有 Agent 导出为 Prompt Pack（.tar.gz）">
           导出全部
         </button>
-        <button className="btn" onClick={onImport}>
+        <button className="btn" onClick={onImport} title="从 Prompt Pack（.tar.gz）导入，导入前自动备份现有文件">
           导入
         </button>
-        <button className="btn" onClick={onNewAgent}>
+        <button className="btn" onClick={onNewAgent} title="基于模板创建新的 Agent">
           新建Agent
         </button>
-        <button className="btn" onClick={onLintAll}>
+        <button className="btn" onClick={onLintAll} title="对所有 Agent 执行全局 Lint 健康检查">
           健康检查
         </button>
-        <button className="btn" onClick={onStats}>
+        <button className="btn" onClick={onStats} title="查看文件与 Agent 统计仪表盘">
           统计
         </button>
-        <button className="btn" onClick={onAudit}>
+        <button className="btn" onClick={onAudit} title="查看最近 100 条操作审计日志">
           审计
         </button>
         <button className="btn" onClick={onToggleTheme} title="切换浅色/深色主题">
           {resolvedTheme === 'dark' ? '浅色' : '深色'}
         </button>
-        <button className="btn" onClick={onSettings}>
+        <button className="btn" onClick={onSettings} title="打开应用设置">
           设置
         </button>
       </div>

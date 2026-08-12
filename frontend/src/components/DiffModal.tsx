@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { isRoleVisible, useSettings } from '../hooks/useSettings';
 import { useToast } from '../hooks/useToast';
 import { Modal } from './Modal';
 import type { AgentInfo, DiffResult, FileInfo } from '../types';
@@ -13,6 +14,7 @@ interface DiffModalProps {
 
 export function DiffModal({ agents, initialAgent, onClose }: DiffModalProps) {
   const { push: toast } = useToast();
+  const { settings } = useSettings();
   const [agentA, setAgentA] = useState<string>(initialAgent ?? agents[0]?.id ?? '');
   const [agentB, setAgentB] = useState<string>(() => {
     const first = agents.find((a) => a.id !== initialAgent);
@@ -32,7 +34,7 @@ export function DiffModal({ agents, initialAgent, onClose }: DiffModalProps) {
     api
       .listFiles(agentA)
       .then((fs) => {
-        if (!cancelled) setFilesA(fs);
+        if (!cancelled) setFilesA(fs.filter((f) => isRoleVisible(f.role, settings)));
       })
       .catch((e) => {
         if (!cancelled) toast(`加载 ${agentA} 文件失败：${(e as Error).message}`, 'error');
@@ -43,7 +45,7 @@ export function DiffModal({ agents, initialAgent, onClose }: DiffModalProps) {
     return () => {
       cancelled = true;
     };
-  }, [agentA, toast]);
+  }, [agentA, settings, toast]);
 
   useEffect(() => {
     if (!agentB) return;
@@ -52,7 +54,7 @@ export function DiffModal({ agents, initialAgent, onClose }: DiffModalProps) {
     api
       .listFiles(agentB)
       .then((fs) => {
-        if (!cancelled) setFilesB(fs);
+        if (!cancelled) setFilesB(fs.filter((f) => isRoleVisible(f.role, settings)));
       })
       .catch((e) => {
         if (!cancelled) toast(`加载 ${agentB} 文件失败：${(e as Error).message}`, 'error');
@@ -63,7 +65,7 @@ export function DiffModal({ agents, initialAgent, onClose }: DiffModalProps) {
     return () => {
       cancelled = true;
     };
-  }, [agentB, toast]);
+  }, [agentB, settings, toast]);
 
   // 共同存在的文件
   const commonFiles = filesA

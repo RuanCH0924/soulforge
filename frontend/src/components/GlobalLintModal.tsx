@@ -76,7 +76,7 @@ export function GlobalLintModal({ onClose, onOpenResult }: GlobalLintModalProps)
                   <span className="badge-warn" style={{ background: 'var(--accent)' }}>
                     {w.agent_id}
                   </span>
-                  <span className="mono">{w.file_path}</span>
+                  <span className="mono" title={w.file_path}>{w.file_path}</span>
                   {w.line_number != null && <span className="muted">第 {w.line_number} 行</span>}
                   <span className="muted" style={{ marginLeft: 'auto', fontWeight: 600, color: 'var(--danger)' }}>
                     {w.rule_name}

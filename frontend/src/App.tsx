@@ -406,6 +406,8 @@ export default function App() {
             selectedPath={selectedFile?.path ?? null}
             showSkills={settings.showSkills}
             showMeta={settings.showMeta}
+            showMemory={settings.showMemory}
+            showOther={settings.showOther}
             onSelect={handleSelectFile}
           />
         </div>
@@ -427,7 +429,10 @@ export default function App() {
             agentId={selectedAgentId}
             file={selectedFile}
             content={editorContent}
-            onChange={setEditorContent}
+            onChange={(v) => {
+              setEditorContent(v);
+              setDirty(true);
+            }}
             dirty={dirty}
             saving={saving}
             fileKey={fileKey}

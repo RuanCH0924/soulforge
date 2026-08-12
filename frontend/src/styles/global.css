@@ -395,6 +395,8 @@ body {
 }
 
 .tree-file .file-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -449,6 +451,8 @@ body {
 }
 
 .editor-pathbar .path {
+  flex: 1;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-primary);
@@ -847,6 +851,10 @@ body {
   margin: 0;
   font-size: 15px;
   font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .modal-body {
@@ -935,6 +943,27 @@ body {
   pointer-events: none;
 }
 
+/* 超长文件名：grid 子项允许收缩并省略显示 */
+.checkbox-grid .checkbox-row {
+  min-width: 0;
+}
+
+.checkbox-grid .checkbox-row .mono,
+.checkbox-grid .checkbox-row .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 同步计划结果行：路径占剩余空间，省略显示 */
+.checkbox-row .sync-plan-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- 列表（搜索结果 / 历史 / 审计） ---------- */
 .item-list {
   display: flex;
@@ -957,6 +986,14 @@ body {
   align-items: center;
   gap: 8px;
   font-weight: 600;
+}
+
+.item-list .item .item-title .mono {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .item-list .item .item-sub {
@@ -1104,6 +1141,9 @@ table.audit-table {
 
 .audit-table td.mono {
   font-family: var(--font-mono);
+  max-width: 380px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---------- 模板卡片 ---------- */
@@ -1262,6 +1302,11 @@ table.audit-table {
 
 .mono {
   font-family: var(--font-mono);
+}
+
+/* 确认弹窗里列出的长路径允许换行，避免撑破弹窗 */
+.modal-body li.mono {
+  word-break: break-all;
 }
 
 .section-title {

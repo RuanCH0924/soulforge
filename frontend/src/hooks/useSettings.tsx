@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import type { FileRole } from '../types';
 
 export type ThemeMode = 'auto' | 'light' | 'dark';
 
@@ -7,9 +8,36 @@ export interface Settings {
   theme: ThemeMode;
   showSkills: boolean;
   showMeta: boolean;
+  showMemory: boolean;
+  showOther: boolean;
 }
 
-const DEFAULT_SETTINGS: Settings = { theme: 'auto', showSkills: false, showMeta: false };
+const DEFAULT_SETTINGS: Settings = {
+  theme: 'auto',
+  showSkills: false,
+  showMeta: false,
+  showMemory: false,
+  showOther: false,
+};
+
+/** 文件角色在当前显示设置下是否可见（CORE 始终可见） */
+export function isRoleVisible(
+  role: FileRole,
+  settings: Pick<Settings, 'showSkills' | 'showMeta' | 'showMemory' | 'showOther'>,
+): boolean {
+  switch (role) {
+    case 'SKILL':
+      return settings.showSkills;
+    case 'META':
+      return settings.showMeta;
+    case 'MEMORY':
+      return settings.showMemory;
+    case 'OTHER':
+      return settings.showOther;
+    default:
+      return true;
+  }
+}
 const STORAGE_KEY = 'soulforge.settings';
 
 interface SettingsContextValue {
