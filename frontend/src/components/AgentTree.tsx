@@ -19,7 +19,6 @@ export function AgentTree({
 }: AgentTreeProps) {
   return (
     <>
-      <div className="pane-header">Agent</div>
       <div className="agent-tree">
         {loading ? (
           <div className="state-block">

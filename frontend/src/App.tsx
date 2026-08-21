@@ -7,16 +7,20 @@ import { ApplyAIModal } from './components/ApplyAIModal';
 import { ApplyPresetModal } from './components/ApplyPresetModal';
 import { CommandPalette } from './components/CommandPalette';
 import type { CommandItem } from './components/CommandPalette';
+import { CoreAgentList, CoreCategoryList } from './components/CoreBrowser';
 import { FileTree } from './components/FileTree';
 import { HistoryModal } from './components/HistoryModal';
 import { SearchModal } from './components/SearchModal';
 import { StatusBar } from './components/StatusBar';
 import { TopBar } from './components/TopBar';
 import { SideNav } from './components/SideNav';
+import { ViewToggle } from './components/ViewToggle';
+import type { BrowseMode } from './components/ViewToggle';
 import { DataPage } from './pages/DataPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ToolsPage } from './pages/ToolsPage';
 import { useHashRoute } from './hooks/useHashRoute';
+import { useCoreCatalog } from './hooks/useCoreCatalog';
 import { useSettings } from './hooks/useSettings';
 import { useToast } from './hooks/useToast';
 import type { AgentInfo, FileContent, FileInfo, StatsResult } from './types';
@@ -108,6 +112,26 @@ export default function App() {
     }
     setShowIntro(false);
   }, []);
+
+  // ---- 文件浏览模式（Agent 原有 / CORE 分类）----
+  const BROWSE_MODE_KEY = 'soulforge.browse.mode';
+  const [browseMode, setBrowseMode] = useState<BrowseMode>(() => {
+    try {
+      return window.localStorage.getItem(BROWSE_MODE_KEY) === 'core' ? 'core' : 'agent';
+    } catch {
+      return 'agent';
+    }
+  });
+  const switchBrowseMode = useCallback((m: BrowseMode) => {
+    setBrowseMode(m);
+    try {
+      window.localStorage.setItem(BROWSE_MODE_KEY, m);
+    } catch {
+      // ignore
+    }
+  }, []);
+  // CORE 分类目录：左栏一级分类 + 右栏二级 Agent（跨模式共享，状态保留）
+  const coreCatalog = useCoreCatalog(agents);
 
   useEffect(() => {
     dirtyRef.current = dirty;
@@ -450,31 +474,66 @@ export default function App() {
             {!leftCollapsed && (
               <>
                 <div className="pane" style={{ width: leftWidth, flex: 'none' }}>
-                  <AgentTree
-                    agents={agents}
-                    loading={agentsLoading}
-                    selectedAgentId={selectedAgentId}
-                    warningCounts={warningCounts}
-                    onSelect={handleSelectAgent}
-                    onRefresh={() => void rescan()}
-                  />
+                  <div className="pane-header">
+                    <ViewToggle mode={browseMode} onChange={switchBrowseMode} />
+                    <span className="pane-header-title">
+                      {browseMode === 'core' ? 'CORE 分类' : 'Agent'}
+                    </span>
+                  </div>
+                  {browseMode === 'core' ? (
+                    coreCatalog.loading && coreCatalog.coreTypes.length === 0 ? (
+                      <div className="state-block">
+                        <div className="spinner-lg" />
+                        <div>正在加载文件清单...</div>
+                      </div>
+                    ) : (
+                      <CoreCategoryList
+                        coreTypes={coreCatalog.coreTypes}
+                        agentsByCore={coreCatalog.agentsByCore}
+                        activeCore={coreCatalog.activeCore}
+                        onSelect={coreCatalog.setActiveCore}
+                      />
+                    )
+                  ) : (
+                    <AgentTree
+                      agents={agents}
+                      loading={agentsLoading}
+                      selectedAgentId={selectedAgentId}
+                      warningCounts={warningCounts}
+                      onSelect={handleSelectAgent}
+                      onRefresh={() => void rescan()}
+                    />
+                  )}
                 </div>
                 <div className="divider" onMouseDown={startLeftResize} />
               </>
             )}
 
             <div className="pane" style={{ width: midWidth, flex: 'none' }}>
-              <FileTree
-                agentId={selectedAgentId}
-                files={files}
-                loading={filesLoading}
-                selectedPath={selectedFile?.path ?? null}
-                showSkills={settings.showSkills}
-                showMeta={settings.showMeta}
-                showMemory={settings.showMemory}
-                showOther={settings.showOther}
-                onSelect={handleSelectFile}
-              />
+              {browseMode === 'core' ? (
+                <CoreAgentList
+                  activeCore={coreCatalog.activeCore}
+                  agents={agents}
+                  agentsByCore={coreCatalog.agentsByCore}
+                  selectedAgentId={selectedAgentId}
+                  selectedPath={selectedFile?.path ?? null}
+                  onOpenFile={(a, p) => {
+                    void openFile(a, p);
+                  }}
+                />
+              ) : (
+                <FileTree
+                  agentId={selectedAgentId}
+                  files={files}
+                  loading={filesLoading}
+                  selectedPath={selectedFile?.path ?? null}
+                  showSkills={settings.showSkills}
+                  showMeta={settings.showMeta}
+                  showMemory={settings.showMemory}
+                  showOther={settings.showOther}
+                  onSelect={handleSelectFile}
+                />
+              )}
             </div>
 
             <div className="divider" onMouseDown={startMidResize} />

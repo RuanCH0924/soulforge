@@ -256,3 +256,21 @@
 
 **验收结果**：前端 `tsc --noEmit && vite build` 通过；后端 `pytest` 129 passed / 1 skipped 无回归。
 
+## 七、CORE 分类浏览模式（2026-08-21 落地与嵌套修复）
+
+**目标**：主工作台新增「CORE 分类 → Agent」双级浏览模式，可与原有「按 Agent」模式自由切换，切换状态保留。
+
+| 项 | 落地 |
+|----|------|
+| 模式切换 | `ViewToggle`（Agent / CORE 分类 两个 tab），`browseMode` 提升至 App 层并持久化到 `localStorage`（`soulforge.browse.mode`） |
+| 一级目录 | `buildCoreCatalog()` 纯函数：由「agentId → 文件列表」缓存构建「CORE 文件名 → 包含它的 Agent 条目」索引；`CORE_PRIORITY` 固定优先级排序 |
+| 状态提升 | `useCoreCatalog` 懒加载并缓存全部 Agent 文件清单（只请求一次），`activeCore` 提升至 App 层，切换模式不丢失；默认选中第一个 CORE 分类 |
+| 左栏 | core 模式渲染 `CoreCategoryList`（一级 CORE 分类平铺列表，含计数徽标）；agent 模式渲染原有 `AgentTree` |
+| 中栏 | core 模式渲染 `CoreAgentList`（「包含「XXX.md」的 Agent」二级列表，点击打开该 Agent 下的关联文件）；agent 模式渲染原有 `FileTree` |
+| 嵌套修复 | 旧实现将两级菜单堆叠在中栏 file-tree 内（「CORE 菜单嵌套 Agent 菜单」）；重构为「左栏一级 + 中栏二级」平铺结构，删除旧 `CoreAgentBrowser.tsx`，`FileTree` 恢复为纯文件树 |
+
+**测试基线（切换功能，真实 API 数据 8 Agent / 2461 文件 / 56 CORE）**：
+- 连续切换 12 次（agent↔core 往返、core 内多分类切换、快速往返、二级条目联动），57 项断言全部通过；
+- 每轮校验：左栏 = CORE 分类一级列表（无 `core-agent-item`/`file-tree` 嵌套）；中栏 = 「包含 XXX.md 的 Agent」二级列表（条目 path 均等于当前分类，无一级分类残留）；切回 agent 后左栏 Agent 列表与中栏文件树正常、无 CORE 残留；
+- `npm run build`（`tsc --noEmit && vite build`）通过。
+
