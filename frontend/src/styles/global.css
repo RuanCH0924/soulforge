@@ -453,6 +453,67 @@ body {
   background: var(--bg-elevated);
 }
 
+/* 多文档多窗口：编辑栏内固定横向平铺（2 窗等宽 50%，3 窗等宽 1/3） */
+.editor-windows {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  padding: 6px;
+  background: var(--bg-base);
+}
+
+.editor-window {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+/* 激活窗口：强调边框，方便跨窗口区分 */
+.editor-window.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+
+/* 编辑栏顶部：单窗口 / 多窗口模式开关 */
+.editor-mode-toggle {
+  flex: none;
+  margin-left: auto;
+}
+
+.editor-mode-toggle .mode-toggle button {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* 窗口顶部路径栏的文档关闭按钮（仅作用于当前窗口） */
+.editor-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-left: 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.editor-close:hover {
+  background: var(--bg-hover);
+  color: var(--danger);
+}
+
 .editor-pathbar {
   height: 34px;
   flex: none;
@@ -532,6 +593,12 @@ body {
   padding: 0 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.editor-toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .editor-toolbar .right {

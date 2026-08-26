@@ -30,13 +30,28 @@ const EditorPane = lazy(() =>
   import('./components/EditorPane').then((m) => ({ default: m.EditorPane })),
 );
 
-// Workbench 弹窗收敛：仅保留与当前文件上下文相关的弹窗
+// Workbench 弹窗收敛：文件级弹窗需携带目标编辑窗口的 key
 type ModalState =
   | null
   | 'search'
-  | 'history'
-  | 'apply-preset'
-  | 'ai-cleanup';
+  | { type: 'history' | 'apply-preset' | 'ai-cleanup'; key: string };
+
+/** 编辑栏内最多允许同时打开的编辑窗口数（固定横向平铺） */
+const MAX_WINDOWS = 3;
+
+/** 一个编辑窗口对应一个已打开文档的完整编辑状态 */
+interface EditorTab {
+  /** 唯一标识：`agentId/path` */
+  key: string;
+  agentId: string;
+  file: FileContent;
+  /** 编辑缓冲区（未保存内容） */
+  content: string;
+  dirty: boolean;
+  saving: boolean;
+  /** 打开文件后要定位到的行号（搜索结果 / lint 跳转） */
+  reveal?: { line: number; nonce: number } | undefined;
+}
 
 /** 拖拽调整分栏宽度 */
 function startDrag(e: ReactMouseEvent, onMove: (dx: number) => void): void {
@@ -71,19 +86,46 @@ export default function App() {
   const [warningCounts, setWarningCounts] = useState<Record<string, number>>({});
   const [stats, setStats] = useState<StatsResult | null>(null);
 
-  // ---- 选择状态 ----
+  // ---- 浏览状态（左/中栏当前浏览的 Agent 与其文件列表） ----
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const filesAgentIdRef = useRef<string | null>(null);
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<FileContent | null>(null);
-  const selectedFileRef = useRef<FileContent | null>(null);
-  const [editorContent, setEditorContent] = useState('');
-  const [dirty, setDirty] = useState(false);
-  const dirtyRef = useRef(false);
-  const [saving, setSaving] = useState(false);
-  const [fileKey, setFileKey] = useState('');
-  const [reveal, setReveal] = useState<{ line: number; nonce: number } | undefined>(undefined);
+
+  // ---- 多文档编辑窗口（编辑栏内横向平铺，最多 MAX_WINDOWS 个） ----
+  const [tabs, setTabs] = useState<EditorTab[]>([]);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const tabsRef = useRef<EditorTab[]>([]);
+  const activeKeyRef = useRef<string | null>(null);
+  const [anyDirty, setAnyDirty] = useState(false);
+  const anyDirtyRef = useRef(false);
+
+  // ---- 编辑器模式：单窗口（打开文档即替换）/ 多窗口（横向平铺） ----
+  const EDITOR_MODE_KEY = 'soulforge.editor.mode';
+  const [editorMode, setEditorMode] = useState<'single' | 'multi'>(() => {
+    try {
+      return window.localStorage.getItem(EDITOR_MODE_KEY) === 'single' ? 'single' : 'multi';
+    } catch {
+      return 'multi';
+    }
+  });
+  const editorModeRef = useRef<'single' | 'multi'>('multi');
+  useEffect(() => {
+    editorModeRef.current = editorMode;
+  }, [editorMode]);
+
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
+  useEffect(() => {
+    activeKeyRef.current = activeKey;
+  }, [activeKey]);
+  useEffect(() => {
+    anyDirtyRef.current = anyDirty;
+  }, [anyDirty]);
+  useEffect(() => {
+    setAnyDirty(tabs.some((t) => t.dirty));
+  }, [tabs]);
 
   // ---- 布局 ----
   const [leftCollapsed, setLeftCollapsed] = useState(false);
@@ -133,12 +175,8 @@ export default function App() {
   // CORE 分类目录：左栏一级分类 + 右栏二级 Agent（跨模式共享，状态保留）
   const coreCatalog = useCoreCatalog(agents);
 
-  useEffect(() => {
-    dirtyRef.current = dirty;
-  }, [dirty]);
-  useEffect(() => {
-    selectedFileRef.current = selectedFile;
-  }, [selectedFile]);
+  // 当前激活的编辑窗口（用于文件树高亮与快捷键）
+  const activeTab = tabs.find((t) => t.key === activeKey) ?? null;
 
   // ---- 数据加载 ----
   const refreshFiles = useCallback(async (agentId: string) => {
@@ -163,8 +201,6 @@ export default function App() {
     async (agentId: string) => {
       setSelectedAgentId(agentId);
       filesAgentIdRef.current = agentId;
-      setSelectedFile(null);
-      setFileKey('');
       setFilesLoading(true);
       try {
         const fs = await api.listFiles(agentId);
@@ -178,26 +214,205 @@ export default function App() {
     [toast],
   );
 
+  // ---- 编辑窗口操作 ----
+  /** 更新某个窗口的编辑缓冲区（仅影响该窗口） */
+  const updateTab = useCallback((key: string, value: string) => {
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.key === key && value !== t.content ? { ...t, content: value, dirty: true } : t,
+      ),
+    );
+  }, []);
+
+  /** 从磁盘重新读取某窗口的文档内容（保存后 / 回滚 / 预设写入后同步） */
+  const updateTabFromDisk = useCallback(async (key: string) => {
+    const tab = tabsRef.current.find((t) => t.key === key);
+    if (!tab) return;
+    try {
+      const content = await api.readFile(tab.agentId, tab.file.path);
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.key === key
+            ? { ...t, file: content, content: content.content, dirty: false, saving: false }
+            : t,
+        ),
+      );
+    } catch {
+      // 忽略读取失败
+    }
+  }, []);
+
+  /**
+   * 打开文档：
+   * - 多窗口模式：已打开则激活对应窗口；未打开且窗口已满则拦截并提示（平铺并行编辑）；
+   * - 单窗口模式：打开文档即替换当前窗口（有未保存修改时需确认）。
+   */
   const openFile = useCallback(
     async (agentId: string, path: string, line?: number) => {
-      if (dirtyRef.current && !window.confirm('当前文件有未保存的修改，确定切换？')) return;
-      setSelectedAgentId(agentId);
+      const key = `${agentId}/${path}`;
+      // 单窗口模式：替换当前文档，不新增窗口
+      if (editorModeRef.current === 'single') {
+        const current = tabsRef.current.find((t) => t.key === key);
+        if (current) {
+          setActiveKey(key);
+          if (line) {
+            setTabs((prev) =>
+              prev.map((t) =>
+                t.key === key ? { ...t, reveal: { line, nonce: Date.now() } } : t,
+              ),
+            );
+          }
+          return;
+        }
+        const existing = tabsRef.current[0];
+        if (existing?.dirty && !window.confirm('当前文件有未保存的修改，确定切换？')) return;
+        if (filesAgentIdRef.current !== agentId) {
+          await selectAgent(agentId);
+        }
+        try {
+          const content = await api.readFile(agentId, path);
+          const tab: EditorTab = {
+            key,
+            agentId,
+            file: content,
+            content: content.content,
+            dirty: false,
+            saving: false,
+            reveal: line ? { line, nonce: Date.now() } : undefined,
+          };
+          setTabs([tab]);
+          setActiveKey(key);
+        } catch (e) {
+          toast(`打开文件失败：${(e as Error).message}`, 'error');
+        }
+        return;
+      }
+      if (tabsRef.current.some((t) => t.key === key)) {
+        setActiveKey(key);
+        if (line) {
+          setTabs((prev) =>
+            prev.map((t) =>
+              t.key === key ? { ...t, reveal: { line, nonce: Date.now() } } : t,
+            ),
+          );
+        }
+        return;
+      }
+      if (tabsRef.current.length >= MAX_WINDOWS) {
+        toast(`最多同时打开 ${MAX_WINDOWS} 个编辑窗口，请先关闭一个文档`, 'warning');
+        return;
+      }
       if (filesAgentIdRef.current !== agentId) {
         await selectAgent(agentId);
       }
       try {
         const content = await api.readFile(agentId, path);
-        setSelectedFile(content);
-        setEditorContent(content.content);
-        setDirty(false);
-        setFileKey(`${agentId}/${path}`);
-        if (line) setReveal({ line, nonce: Date.now() });
-        else setReveal(undefined);
+        const tab: EditorTab = {
+          key,
+          agentId,
+          file: content,
+          content: content.content,
+          dirty: false,
+          saving: false,
+          reveal: line ? { line, nonce: Date.now() } : undefined,
+        };
+        setTabs((prev) => [...prev, tab]);
+        setActiveKey(key);
       } catch (e) {
         toast(`打开文件失败：${(e as Error).message}`, 'error');
       }
     },
     [selectAgent, toast],
+  );
+
+  /** 切换编辑器模式；多 → 单窗口时仅保留激活窗口（有未保存修改需确认） */
+  const switchEditorMode = useCallback((mode: 'single' | 'multi') => {
+    if (mode === editorModeRef.current) return;
+    if (mode === 'single') {
+      const current = tabsRef.current;
+      if (current.length > 1) {
+        const keep = current.find((t) => t.key === activeKeyRef.current) ?? current[current.length - 1];
+        const others = current.filter((t) => t !== keep);
+        const dirtyCount = others.filter((t) => t.dirty).length;
+        if (
+          dirtyCount > 0 &&
+          !window.confirm(`有 ${dirtyCount} 个窗口存在未保存的修改，切换到单窗口模式将关闭它们，确定切换？`)
+        ) {
+          return;
+        }
+        setTabs([keep]);
+        setActiveKey(keep.key);
+      }
+    }
+    setEditorMode(mode);
+    try {
+      window.localStorage.setItem(EDITOR_MODE_KEY, mode);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  /** 关闭某个编辑窗口；存在未保存修改时需确认（仅影响该窗口） */
+  const closeTab = useCallback((key: string) => {
+    const tab = tabsRef.current.find((t) => t.key === key);
+    if (tab?.dirty && !window.confirm('该文档有未保存的修改，确定关闭？')) return;
+    const remaining = tabsRef.current.filter((t) => t.key !== key);
+    setTabs(remaining);
+    setActiveKey((prev) => {
+      if (prev !== key) return prev;
+      return remaining.length > 0 ? remaining[remaining.length - 1].key : null;
+    });
+  }, []);
+
+  /** 保存某个窗口的文档（仅影响该窗口） */
+  const saveTab = useCallback(
+    async (key: string) => {
+      const tab = tabsRef.current.find((t) => t.key === key);
+      if (!tab) return;
+      if (tab.content.length === 0) {
+        if (!window.confirm('内容为空，将清空文件，确认保存？')) return;
+      }
+      if (tab.content.length > 50 * 1024 && !window.confirm('文件较大（超过 50KB），确认保存？')) {
+        return;
+      }
+      setTabs((prev) =>
+        prev.map((t) => (t.key === key ? { ...t, saving: true } : t)),
+      );
+      try {
+        const result = await api.writeFile(tab.agentId, tab.file.path, tab.content, tab.file.sha256);
+        setTabs((prev) =>
+          prev.map((t) =>
+            t.key === key
+              ? {
+                  ...t,
+                  file: {
+                    ...t.file,
+                    size_bytes: result.size_bytes,
+                    mtime: result.mtime,
+                    sha256: result.sha256,
+                  },
+                  dirty: false,
+                  saving: false,
+                }
+              : t,
+          ),
+        );
+        toast(`已保存 ${tab.file.path}`, 'success');
+        void refreshFiles(tab.agentId);
+        void refreshStats();
+      } catch (e) {
+        const err = e as ApiError;
+        setTabs((prev) =>
+          prev.map((t) => (t.key === key ? { ...t, saving: false } : t)),
+        );
+        if (err.code === 'CONFLICT') {
+          toast('保存失败：文件已被外部修改，请刷新后再试', 'error');
+        } else {
+          toast(`保存失败：${err.message}`, 'error');
+        }
+      }
+    },
+    [refreshFiles, refreshStats, toast],
   );
 
   // 初始加载
@@ -240,39 +455,6 @@ export default function App() {
     };
   }, [selectAgent, refreshStats, toast]);
 
-  // ---- 保存 ----
-  const saveFile = useCallback(async () => {
-    if (!selectedAgentId || !selectedFile) return;
-    if (editorContent.length === 0) {
-      if (!window.confirm('内容为空，将清空文件，确认保存？')) return;
-    }
-    if (editorContent.length > 50 * 1024 && !window.confirm('文件较大（超过 50KB），确认保存？')) {
-      return;
-    }
-    setSaving(true);
-    try {
-      const result = await api.writeFile(selectedAgentId, selectedFile.path, editorContent, selectedFile.sha256);
-      setSelectedFile((prev) =>
-        prev
-          ? { ...prev, size_bytes: result.size_bytes, mtime: result.mtime, sha256: result.sha256 }
-          : prev,
-      );
-      setDirty(false);
-      toast(`已保存 ${selectedFile.path}`, 'success');
-      void refreshFiles(selectedAgentId);
-      void refreshStats();
-    } catch (e) {
-      const err = e as ApiError;
-      if (err.code === 'CONFLICT') {
-        toast('保存失败：文件已被外部修改，请刷新后再试', 'error');
-      } else {
-        toast(`保存失败：${err.message}`, 'error');
-      }
-    } finally {
-      setSaving(false);
-    }
-  }, [selectedAgentId, selectedFile, editorContent, refreshFiles, refreshStats, toast]);
-
   // ---- 扫描 / 导出 ----
   const rescan = useCallback(async () => {
     setScanning(true);
@@ -294,14 +476,16 @@ export default function App() {
     }
   }, [selectedAgentId, selectAgent, refreshStats, toast]);
 
-  const exportCurrent = useCallback(async () => {
-    if (!selectedAgentId) return;
-    try {
-      await api.exportAgent(selectedAgentId);
-    } catch (e) {
-      toast(`导出失败：${(e as Error).message}`, 'error');
-    }
-  }, [selectedAgentId, toast]);
+  const exportCurrent = useCallback(
+    async (agentId: string) => {
+      try {
+        await api.exportAgent(agentId);
+      } catch (e) {
+        toast(`导出失败：${(e as Error).message}`, 'error');
+      }
+    },
+    [toast],
+  );
 
   const exportAll = useCallback(async () => {
     try {
@@ -312,27 +496,27 @@ export default function App() {
   }, [toast]);
 
   // ---- 写操作完成后的统一刷新 ----
-  const handleDataChanged = useCallback(async () => {
-    const agentId = filesAgentIdRef.current;
-    if (agentId) void refreshFiles(agentId);
-    const cur = selectedFileRef.current;
-    if (agentId && cur) {
-      try {
-        const content = await api.readFile(agentId, cur.path);
-        setSelectedFile(content);
-        setEditorContent(content.content);
-        setDirty(false);
-      } catch {
-        // 忽略读取失败
+  // targetKey 明确时只刷新该窗口；否则刷新所有未处于编辑中的窗口（避免覆盖未保存内容）
+  const handleDataChanged = useCallback(
+    async (targetKey?: string) => {
+      const agentId = filesAgentIdRef.current;
+      if (agentId) void refreshFiles(agentId);
+      if (targetKey) {
+        await updateTabFromDisk(targetKey);
+      } else {
+        const snapshot = tabsRef.current;
+        await Promise.all(
+          snapshot.filter((t) => !t.dirty).map((t) => updateTabFromDisk(t.key)),
+        );
       }
-    }
-    void refreshStats();
-  }, [refreshFiles, refreshStats]);
+      void refreshStats();
+    },
+    [refreshFiles, refreshStats, updateTabFromDisk],
+  );
 
   const handleSelectFile = useCallback(
     (path: string) => {
       if (!selectedAgentId) return;
-      if (dirtyRef.current && !window.confirm('当前文件有未保存的修改，确定切换？')) return;
       void openFile(selectedAgentId, path);
     },
     [selectedAgentId, openFile],
@@ -341,24 +525,29 @@ export default function App() {
   const handleSelectAgent = useCallback(
     (agentId: string) => {
       if (agentId === selectedAgentId) return;
-      if (dirtyRef.current && !window.confirm('当前文件有未保存的修改，确定切换？')) return;
       void selectAgent(agentId);
     },
     [selectedAgentId, selectAgent],
   );
 
-  // ---- 自动保存（P5：开启后编辑暂停 2s 自动写入） ----
-  const autoSaveTimerRef = useRef<number | null>(null);
+  // ---- 自动保存（P5：开启后编辑暂停 2s 自动写入，按窗口独立计时） ----
+  const autoSaveTimerRef = useRef<Map<string, number>>(new Map());
   useEffect(() => {
-    if (!settings.autoSave || !dirtyRef.current || !selectedAgentId || !selectedFile) return;
-    if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = window.setTimeout(() => {
-      void saveFile();
-    }, 2000);
+    if (!settings.autoSave) return;
+    const timers = autoSaveTimerRef.current;
+    timers.forEach((id) => window.clearTimeout(id));
+    timers.clear();
+    tabs.forEach((tab) => {
+      if (tab.dirty && !tab.saving) {
+        const id = window.setTimeout(() => void saveTab(tab.key), 2000);
+        timers.set(tab.key, id);
+      }
+    });
     return () => {
-      if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
+      timers.forEach((id) => window.clearTimeout(id));
+      timers.clear();
     };
-  }, [editorContent, settings.autoSave, selectedAgentId, selectedFile, saveFile]);
+  }, [tabs, settings.autoSave, saveTab]);
 
   // ---- 快捷键 ----
   useEffect(() => {
@@ -367,7 +556,8 @@ export default function App() {
       const key = e.key.toLowerCase();
       if (mod && key === 's') {
         e.preventDefault();
-        if (dirtyRef.current) void saveFile();
+        const k = activeKeyRef.current;
+        if (k) void saveTab(k);
       } else if (mod && key === 'k') {
         e.preventDefault();
         setPaletteOpen(true);
@@ -381,12 +571,12 @@ export default function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [saveFile]);
+  }, [saveTab]);
 
   // 关闭页面前提示未保存
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
-      if (dirtyRef.current) {
+      if (anyDirtyRef.current) {
         e.preventDefault();
         e.returnValue = '';
       }
@@ -394,6 +584,25 @@ export default function App() {
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, []);
+
+  // 目标窗口被关闭时，同步关闭其关联的文件级弹窗
+  useEffect(() => {
+    if (modal && modal !== 'search' && !tabs.some((t) => t.key === modal.key)) {
+      setModal(null);
+    }
+  }, [modal, tabs]);
+
+  // CORE 一级分类高亮跟随激活窗口：
+  // 无论通过二级菜单、文件树、命令面板还是搜索打开文档，只要激活窗口的文档属于某 CORE 分类，
+  // 一级菜单就自动高亮该分类（coreTypes 就绪时兜底重跑一次，避免缓存加载时序导致漏同步）。
+  // 依赖不含 activeCore，避免覆盖用户手动切换一级分类的选择。
+  useEffect(() => {
+    if (!activeTab) return;
+    if (activeTab.file.role === 'CORE' && coreCatalog.coreTypes.includes(activeTab.file.path)) {
+      coreCatalog.setActiveCore(activeTab.file.path);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab?.key, coreCatalog.coreTypes]);
 
   // ---- 分栏拖拽 ----
   const startLeftResize = (e: ReactMouseEvent) => {
@@ -463,7 +672,7 @@ export default function App() {
               <div className="intro-banner">
                 <span>
                   <b>Ctrl+K</b> 命令面板（搜索功能 / 文件 / 页面） · <b>Ctrl+S</b> 保存 ·{' '}
-                  <b>Ctrl+B</b> 折叠左侧 · 左侧导航切换页面
+                  <b>Ctrl+B</b> 折叠左侧 · 左侧导航切换页面 · 最多同时打开 <b>{MAX_WINDOWS}</b> 个编辑窗口
                 </span>
                 <button className="btn btn-ghost btn-sm" onClick={dismissIntro}>
                   知道了
@@ -515,8 +724,8 @@ export default function App() {
                   activeCore={coreCatalog.activeCore}
                   agents={agents}
                   agentsByCore={coreCatalog.agentsByCore}
-                  selectedAgentId={selectedAgentId}
-                  selectedPath={selectedFile?.path ?? null}
+                  selectedAgentId={activeTab?.agentId ?? null}
+                  selectedPath={activeTab?.file?.path ?? null}
                   onOpenFile={(a, p) => {
                     void openFile(a, p);
                   }}
@@ -526,7 +735,7 @@ export default function App() {
                   agentId={selectedAgentId}
                   files={files}
                   loading={filesLoading}
-                  selectedPath={selectedFile?.path ?? null}
+                  selectedPath={activeTab?.file?.path ?? null}
                   showSkills={settings.showSkills}
                   showMeta={settings.showMeta}
                   showMemory={settings.showMemory}
@@ -549,33 +758,80 @@ export default function App() {
                 </section>
               }
             >
-              <EditorPane
-                agentId={selectedAgentId}
-                file={selectedFile}
-                content={editorContent}
-                onChange={(v) => {
-                  setEditorContent(v);
-                  setDirty(true);
-                }}
-                dirty={dirty}
-                saving={saving}
-                fileKey={fileKey}
-                reveal={reveal}
-                onSave={() => void saveFile()}
-                onHistory={() => setModal('history')}
-                onExport={() => void exportCurrent()}
-                onApplyPreset={() => setModal('apply-preset')}
-                onApplyAI={() => setModal('ai-cleanup')}
-                onLintDone={(count) => {
-                  if (selectedAgentId) {
-                    setFiles((prev) =>
-                      prev.map((f) =>
-                        f.path === selectedFile?.path ? { ...f, lint_warnings: count } : f,
-                      ),
-                    );
-                  }
-                }}
-              />
+              <section className="editor-pane">
+                <div className="pane-header">
+                  <span className="pane-header-title">编辑器</span>
+                  <div className="editor-mode-toggle">
+                    <div className="mode-toggle" role="group" aria-label="编辑窗口模式">
+                      <button
+                        type="button"
+                        className={editorMode === 'single' ? 'active' : ''}
+                        onClick={() => switchEditorMode('single')}
+                        title="单窗口模式：打开文档时替换当前窗口"
+                      >
+                        单窗口
+                      </button>
+                      <button
+                        type="button"
+                        className={editorMode === 'multi' ? 'active' : ''}
+                        onClick={() => switchEditorMode('multi')}
+                        title={`多窗口模式：横向平铺，最多同时打开 ${MAX_WINDOWS} 个编辑窗口`}
+                      >
+                        多窗口
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                {tabs.length === 0 ? (
+                  <div className="editor-empty">
+                    {editorMode === 'multi'
+                      ? `在左侧选择文件开始编辑（多窗口模式：最多同时打开 ${MAX_WINDOWS} 个编辑窗口）`
+                      : '在左侧选择文件开始编辑（单窗口模式：打开新文档将替换当前窗口）'}
+                  </div>
+                ) : (
+                  <div className="editor-windows">
+                    {tabs.map((tab) => (
+                      <EditorPane
+                        key={tab.key}
+                        agentId={tab.agentId}
+                        file={tab.file}
+                        content={tab.content}
+                        onChange={(v) => updateTab(tab.key, v)}
+                        dirty={tab.dirty}
+                        saving={tab.saving}
+                        fileKey={tab.key}
+                        reveal={tab.reveal}
+                        active={tab.key === activeKey}
+                        onFocus={() => {
+                          setActiveKey(tab.key);
+                          // 点击窗口时，左侧一/二级侧边栏跳转到该窗口的文档；
+                          // CORE 一级分类同步需在此显式执行：点击“已激活窗口”时 activeTab.key 不变，
+                          // 下方跟随 effect 不会重跑，只有此处能把手动选择的分类拉回到窗口所属分类
+                          if (filesAgentIdRef.current !== tab.agentId) {
+                            void selectAgent(tab.agentId);
+                          }
+                          if (tab.file.role === 'CORE' && coreCatalog.coreTypes.includes(tab.file.path)) {
+                            coreCatalog.setActiveCore(tab.file.path);
+                          }
+                        }}
+                        onClose={() => closeTab(tab.key)}
+                        onSave={() => void saveTab(tab.key)}
+                        onHistory={() => setModal({ type: 'history', key: tab.key })}
+                        onExport={() => void exportCurrent(tab.agentId)}
+                        onApplyPreset={() => setModal({ type: 'apply-preset', key: tab.key })}
+                        onApplyAI={() => setModal({ type: 'ai-cleanup', key: tab.key })}
+                        onLintDone={(count) => {
+                          setFiles((prev) =>
+                            prev.map((f) =>
+                              f.path === tab.file.path ? { ...f, lint_warnings: count } : f,
+                            ),
+                          );
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
             </Suspense>
           </div>
           </div>
@@ -592,8 +848,8 @@ export default function App() {
         ) : (
           <ToolsPage
             agents={agents}
-            initialPath={selectedFile?.path}
-            initialContent={editorContent}
+            initialPath={activeTab?.file?.path}
+            initialContent={activeTab?.content}
             onBack={goWorkbench}
             onDone={() => void handleDataChanged()}
             onExportAll={() => void exportAll()}
@@ -620,30 +876,42 @@ export default function App() {
           }}
         />
       )}
-      {modal === 'history' && selectedAgentId && selectedFile && (
-        <HistoryModal
-          agentId={selectedAgentId}
-          path={selectedFile.path}
-          onClose={closeModal}
-          onRolledBack={() => void handleDataChanged()}
-        />
-      )}
-      {modal === 'apply-preset' && selectedAgentId && selectedFile && (
-        <ApplyPresetModal
-          agentId={selectedAgentId}
-          filePath={selectedFile.path}
-          onClose={closeModal}
-          onDone={() => void handleDataChanged()}
-        />
-      )}
-      {modal === 'ai-cleanup' && selectedAgentId && selectedFile && (
-        <ApplyAIModal
-          agentId={selectedAgentId}
-          filePath={selectedFile.path}
-          onClose={closeModal}
-          onDone={() => void handleDataChanged()}
-        />
-      )}
+      {modal && modal !== 'search' && (() => {
+        const tab = tabs.find((t) => t.key === modal.key);
+        if (!tab) return null;
+        const base = {
+          agentId: tab.agentId,
+          onClose: closeModal,
+        };
+        switch (modal.type) {
+          case 'history':
+            return (
+              <HistoryModal
+                {...base}
+                path={tab.file.path}
+                onRolledBack={() => void handleDataChanged(tab.key)}
+              />
+            );
+          case 'apply-preset':
+            return (
+              <ApplyPresetModal
+                {...base}
+                filePath={tab.file.path}
+                onDone={() => void handleDataChanged(tab.key)}
+              />
+            );
+          case 'ai-cleanup':
+            return (
+              <ApplyAIModal
+                {...base}
+                filePath={tab.file.path}
+                onDone={() => void handleDataChanged(tab.key)}
+              />
+            );
+          default:
+            return null;
+        }
+      })()}
 
       {/* ---- 命令面板（Ctrl+K） ---- */}
       <CommandPalette

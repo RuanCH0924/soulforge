@@ -22,6 +22,12 @@ interface EditorPaneProps {
   fileKey: string;
   /** 打开文件后要定位到的行号（搜索结果 / lint 跳转） */
   reveal: { line: number; nonce: number } | undefined;
+  /** 当前窗口是否为激活窗口（多窗口平铺高亮） */
+  active: boolean;
+  /** 点击窗口任意位置时激活该窗口 */
+  onFocus: () => void;
+  /** 关闭该窗口的文档（仅影响当前窗口） */
+  onClose: () => void;
   onSave: () => void;
   onHistory: () => void;
   onExport: () => void;
@@ -39,6 +45,9 @@ export function EditorPane({
   saving,
   fileKey,
   reveal,
+  active,
+  onFocus,
+  onClose,
   onSave,
   onHistory,
   onExport,
@@ -107,7 +116,7 @@ export function EditorPane({
 
   if (!agentId || !file) {
     return (
-      <section className="editor-pane">
+      <section className="editor-window" onClick={onFocus}>
         <div className="pane-header">编辑器</div>
         <div className="editor-empty">在左侧选择 Agent 和文件开始编辑</div>
       </section>
@@ -115,11 +124,23 @@ export function EditorPane({
   }
 
   return (
-    <section className="editor-pane">
+    <section className={`editor-window${active ? ' active' : ''}`} onClick={onFocus}>
       <div className="editor-pathbar">
         <span className="path" title={file.path}>{file.path}</span>
         <span className={`role-badge role-${file.role}`}>{file.role}</span>
         {dirty && <span className="dirty-mark">● 未保存</span>}
+        <button
+          type="button"
+          className="editor-close"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          title="关闭文档"
+          aria-label="关闭文档"
+        >
+          ×
+        </button>
       </div>
 
       <div className="editor-toolbar">

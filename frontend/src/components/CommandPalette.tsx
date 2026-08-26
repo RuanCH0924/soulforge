@@ -82,6 +82,23 @@ export function CommandPalette({ open, onClose, items, onSearchFiles, onOpenFile
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  // 分组渲染（动作按 group；文件单独一组）——必须在提前 return 之前调用，保持 Hooks 顺序稳定
+  const groups = useMemo(() => {
+    const gs: { name: string; items: { idx: number }[] }[] = [];
+    const seen = new Set<string>();
+    matchedItems.forEach((it, idx) => {
+      if (!seen.has(it.group)) {
+        seen.add(it.group);
+        gs.push({ name: it.group, items: [] });
+      }
+      gs[gs.length - 1].items.push({ idx });
+    });
+    if (files.length > 0) {
+      gs.push({ name: '文件', items: files.map((_, idx) => ({ idx: matchedItems.length + idx })) });
+    }
+    return gs;
+  }, [matchedItems, files]);
+
   if (!open) return null;
 
   const flat: (CommandItem | { type: 'file'; hit: SearchHit })[] = [
@@ -101,23 +118,6 @@ export function CommandPalette({ open, onClose, items, onSearchFiles, onOpenFile
       onClose();
     }
   };
-
-  // 分组渲染（动作按 group；文件单独一组）
-  const groups = useMemo(() => {
-    const gs: { name: string; items: { idx: number }[] }[] = [];
-    const seen = new Set<string>();
-    matchedItems.forEach((it, idx) => {
-      if (!seen.has(it.group)) {
-        seen.add(it.group);
-        gs.push({ name: it.group, items: [] });
-      }
-      gs[gs.length - 1].items.push({ idx });
-    });
-    if (files.length > 0) {
-      gs.push({ name: '文件', items: files.map((_, idx) => ({ idx: matchedItems.length + idx })) });
-    }
-    return gs;
-  }, [matchedItems, files]);
 
   return (
     <div className="command-overlay" onMouseDown={onClose}>
