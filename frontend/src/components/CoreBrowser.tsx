@@ -1,4 +1,5 @@
 import type { AgentInfo, FileInfo } from '../types';
+import { Dropdown } from './Dropdown';
 
 /** CORE 类型固定优先顺序，其余按字母序 */
 export const CORE_PRIORITY = ['SOUL.md', 'AGENTS.md', 'IDENTITY.md', 'USER.md', 'MEMORY.md', 'TOOLS.md'];
@@ -76,20 +77,26 @@ export function CoreCategoryList({ coreTypes, agentsByCore, activeCore, onSelect
 
 interface CoreAgentListProps {
   activeCore: string | null;
+  /** 全部 CORE 分类（一级菜单数据源，用于中栏顶部切换，M-06） */
+  coreTypes: string[];
   agents: AgentInfo[];
   agentsByCore: Map<string, CoreEntry[]>;
   selectedAgentId: string | null;
   selectedPath: string | null;
+  /** 中栏直接切换 CORE 分类（M-06），与左栏高亮共用同一状态源 */
+  onSelectCore: (type: string) => void;
   onOpenFile: (agentId: string, path: string) => void;
 }
 
-/** 二级菜单（中栏）：包含「XXX.md」的 Agent 列表；点击 → 打开该 Agent 下的关联文件 */
+/** 二级菜单（中栏）：包含「XXX.md」的 Agent 列表；顶部可切换 CORE 分类，点击条目打开关联文件 */
 export function CoreAgentList({
   activeCore,
+  coreTypes,
   agents,
   agentsByCore,
   selectedAgentId,
   selectedPath,
+  onSelectCore,
   onOpenFile,
 }: CoreAgentListProps) {
   const displayName = (id: string) => agents.find((a) => a.id === id)?.display_name || id;
@@ -98,7 +105,24 @@ export function CoreAgentList({
   return (
     <div className="core-agent-list">
       <div className="pane-header">
-        {activeCore ? `包含「${activeCore}」的 Agent` : '选择 CORE 分类'}
+        <Dropdown
+          align="left"
+          trigger={
+            <button
+              type="button"
+              className="core-switch"
+              title="切换 CORE 分类（与左侧一级列表同步）"
+            >
+              {activeCore ? `CORE：${activeCore}` : '选择 CORE 分类'}
+              <span className="core-switch-caret">▾</span>
+            </button>
+          }
+          items={coreTypes.map((type) => ({
+            label: type,
+            hint: String(agentsByCore.get(type)?.length ?? 0),
+            onSelect: () => onSelectCore(type),
+          }))}
+        />
         <span className="pane-header-title" style={{ marginLeft: 'auto', flex: 'none' }}>
           {entries.length} 个
         </span>

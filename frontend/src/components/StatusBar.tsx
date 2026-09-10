@@ -15,8 +15,8 @@ export function StatusBar({ connected, agentsTotal, filesTotal, lastScanAt, warn
         <span className={`conn-dot${connected ? '' : ' offline'}`} />
         {connected ? `已连接到 ${agentsTotal} 个 Agent` : '未连接后端'}
       </span>
-      <span>索引 {filesTotal} 个文件</span>
-      <span>上次扫描：{formatRelativeTime(lastScanAt)}</span>
+      <span className="metric-secondary">索引 {filesTotal} 个文件</span>
+      <span className="metric-secondary">上次扫描：{formatRelativeTime(lastScanAt)}</span>
       <span className="right">
         {warningsTotal > 0 ? (
           <span style={{ color: 'var(--warning)' }}>lint 警告 {warningsTotal} 条</span>

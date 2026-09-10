@@ -85,6 +85,7 @@ export function ImportModal({ agents, onClose, onDone, embedded }: ImportModalPr
       onClose={onClose}
       width={720}
       embedded={embedded}
+      headerless={embedded}
       footer={
         preview ? (
           <div style={{ display: 'flex', gap: 8 }}>

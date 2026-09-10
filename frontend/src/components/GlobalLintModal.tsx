@@ -47,6 +47,7 @@ export function GlobalLintModal({ onClose, onOpenResult, embedded }: GlobalLintM
       onClose={onClose}
       width={820}
       embedded={embedded}
+      headerless={embedded}
       footer={
         <button className="btn" onClick={load} disabled={loading}>
           {loading && <span className="spinner" />}

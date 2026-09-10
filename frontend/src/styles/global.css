@@ -122,6 +122,25 @@ body {
   background: var(--accent);
 }
 
+/* 折叠恢复条（M-03）：左/中栏折叠后在原位保留一条可点击的展开入口 */
+.pane-collapsed-bar {
+  flex: none;
+  width: 32px;
+  padding: 0;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-tertiary);
+  font-family: var(--font-main);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pane-collapsed-bar:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
 /* ---------- TopBar ---------- */
 .topbar {
   height: var(--topbar-height);
@@ -578,6 +597,13 @@ body {
   flex: none;
 }
 
+/* 已保存状态位（M-04）：与「● 未保存」互斥，弱化处理不争抢焦点 */
+.saved-mark {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  flex: none;
+}
+
 .editor-host {
   flex: 1;
   min-height: 0;
@@ -721,6 +747,48 @@ body {
 
 .core-agent-list > .hint {
   flex: none;
+}
+
+/* 中栏顶部 CORE 分类切换（M-06）：与左栏一级列表共用 activeCore 状态源 */
+.core-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  /* 抵消 pane-header 的 10px 左内边距，保持标题基线对齐 */
+  margin-left: -6px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-main);
+  font-size: 11px;
+  font-weight: 600;
+  /* pane-header 默认 uppercase，CORE 文件名需保持原样 */
+  letter-spacing: normal;
+  text-transform: none;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.core-switch:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.core-switch-caret {
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+/* 长列表（实测 56 项 CORE）由滚动容器承载，避免下拉溢出视口 */
+.core-agent-list .dropdown-menu {
+  min-width: 180px;
+  max-height: min(320px, 50vh);
+  overflow-y: auto;
 }
 
 .core-item {
@@ -1899,6 +1967,11 @@ table.audit-table {
   font-family: var(--font-mono);
 }
 
+/* 空查询时的可检索总量提示（M-05） */
+.command-footer-note {
+  margin-right: auto;
+}
+
 /* ---------- 多页面布局（P2） ---------- */
 .app-body {
   flex: 1;
@@ -2045,6 +2118,17 @@ table.audit-table {
 }
 
 /* ---------- 响应式（P4） ---------- */
+/* 中间档（M-07）：1024–1440px 收敛状态栏次要指标，把宽度让给主视口 */
+@media (max-width: 1280px) {
+  .statusbar {
+    gap: 12px;
+    padding: 0 10px;
+  }
+  .statusbar .metric-secondary {
+    display: none;
+  }
+}
+
 @media (max-width: 1024px) {
   .side-nav {
     width: 56px;
@@ -2061,6 +2145,11 @@ table.audit-table {
   }
   .topbar-search {
     max-width: 260px;
+  }
+  /* 状态栏溢出保护：极端窄屏下不换行、不撑高 */
+  .statusbar {
+    overflow: hidden;
+    white-space: nowrap;
   }
 }
 

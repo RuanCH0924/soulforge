@@ -105,6 +105,7 @@ export function DiffModal({ agents, initialAgent, onClose, embedded }: DiffModal
       onClose={onClose}
       width={860}
       embedded={embedded}
+      headerless={embedded}
       footer={
         <button className="btn btn-primary" onClick={runDiff} disabled={!agentA || !agentB || !file || loading}>
           {loading && <span className="spinner" />}

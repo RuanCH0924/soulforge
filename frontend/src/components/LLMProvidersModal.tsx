@@ -149,6 +149,7 @@ export function LLMProvidersModal({ onClose, embedded }: LLMProvidersModalProps)
       onClose={onClose}
       width={820}
       embedded={embedded}
+      headerless={embedded}
       footer={
         editing !== null ? (
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>

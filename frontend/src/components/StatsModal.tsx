@@ -38,6 +38,7 @@ export function StatsModal({ onClose, embedded }: StatsModalProps) {
       onClose={onClose}
       width={720}
       embedded={embedded}
+      headerless={embedded}
       footer={
         <button className="btn" onClick={load} disabled={loading}>
           {loading && <span className="spinner" />}

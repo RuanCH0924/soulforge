@@ -5,6 +5,7 @@ import { api } from '../api';
 import { useSettings } from '../hooks/useSettings';
 import { useToast } from '../hooks/useToast';
 import type { FileContent, LintWarning } from '../types';
+import { formatClock } from '../utils/format';
 import '../monaco'; // 本地化加载 monaco（不依赖 CDN，避免加载转圈）
 import { MarkdownPreview } from './MarkdownPreview';
 
@@ -18,6 +19,8 @@ interface EditorPaneProps {
   onChange: (value: string) => void;
   dirty: boolean;
   saving: boolean;
+  /** 最近一次成功保存的时间戳（M-04：路径栏展示「已保存 HH:mm:ss」） */
+  savedAt?: number | undefined;
   /** 文件标识（agent/path），变化时强制重建编辑器 */
   fileKey: string;
   /** 打开文件后要定位到的行号（搜索结果 / lint 跳转） */
@@ -43,6 +46,7 @@ export function EditorPane({
   onChange,
   dirty,
   saving,
+  savedAt,
   fileKey,
   reveal,
   active,
@@ -128,7 +132,11 @@ export function EditorPane({
       <div className="editor-pathbar">
         <span className="path" title={file.path}>{file.path}</span>
         <span className={`role-badge role-${file.role}`}>{file.role}</span>
-        {dirty && <span className="dirty-mark">● 未保存</span>}
+        {dirty ? (
+          <span className="dirty-mark">● 未保存</span>
+        ) : (
+          savedAt != null && <span className="saved-mark">已保存 {formatClock(savedAt)}</span>
+        )}
         <button
           type="button"
           className="editor-close"

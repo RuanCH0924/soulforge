@@ -15,6 +15,14 @@ export function formatTime(ts?: number | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+/** 时间戳（秒）→ HH:mm:ss，用于编辑器保存状态位 */
+export function formatClock(ts?: number | null): string {
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 export function formatRelativeTime(ts?: number | null): string {
   if (!ts) return '—';
   const diff = Math.floor(Date.now() / 1000) - ts;

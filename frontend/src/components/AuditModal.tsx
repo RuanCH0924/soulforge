@@ -35,7 +35,7 @@ export function AuditModal({ onClose, embedded }: AuditModalProps) {
   }, [toast]);
 
   return (
-    <Modal title="审计日志（最近 100 条）" onClose={onClose} width={880} embedded={embedded}>
+    <Modal title="审计日志（最近 100 条）" onClose={onClose} width={880} embedded={embedded} headerless={embedded}>
       {loading ? (
         <div className="state-block">
           <div className="spinner-lg" />

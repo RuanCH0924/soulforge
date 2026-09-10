@@ -81,6 +81,7 @@ export function CrossEditModal({
       onClose={onClose}
       width={820}
       embedded={embedded}
+      headerless={embedded}
       footer={
         step === 1 ? (
           <button className="btn btn-primary" onClick={next}>

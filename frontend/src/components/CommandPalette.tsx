@@ -16,9 +16,18 @@ interface CommandPaletteProps {
   open: boolean;
   onClose: () => void;
   items: CommandItem[];
+  /** 最近使用过的动作 id（MRU 顺序，M-05） */
+  recentIds: string[];
+  /** 上报一次动作使用，用于维护「最近使用」（M-05） */
+  onUsed: (id: string) => void;
   onSearchFiles: (q: string) => Promise<SearchHit[]>;
   onOpenFile: (agentId: string, path: string, line?: number) => void;
 }
+
+/** 空查询时每个分组的展示上限（M-05）：控制首屏长度，避免长列表 */
+const MAX_PER_GROUP = 6;
+
+type Row = CommandItem | { type: 'file'; hit: SearchHit };
 
 function match(q: string, text: string): boolean {
   const t = text.toLowerCase();
@@ -26,7 +35,15 @@ function match(q: string, text: string): boolean {
 }
 
 /** Cmd+K 命令面板：可搜索 功能动作 / 文件 / 设置项 */
-export function CommandPalette({ open, onClose, items, onSearchFiles, onOpenFile }: CommandPaletteProps) {
+export function CommandPalette({
+  open,
+  onClose,
+  items,
+  recentIds,
+  onUsed,
+  onSearchFiles,
+  onOpenFile,
+}: CommandPaletteProps) {
   const [query, setQuery] = useState('');
   const [files, setFiles] = useState<SearchHit[]>([]);
   const [searching, setSearching] = useState(false);
@@ -34,6 +51,14 @@ export function CommandPalette({ open, onClose, items, onSearchFiles, onOpenFile
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const q = query.trim();
+
+  /** 最近使用（M-05）：仅空查询时展示；动作索引变更后的悬空 id 会被自动过滤 */
+  const recentItems = useMemo(() => {
+    if (q) return [];
+    return recentIds
+      .map((id) => items.find((it) => it.id === id))
+      .filter((it): it is CommandItem => Boolean(it));
+  }, [q, recentIds, items]);
 
   const matchedItems = useMemo(
     () =>
@@ -82,30 +107,37 @@ export function CommandPalette({ open, onClose, items, onSearchFiles, onOpenFile
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  // 分组渲染（动作按 group；文件单独一组）——必须在提前 return 之前调用，保持 Hooks 顺序稳定
+  // 分组渲染（动作按 group；「最近使用」置顶、文件单独一组）
+  // 必须在提前 return 之前调用，保持 Hooks 顺序稳定
   const groups = useMemo(() => {
-    const gs: { name: string; items: { idx: number }[] }[] = [];
-    const seen = new Set<string>();
-    matchedItems.forEach((it, idx) => {
-      if (!seen.has(it.group)) {
-        seen.add(it.group);
-        gs.push({ name: it.group, items: [] });
-      }
-      gs[gs.length - 1].items.push({ idx });
+    const gs: { name: string; rows: Row[] }[] = [];
+    if (recentItems.length > 0) gs.push({ name: '最近使用', rows: recentItems });
+    matchedItems.forEach((it) => {
+      const found = gs.find((g) => g.name === it.group);
+      if (found) found.rows.push(it);
+      else gs.push({ name: it.group, rows: [it] });
     });
     if (files.length > 0) {
-      gs.push({ name: '文件', items: files.map((_, idx) => ({ idx: matchedItems.length + idx })) });
+      gs.push({ name: '文件', rows: files.map((f) => ({ type: 'file' as const, hit: f })) });
     }
-    return gs;
-  }, [matchedItems, files]);
+    // 空查询时按上限截断（文件组为检索结果，不截断）
+    const capped = q
+      ? gs
+      : gs.map((g) => (g.name === '文件' ? g : { ...g, rows: g.rows.slice(0, MAX_PER_GROUP) }));
+    // 预计算每组在扁平列表中的起始下标：同一动作可能同时出现在「最近使用」与其固定分组，
+    // 不能用 indexOf 反查，否则固定分组的行会错误高亮到「最近使用」里的同一行。
+    let offset = 0;
+    return capped.map((g) => {
+      const start = offset;
+      offset += g.rows.length;
+      return { ...g, start };
+    });
+  }, [recentItems, matchedItems, files, q]);
+
+  const flat = useMemo<Row[]>(() => groups.flatMap((g) => g.rows), [groups]);
+  const total = flat.length;
 
   if (!open) return null;
-
-  const flat: (CommandItem | { type: 'file'; hit: SearchHit })[] = [
-    ...matchedItems,
-    ...files.map((f) => ({ type: 'file' as const, hit: f })),
-  ];
-  const total = flat.length;
 
   const selectAt = (idx: number) => {
     const it = flat[idx];
@@ -114,6 +146,7 @@ export function CommandPalette({ open, onClose, items, onSearchFiles, onOpenFile
       onOpenFile(it.hit.agent_id, it.hit.file_path, it.hit.line_number);
       onClose();
     } else {
+      onUsed(it.id);
       it.onSelect();
       onClose();
     }
@@ -156,12 +189,12 @@ export function CommandPalette({ open, onClose, items, onSearchFiles, onOpenFile
                 {g.name}
                 {g.name === '文件' && searching ? '（搜索中…）' : ''}
               </div>
-              {g.items.map(({ idx }) => {
-                const it = flat[idx];
+              {g.rows.map((it, i) => {
+                const idx = g.start + i;
                 if (it.type === 'file') {
                   return (
                     <div
-                      key={`${it.hit.agent_id}-${it.hit.file_path}-${it.hit.line_number}`}
+                      key={`${it.hit.agent_id}-${it.hit.file_path}-${it.hit.line_number}-${i}`}
                       className={`command-item${idx === active ? ' active' : ''}`}
                       onMouseEnter={() => setActive(idx)}
                       onClick={() => selectAt(idx)}
@@ -191,6 +224,11 @@ export function CommandPalette({ open, onClose, items, onSearchFiles, onOpenFile
           ))}
         </div>
         <div className="command-footer">
+          {!q && total > 0 && (
+            <span className="command-footer-note">
+              已显示 {total} / 共 {items.length} 项命令，输入关键词可筛选
+            </span>
+          )}
           <span>
             <b>↑↓</b> 选择
           </span>

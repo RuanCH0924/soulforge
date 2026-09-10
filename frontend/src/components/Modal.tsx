@@ -9,10 +9,15 @@ interface ModalProps {
   width?: number;
   /** 页面内嵌模式：不渲染遮罩/固定定位，直接作为页面区块展示（P2 页面化） */
   embedded?: boolean;
+  /**
+   * 隐藏内嵌模式的标题栏（M-02）：页面级内嵌面板已有 page-tabs 作为唯一标题层级，
+   * 返回能力由 SideNav 承担，避免出现双标题与冗余返回按钮。
+   */
+  headerless?: boolean;
 }
 
 /** 通用弹窗：Esc / 点击遮罩关闭；embedded 模式下作为页面内嵌面板 */
-export function Modal({ title, onClose, children, footer, width = 640, embedded }: ModalProps) {
+export function Modal({ title, onClose, children, footer, width = 640, embedded, headerless }: ModalProps) {
   useEffect(() => {
     if (embedded) return;
     const handler = (e: KeyboardEvent) => {
@@ -25,12 +30,14 @@ export function Modal({ title, onClose, children, footer, width = 640, embedded 
   if (embedded) {
     return (
       <div className="modal modal-embedded" style={{ width: '100%' }}>
-        <div className="modal-header">
-          <h3>{title}</h3>
-          <button className="btn btn-ghost btn-sm" onClick={onClose} title="返回主工作台">
-            返回
-          </button>
-        </div>
+        {!headerless && (
+          <div className="modal-header">
+            <h3>{title}</h3>
+            <button className="btn btn-ghost btn-sm" onClick={onClose} title="返回主工作台">
+              返回
+            </button>
+          </div>
+        )}
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-footer">{footer}</div>}
       </div>

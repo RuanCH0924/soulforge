@@ -319,6 +319,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
       onClose={onClose}
       width={view === 'edit' ? 760 : 700}
       embedded={embedded}
+      headerless={embedded}
       footer={
         view === 'edit' ? (
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>

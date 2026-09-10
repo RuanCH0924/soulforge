@@ -39,6 +39,9 @@ type ModalState =
 /** 编辑栏内最多允许同时打开的编辑窗口数（固定横向平铺） */
 const MAX_WINDOWS = 3;
 
+/** 命令面板「最近使用」记录上限（M-05） */
+const MAX_RECENT_COMMANDS = 8;
+
 /** 一个编辑窗口对应一个已打开文档的完整编辑状态 */
 interface EditorTab {
   /** 唯一标识：`agentId/path` */
@@ -49,6 +52,8 @@ interface EditorTab {
   content: string;
   dirty: boolean;
   saving: boolean;
+  /** 最近一次成功保存的时间戳（M-04：用于路径栏展示「已保存 HH:mm:ss」） */
+  savedAt?: number;
   /** 打开文件后要定位到的行号（搜索结果 / lint 跳转） */
   reveal?: { line: number; nonce: number } | undefined;
 }
@@ -72,6 +77,49 @@ function startDrag(e: ReactMouseEvent, onMove: (dx: number) => void): void {
 
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
+}
+
+/** ---- 布局持久化（M-03）：分栏宽度与折叠态，刷新后保持 ---- */
+const LAYOUT_KEY = 'soulforge.layout';
+
+/** 与拖拽边界保持一致（左栏 180–360 / 中栏 200–400） */
+const LEFT_WIDTH_RANGE = { min: 180, max: 360 } as const;
+const MID_WIDTH_RANGE = { min: 200, max: 400 } as const;
+
+const LAYOUT_DEFAULT = {
+  leftWidth: 240,
+  midWidth: 280,
+  leftCollapsed: false,
+  midCollapsed: false,
+};
+
+type LayoutState = typeof LAYOUT_DEFAULT;
+
+/** 读取持久化布局；JSON 损坏或 localStorage 不可用时回落默认值，越界值收敛到合法范围 */
+function loadLayout(): LayoutState {
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_KEY);
+    if (!raw) return { ...LAYOUT_DEFAULT };
+    const parsed = JSON.parse(raw) as Partial<LayoutState>;
+    const num = (v: unknown, def: number, r: { min: number; max: number }): number =>
+      typeof v === 'number' && Number.isFinite(v) ? clamp(v, r.min, r.max) : def;
+    return {
+      leftWidth: num(parsed.leftWidth, LAYOUT_DEFAULT.leftWidth, LEFT_WIDTH_RANGE),
+      midWidth: num(parsed.midWidth, LAYOUT_DEFAULT.midWidth, MID_WIDTH_RANGE),
+      leftCollapsed: parsed.leftCollapsed === true,
+      midCollapsed: parsed.midCollapsed === true,
+    };
+  } catch {
+    return { ...LAYOUT_DEFAULT };
+  }
+}
+
+function saveLayout(next: LayoutState): void {
+  try {
+    window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(next));
+  } catch {
+    // localStorage 不可用时静默降级
+  }
 }
 
 export default function App() {
@@ -127,28 +175,65 @@ export default function App() {
     setAnyDirty(tabs.some((t) => t.dirty));
   }, [tabs]);
 
-  // ---- 布局 ----
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [leftWidth, setLeftWidth] = useState(240);
-  const [midWidth, setMidWidth] = useState(280);
+  // ---- 布局（M-03：全部持久化到 soulforge.layout，刷新后保持） ----
+  const initialLayout = useMemo(loadLayout, []);
+  const [leftCollapsed, setLeftCollapsed] = useState(initialLayout.leftCollapsed);
+  const [midCollapsed, setMidCollapsed] = useState(initialLayout.midCollapsed);
+  const [leftWidth, setLeftWidth] = useState(initialLayout.leftWidth);
+  const [midWidth, setMidWidth] = useState(initialLayout.midWidth);
   const leftStartRef = useRef(0);
   const midStartRef = useRef(0);
+
+  // 布局变更写回：拖拽期间高频触发，统一 300ms 防抖
+  const layoutSaveTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (layoutSaveTimerRef.current !== null) window.clearTimeout(layoutSaveTimerRef.current);
+    layoutSaveTimerRef.current = window.setTimeout(() => {
+      saveLayout({ leftWidth, midWidth, leftCollapsed, midCollapsed });
+      layoutSaveTimerRef.current = null;
+    }, 300);
+    return () => {
+      if (layoutSaveTimerRef.current !== null) window.clearTimeout(layoutSaveTimerRef.current);
+    };
+  }, [leftWidth, midWidth, leftCollapsed, midCollapsed]);
 
   // ---- 弹窗 ----
   const [modal, setModal] = useState<ModalState>(null);
   // ---- 命令面板（Cmd+K，P1 收敛） ----
   const [paletteOpen, setPaletteOpen] = useState(false);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
+
+  // ---- 命令面板「最近使用」（M-05：MRU 去重，持久化到 localStorage，刷新后保留） ----
+  const PALETTE_RECENT_KEY = 'soulforge.palette.recent';
+  const [recentCommandIds, setRecentCommandIds] = useState<string[]>(() => {
+    try {
+      const parsed: unknown = JSON.parse(window.localStorage.getItem(PALETTE_RECENT_KEY) ?? '[]');
+      return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
+  const markCommandUsed = useCallback((id: string) => {
+    setRecentCommandIds((prev) => {
+      const next = [id, ...prev.filter((x) => x !== id)].slice(0, MAX_RECENT_COMMANDS);
+      try {
+        window.localStorage.setItem(PALETTE_RECENT_KEY, JSON.stringify(next));
+      } catch {
+        // localStorage 不可用时静默降级
+      }
+      return next;
+    });
+  }, []);
   // ---- 路由（P2：四页面） ----
   const [route, navigate] = useHashRoute();
   const goWorkbench = useCallback(() => navigate('workbench'), [navigate]);
-  // ---- 首次使用引导（P5：一次性提示快捷键） ----
+  // ---- 首次使用引导（P5：一次性提示快捷键；M-01 升级为 v2，使存量用户看到更新后的导航说明） ----
   const [showIntro, setShowIntro] = useState(
-    () => !window.localStorage.getItem('soulforge.intro-v1'),
+    () => !window.localStorage.getItem('soulforge.intro-v2'),
   );
   const dismissIntro = useCallback(() => {
     try {
-      window.localStorage.setItem('soulforge.intro-v1', '1');
+      window.localStorage.setItem('soulforge.intro-v2', '1');
     } catch {
       // ignore
     }
@@ -393,6 +478,7 @@ export default function App() {
                   },
                   dirty: false,
                   saving: false,
+                  savedAt: Math.floor(Date.now() / 1000),
                 }
               : t,
           ),
@@ -564,6 +650,12 @@ export default function App() {
       } else if (mod && key === 'b') {
         e.preventDefault();
         setLeftCollapsed((c) => !c);
+      } else if (e.altKey && !mod && (key === '1' || key === '2')) {
+        // M-03：布局折叠快捷键，仅工作台内生效（避免在 Tools/Data/Settings 页误触发）
+        if (route !== 'workbench') return;
+        e.preventDefault();
+        if (key === '1') setLeftCollapsed((c) => !c);
+        else setMidCollapsed((c) => !c);
       } else if (mod && e.shiftKey && key === 'e') {
         e.preventDefault();
         navigate('tools');
@@ -571,7 +663,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [saveTab]);
+  }, [saveTab, route]);
 
   // 关闭页面前提示未保存
   useEffect(() => {
@@ -658,9 +750,6 @@ export default function App() {
         scanning={scanning}
         onOpenSearch={() => setPaletteOpen(true)}
         onRescan={() => void rescan()}
-        onNavigateTools={() => navigate('tools')}
-        onNavigateData={() => navigate('data')}
-        onNavigateSettings={() => navigate('settings')}
       />
 
       <div className="app-body">
@@ -671,8 +760,9 @@ export default function App() {
             {showIntro && (
               <div className="intro-banner">
                 <span>
-                  <b>Ctrl+K</b> 命令面板（搜索功能 / 文件 / 页面） · <b>Ctrl+S</b> 保存 ·{' '}
-                  <b>Ctrl+B</b> 折叠左侧 · 左侧导航切换页面 · 最多同时打开 <b>{MAX_WINDOWS}</b> 个编辑窗口
+                  <b>Ctrl+K</b> 命令面板（搜索功能 / 文件 / 页面） · <b>Ctrl+S</b> 保存 · 页面切换请用{' '}
+                  <b>左侧导航</b> · <b>Alt+1</b> / <b>Alt+2</b> 折叠 Agent / 文件栏 · 最多同时打开{' '}
+                  <b>{MAX_WINDOWS}</b> 个编辑窗口
                 </span>
                 <button className="btn btn-ghost btn-sm" onClick={dismissIntro}>
                   知道了
@@ -680,6 +770,17 @@ export default function App() {
               </div>
             )}
             <div className="main">
+            {leftCollapsed && (
+              <button
+                type="button"
+                className="pane-collapsed-bar"
+                onClick={() => setLeftCollapsed(false)}
+                title="展开 Agent 栏（Alt+1）"
+                aria-label="展开 Agent 栏"
+              >
+                ›
+              </button>
+            )}
             {!leftCollapsed && (
               <>
                 <div className="pane" style={{ width: leftWidth, flex: 'none' }}>
@@ -718,14 +819,30 @@ export default function App() {
               </>
             )}
 
+            {midCollapsed && (
+              <button
+                type="button"
+                className="pane-collapsed-bar"
+                onClick={() => setMidCollapsed(false)}
+                title="展开文件栏（Alt+2）"
+                aria-label="展开文件栏"
+              >
+                ›
+              </button>
+            )}
+
+            {!midCollapsed && (
+              <>
             <div className="pane" style={{ width: midWidth, flex: 'none' }}>
               {browseMode === 'core' ? (
                 <CoreAgentList
                   activeCore={coreCatalog.activeCore}
+                  coreTypes={coreCatalog.coreTypes}
                   agents={agents}
                   agentsByCore={coreCatalog.agentsByCore}
                   selectedAgentId={activeTab?.agentId ?? null}
                   selectedPath={activeTab?.file?.path ?? null}
+                  onSelectCore={coreCatalog.setActiveCore}
                   onOpenFile={(a, p) => {
                     void openFile(a, p);
                   }}
@@ -746,6 +863,8 @@ export default function App() {
             </div>
 
             <div className="divider" onMouseDown={startMidResize} />
+              </>
+            )}
 
             <Suspense
               fallback={
@@ -799,6 +918,7 @@ export default function App() {
                         onChange={(v) => updateTab(tab.key, v)}
                         dirty={tab.dirty}
                         saving={tab.saving}
+                        savedAt={tab.savedAt}
                         fileKey={tab.key}
                         reveal={tab.reveal}
                         active={tab.key === activeKey}
@@ -918,6 +1038,8 @@ export default function App() {
         open={paletteOpen}
         onClose={closePalette}
         items={paletteItems}
+        recentIds={recentCommandIds}
+        onUsed={markCommandUsed}
         onSearchFiles={searchFilesForPalette}
         onOpenFile={(a, p, line) => {
           void openFile(a, p, line);

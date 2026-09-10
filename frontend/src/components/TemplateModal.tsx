@@ -68,6 +68,7 @@ export function TemplateModal({ onClose, onDone, embedded }: TemplateModalProps)
       onClose={onClose}
       width={680}
       embedded={embedded}
+      headerless={embedded}
       footer={
         <button className="btn btn-primary" onClick={apply} disabled={applying || !selected}>
           {applying && <span className="spinner" />}

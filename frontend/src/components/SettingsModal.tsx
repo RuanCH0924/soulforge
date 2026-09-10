@@ -81,6 +81,7 @@ export function SettingsModal({ onClose, embedded }: SettingsModalProps) {
       onClose={onClose}
       width={560}
       embedded={embedded}
+      headerless={embedded}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose} disabled={saving}>

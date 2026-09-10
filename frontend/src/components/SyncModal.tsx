@@ -117,6 +117,7 @@ export function SyncModal({ agents, onClose, onDone, embedded }: SyncModalProps)
       onClose={onClose}
       width={820}
       embedded={embedded}
+      headerless={embedded}
       footer={
         plan ? (
           <div style={{ display: 'flex', gap: 8 }}>
