@@ -34,7 +34,7 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
-# ---------- Soulforge 运行时数据（数据库、备份、上传、日志、配置） ----------
+# ---------- Soulforge 运行时数据（数据库、备份、日志、配置、超级同步） ----------
 .soulforge/
 .soulforge-data/
 # LLM API 密钥加密密钥（Fernet），严禁入库

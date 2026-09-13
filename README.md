@@ -85,6 +85,27 @@ All runtime data lives inside the project directory under `.soulforge/` (databas
    - create `backend\.venv` and install backend dependencies;
    - launch the server and open `http://127.0.0.1:8848`.
 
+### Linux / macOS (one-click launcher)
+
+1. Put the repository at `<OpenClawRoot>/workspace/projects/soulforge` (or set `SOULFORGE_OPENCLAW_DIR` to your OpenClaw root).
+2. Run:
+
+   ```bash
+   bash start.sh          # or: chmod +x start.sh && ./start.sh
+   ```
+
+   It detects the OpenClaw root, creates `backend/.venv`, installs dependencies, checks the port
+   (reclaiming it from a stale uvicorn instance), starts the server, and opens
+   `http://127.0.0.1:8848` (set `SOULFORGE_NO_BROWSER=1` to skip opening the browser).
+
+> **Note: virtual environments are not portable across platforms.** On Windows the venv lives at
+> `backend\.venv\Scripts\python.exe`, while on Linux/macOS it is `backend/.venv/bin/python` — the two
+> are not interchangeable. Syncing or copying a Windows `.venv` (full of `.exe` files) to Linux will
+> prevent the app from starting; delete and recreate it: `rm -rf backend/.venv`, then run `start.sh`
+> again (the script detects this case and fails with a clear message). Exclude `.venv`,
+> `node_modules`, and `.soulforge` from Git / Syncthing. Also keep `start.sh` **LF**-terminated
+> (CRLF causes `bad interpreter`), which the repo enforces via `.gitattributes`.
+
 ### Manual setup (any platform)
 
 Backend:
@@ -176,6 +197,7 @@ soulforge/
 │   ├── dist/                 # Build output (served by the backend)
 │   └── package.json
 ├── docs/                     # Detailed docs (architecture, API, data model, ...)
+├── start.bat / start.sh      # One-click launcher (Windows / Linux·macOS)
 ├── .github/                  # Issue & PR templates
 ├── README.md                 # This file
 └── LICENSE                   # MIT license

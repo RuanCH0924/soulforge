@@ -475,7 +475,31 @@ class LLMProvider(Protocol):
 - **备份外置**：备份文件存项目内 `.soulforge/backups/`，不污染 workspace
 - **审计日志**：所有写操作记 `audit_log` 表（含改了哪个文件、哪些 Agent、操作时间）
 
-### 5.4 数据模型
+### 5.4 跨平台与一键启动
+
+两个启动器行为对齐，按平台二选一：
+
+| 平台 | 脚本 | 内容 |
+|---|---|---|
+| Windows 10/11 | `start.bat` | 探测 OpenClaw 根目录 → 建 `backend\.venv` → 装依赖 → 起服务 → 开浏览器 |
+| Linux / macOS | `start.sh` | 同上（探测 → `backend/.venv` → 装依赖 → 端口占用检查 → 起服务 → `xdg-open`/`open`） |
+
+**虚拟环境不可跨平台复用（重要）**：
+
+- Windows 的 venv 是 `backend\.venv\Scripts\python.exe`，Linux/macOS 是 `backend/.venv/bin/python`，
+  两者**不能通用**；换平台必须删除后重建（`rm -rf backend/.venv`）。
+- 本项目可能同时存在于 Git 与 Syncthing 分发路径下，若把 Windows 的 `.venv`
+  同步到 Linux，会导致「应用起不来」；`start.sh` 检测到这种目录会**直接报错并提示重建**，
+  不会静默复用。
+- Windows 创建的 `.venv` 内含大量 `.exe`（`pip.exe` / `uvicorn.exe` 等），对 Linux 无意义；
+  建议在同步/版本控制中排除 `.venv`、`node_modules`、`.soulforge`。
+- `start.sh` 必须保持 **LF** 行尾（CRLF 会报 `bad interpreter` / `$'\r': command not found`），
+  仓库已用 `.gitattributes`（`*.sh text eol=lf`）固定，不要改成 CRLF。
+
+> 说明：超级同步（M14）自身与平台无关，用 `sys.executable` 拉起独立进程；
+> 它的进程存活检测 / 分离启动 / 停止都按 `os.name` 分别走 Windows 与 POSIX 分支。
+
+### 5.5 数据模型
 
 详见 [docs/DATA-MODEL.md](./docs/DATA-MODEL.md)。
 

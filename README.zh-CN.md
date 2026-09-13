@@ -85,6 +85,26 @@ Soulforge 分阶段交付：
    - 创建 `backend\.venv` 并安装后端依赖；
    - 启动服务并打开 `http://127.0.0.1:8848`。
 
+### Linux / macOS（一键启动）
+
+1. 将仓库放到 `<OpenClawRoot>/workspace/projects/soulforge`（或设置 `SOULFORGE_OPENCLAW_DIR` 指向你的 OpenClaw 根目录）。
+2. 运行：
+
+   ```bash
+   bash start.sh          # 或先 chmod +x start.sh && ./start.sh
+   ```
+
+   脚本会自动：探测 OpenClaw 根目录 → 创建 `backend/.venv` 并安装依赖 → 检查端口占用
+   （若是旧 uvicorn 实例则清理）→ 启动服务并打开 `http://127.0.0.1:8848`
+   （设置 `SOULFORGE_NO_BROWSER=1` 可禁用自动开浏览器）。
+
+> **注意：虚拟环境不可跨平台复用。** Windows 的虚拟环境是 `backend\.venv\Scripts\python.exe`，
+> Linux / macOS 是 `backend/.venv/bin/python`，两者不能通用。若把 Windows 上的 `.venv`
+> （含大量 `.exe`）同步或复制到 Linux，应用会无法启动 —— 请先删除后重建：
+> `rm -rf backend/.venv`，再重新运行 `start.sh`（脚本检测到这种目录也会直接报错提示）。
+> 建议在 Git / Syncthing 中排除 `.venv`、`node_modules`、`.soulforge`。
+> 另：`start.sh` 需保持 **LF** 行尾（CRLF 会导致 `bad interpreter`），仓库已用 `.gitattributes` 固定。
+
 ### 手动部署（任意平台）
 
 后端：
@@ -176,6 +196,7 @@ soulforge/
 │   ├── dist/                 # 构建产物（由后端托管）
 │   └── package.json
 ├── docs/                     # 详细文档（架构、API、数据模型…）
+├── start.bat / start.sh      # 一键启动（Windows / Linux·macOS）
 ├── .github/                  # Issue 与 PR 模板
 ├── README.md                 # 本文件
 └── LICENSE                   # MIT 许可证

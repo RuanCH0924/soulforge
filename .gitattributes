@@ -1,0 +1,7 @@
+# Shell 脚本必须使用 LF：CRLF 会导致 Linux/macOS 上执行时报
+# "$'\r': command not found" 或 "bad interpreter: /usr/bin/env bash^M"。
+# 本项目可能通过 Git / Syncthing 跨平台分发，故显式固定行尾。
+*.sh text eol=lf
+
+# Windows 批处理使用 CRLF
+*.bat text eol=crlf
