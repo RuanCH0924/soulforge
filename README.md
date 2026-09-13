@@ -31,9 +31,10 @@ OpenClaw is a multi-Agent system in which every Agent owns a `workspace/` contai
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Unified editing**     | Open and edit the same-named prompt file across multiple Agents at once; WYSIWYG markdown preview with live editing.                                            |
 | **Cross-Agent search**  | Full-text search across every Agent's prompt files (powered by ripgrep), with context lines and jump-to-result.                                                 |
-| **Export / Import**     | Package an Agent's prompt pack into `.tar.gz` and import it back, with manifest verification and per-file conflict resolution (`skip` / `merge` / `overwrite`). |
+| **Export**              | Package an Agent's prompt pack into `.tar.gz` with a SHA-256 manifest for archiving / migration. |
 | **Diff**                | Compare the same file across Agents or against a historical backup (similarity score + unified/HTML diff).                                                      |
 | **Cross-Agent sync**    | Generate a sync plan first, then execute only the files you confirm — selective merge, never a whole-file overwrite.                                            |
+| **Super Sync**          | Runs as a **standalone process** once enabled (keeps syncing even after the main app exits), keeping same-named core documents across Agents consistent within seconds; UI start/stop, live status, matrix scope selection, and log search / export. |
 | **Backup & rollback**   | Automatic backup before every write, retention policy, full history, and one-click rollback.                                                                    |
 | **Lint**                | 8 built-in rules, including L4 anti-pattern detection (timestamps, version numbers, narrative) and required-core-file checks.                                   |
 | **Stats & audit**       | Dashboard metrics (agents, files, backups, warnings) and a full audit log for every write operation.                                                            |
@@ -45,13 +46,14 @@ OpenClaw is a multi-Agent system in which every Agent owns a `workspace/` contai
 
 ## Roadmap
 
-Soulforge ships in three phases:
+Soulforge ships in phases:
 
 | Phase | Scope | Status |
 |---|---|---|
-| **Phase 1 · MVP** | Browse + edit + backup + lint + sync + import/export + templates + dashboard | ✅ Shipped (v0.1 → v1.0) |
+| **Phase 1 · MVP** | Browse + edit + backup + lint + sync + export + dashboard | ✅ Shipped (v0.1 → v1.0) |
 | **Phase 2 · UI polish** | Layout refinements, theming, keyboard shortcuts, real-time status bar | 🚧 In progress |
 | **Phase 2.5 · AI Editor** | Document presets → LLM provider plug-in → AI-powered document organising (3-step plan) | 🚧 In progress |
+| **Super Sync** | Second-level (near real-time) sync of same-named core documents across Agents (standalone daemon + UI matrix scope / status / logs) | ✅ Shipped |
 | **Phase 3 · Far future** | Team collaboration / cloud sync / third-party plugins | 📋 Planned |
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the full plan.
@@ -71,7 +73,7 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for the full plan.
 - **Node.js 18+ and npm** (only needed to build or develop the frontend)
 - **An OpenClaw installation** — the app reads `openclaw.json` to discover Agents and their `workspace/` directories
 
-All runtime data lives inside the project directory under `.soulforge/` (database, backups, uploads, logs, and `config.toml`), so the project never depends on external global paths.
+All runtime data lives inside the project directory under `.soulforge/` (database, backups, logs, `config.toml`, plus `super_sync/` for Super Sync), so the project never depends on external global paths.
 
 ## Quick Start
 
@@ -117,7 +119,7 @@ npm run dev        # Vite dev server, proxies /api to http://127.0.0.1:8848
 
 | Environment variable     | Default                     | Purpose                                             |
 | ------------------------ | --------------------------- | --------------------------------------------------- |
-| `SOULFORGE_DATA_DIR`     | `<project-root>/.soulforge` | Data directory (DB, backups, uploads, logs, config) |
+| `SOULFORGE_DATA_DIR`     | `<project-root>/.soulforge` | Data directory (DB, backups, logs, config, `super_sync/`) |
 | `SOULFORGE_OPENCLAW_DIR` | Auto-detected OpenClaw root | Directory that contains `openclaw.json`             |
 | `SOULFORGE_PORT`         | `8848`                      | Server port                                         |
 
@@ -140,8 +142,11 @@ Base URL: `http://127.0.0.1:8848/api` · Interactive OpenAPI docs: <http://127.0
 | `GET`         | `/api/diff`                                                       | Diff the same file across two Agents        |
 | `POST`        | `/api/sync/plan`                                                  | Create a sync plan                          |
 | `POST`        | `/api/sync/execute`                                               | Execute a sync plan                         |
+| `GET` / `PUT` | `/api/super-sync/config`                                          | Read / update Super Sync scope              |
+| `GET`         | `/api/super-sync/status`                                          | Super Sync state (running / stopped / error) |
+| `POST`        | `/api/super-sync/start` · `/api/super-sync/stop`                  | Start / stop the standalone sync process    |
+| `GET`         | `/api/super-sync/logs` · `/api/super-sync/logs/export`            | Query / export sync logs                    |
 | `GET`         | `/api/export/{id}` / `/api/export/all`                            | Export an Agent / all Agents as `.tar.gz`   |
-| `POST`        | `/api/import/preview` / `/api/import/execute`                     | Import a prompt pack                        |
 | `GET`         | `/api/backups/{id}`                                               | List an Agent's backups                     |
 | `POST`        | `/api/backups/{id}/{path}/rollback`                               | Roll back a file to a backup                |
 | `GET`         | `/api/lint/{id}` / `/api/lint/file/{id}/{path}` / `/api/lint/all` | Lint an Agent / a file / all Agents         |
@@ -158,9 +163,10 @@ See [docs/API.md](docs/API.md) for the complete specification.
 soulforge/
 ├── backend/                  # FastAPI backend
 │   ├── main.py               # App entry
+│   ├── super_sync.py         # Super Sync standalone daemon (runs detached from the app)
 │   ├── app/
-│   │   ├── api/              # Routers (agents, files, search, diff, sync, ...)
-│   │   ├── services/         # Business services (discovery, backup, lint, ...)
+│   │   ├── api/              # Routers (agents, files, search, diff, sync, super-sync, ...)
+│   │   ├── services/         # Business services (discovery, backup, lint, super_sync, ...)
 │   │   ├── models/           # SQLAlchemy models + Pydantic schemas
 │   │   └── core/             # Errors, logging, security
 │   ├── tests/                # pytest suite
@@ -169,7 +175,6 @@ soulforge/
 │   ├── src/                  # Components, hooks, api client, styles
 │   ├── dist/                 # Build output (served by the backend)
 │   └── package.json
-├── templates/                # Built-in prompt-pack templates
 ├── docs/                     # Detailed docs (architecture, API, data model, ...)
 ├── .github/                  # Issue & PR templates
 ├── README.md                 # This file

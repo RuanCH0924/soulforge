@@ -1,6 +1,6 @@
 """路由：LLM Provider 接入（M12 · Phase 2.5 Step 2）。
 
-端点见 docs/API.md §3.12。api_key 加密存储，响应永远只返回掩码。
+端点见 docs/API.md §3.11。api_key 加密存储，响应永远只返回掩码。
 """
 from __future__ import annotations
 

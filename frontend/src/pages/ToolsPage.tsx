@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import { CrossEditModal } from '../components/CrossEditModal';
 import { DiffModal } from '../components/DiffModal';
-import { ImportModal } from '../components/ImportModal';
+import { SuperSyncPanel } from '../components/SuperSyncPanel';
 import { SyncModal } from '../components/SyncModal';
-import { TemplateModal } from '../components/TemplateModal';
 import type { AgentInfo } from '../types';
 
-type Tab = 'sync' | 'cross-edit' | 'diff' | 'import' | 'new-agent';
+type Tab = 'sync' | 'super-sync' | 'cross-edit' | 'diff';
 
 interface ToolsPageProps {
   agents: AgentInfo[];
@@ -27,10 +26,9 @@ export function ToolsPage({ agents, initialPath, initialContent, onBack, onDone,
         {(
           [
             ['sync', '同步'],
+            ['super-sync', '超级同步'],
             ['cross-edit', '跨Agent编辑'],
             ['diff', '对比'],
-            ['import', '导入'],
-            ['new-agent', '新建Agent'],
           ] as [Tab, string][]
         ).map(([key, label]) => (
           <button
@@ -49,6 +47,7 @@ export function ToolsPage({ agents, initialPath, initialContent, onBack, onDone,
       </div>
       <div className="page-content">
         {tab === 'sync' && <SyncModal agents={agents} onClose={onBack} onDone={onDone} embedded />}
+        {tab === 'super-sync' && <SuperSyncPanel agents={agents} />}
         {tab === 'cross-edit' && (
           <CrossEditModal
             agents={agents}
@@ -60,8 +59,6 @@ export function ToolsPage({ agents, initialPath, initialContent, onBack, onDone,
           />
         )}
         {tab === 'diff' && <DiffModal agents={agents} initialAgent={null} onClose={onBack} embedded />}
-        {tab === 'import' && <ImportModal agents={agents} onClose={onBack} onDone={onDone} embedded />}
-        {tab === 'new-agent' && <TemplateModal onClose={onBack} onDone={onDone} embedded />}
       </div>
     </div>
   );

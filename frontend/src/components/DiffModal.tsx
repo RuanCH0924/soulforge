@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { isRoleVisible, useSettings } from '../hooks/useSettings';
 import { useToast } from '../hooks/useToast';
+import { DiffView } from './DiffView';
 import { Modal } from './Modal';
-import type { AgentInfo, DiffResult, FileInfo } from '../types';
+import type { AgentInfo, DiffMode, DiffResult, FileInfo } from '../types';
 import { similarityColor, similarityPercent } from '../utils/format';
 
 interface DiffModalProps {
@@ -17,17 +18,27 @@ interface DiffModalProps {
 export function DiffModal({ agents, initialAgent, onClose, embedded }: DiffModalProps) {
   const { push: toast } = useToast();
   const { settings } = useSettings();
-  const [agentA, setAgentA] = useState<string>(initialAgent ?? agents[0]?.id ?? '');
-  const [agentB, setAgentB] = useState<string>(() => {
-    const first = agents.find((a) => a.id !== initialAgent);
-    return first?.id ?? agents[0]?.id ?? '';
-  });
+  // 默认 A/B 必须是两个不同 Agent（此前 initialAgent 为 null 会导致 B 与 A 相同，
+  // 变成「自己和自己比」，用户必须手动改一次才能开始对比）
+  const defaultA = initialAgent ?? agents[0]?.id ?? '';
+  const [agentA, setAgentA] = useState<string>(defaultA);
+  const [agentB, setAgentB] = useState<string>(() => agents.find((a) => a.id !== defaultA)?.id ?? '');
   const [filesA, setFilesA] = useState<FileInfo[]>([]);
   const [filesB, setFilesB] = useState<FileInfo[]>([]);
   const [file, setFile] = useState('');
   const [diff, setDiff] = useState<DiffResult | null>(null);
+  const [mode, setMode] = useState<DiffMode>('ignore_whitespace');
   const [loading, setLoading] = useState(false);
   const [loadingFiles, setLoadingFiles] = useState(false);
+
+  // 当 A/B 相同（例如用户把 A 改成原来的 B）时自动纠正 B，避免自比较
+  useEffect(() => {
+    if (agents.length < 2) return;
+    if (agentA && agentA === agentB) {
+      setAgentB(agents.find((a) => a.id !== agentA)?.id ?? '');
+      setDiff(null);
+    }
+  }, [agents, agentA, agentB]);
 
   useEffect(() => {
     if (!agentA) return;
@@ -83,11 +94,11 @@ export function DiffModal({ agents, initialAgent, onClose, embedded }: DiffModal
     }
   }, [commonFiles, file]);
 
-  async function runDiff() {
+  async function runDiff(nextMode: DiffMode = mode) {
     if (!agentA || !agentB || !file) return;
     setLoading(true);
     try {
-      const res = await api.diff(agentA, agentB, file);
+      const res = await api.diff(agentA, agentB, file, nextMode);
       setDiff(res);
     } catch (e) {
       toast(`对比失败：${(e as Error).message}`, 'error');
@@ -96,8 +107,13 @@ export function DiffModal({ agents, initialAgent, onClose, embedded }: DiffModal
     }
   }
 
-  const agentOptions = (excludeId: string) =>
-    agents.filter((a) => a.id !== excludeId);
+  /** 切换归一化口径：若已有结果则立即按新口径重算，避免结果与开关不一致 */
+  function changeMode(next: DiffMode) {
+    setMode(next);
+    if (diff) void runDiff(next);
+  }
+
+  const agentOptions = (excludeId: string) => agents.filter((a) => a.id !== excludeId);
 
   return (
     <Modal
@@ -107,10 +123,35 @@ export function DiffModal({ agents, initialAgent, onClose, embedded }: DiffModal
       embedded={embedded}
       headerless={embedded}
       footer={
-        <button className="btn btn-primary" onClick={runDiff} disabled={!agentA || !agentB || !file || loading}>
-          {loading && <span className="spinner" />}
-          开始对比
-        </button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', width: '100%' }}>
+          <span className="mode-toggle" role="group" aria-label="对比口径">
+            <button
+              type="button"
+              className={mode === 'ignore_whitespace' ? 'active' : ''}
+              onClick={() => changeMode('ignore_whitespace')}
+              title="忽略空白、空行、缩进、BOM、零宽字符等格式噪声（默认）"
+            >
+              忽略格式噪声
+            </button>
+            <button
+              type="button"
+              className={mode === 'strict' ? 'active' : ''}
+              onClick={() => changeMode('strict')}
+              title="仅忽略 BOM / 换行符风格 / 零宽字符；空白与空行差异仍算差异"
+            >
+              严格
+            </button>
+          </span>
+          <button
+            className="btn btn-primary"
+            onClick={() => void runDiff()}
+            disabled={!agentA || !agentB || !file || loading}
+            style={{ marginLeft: 'auto' }}
+          >
+            {loading && <span className="spinner" />}
+            开始对比
+          </button>
+        </div>
       }
     >
       <div style={{ display: 'flex', gap: 12, marginBottom: 14, alignItems: 'flex-end' }}>
@@ -183,7 +224,11 @@ export function DiffModal({ agents, initialAgent, onClose, embedded }: DiffModal
             </div>
             <span>{similarityPercent(diff.similarity)}</span>
           </div>
-          <div dangerouslySetInnerHTML={{ __html: diff.html_diff }} />
+          <DiffView
+            htmlDiff={diff.html_diff}
+            identical={diff.identical}
+            noiseKinds={diff.noise_kinds}
+          />
         </>
       )}
     </Modal>

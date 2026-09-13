@@ -31,9 +31,10 @@ OpenClaw 是一个多 Agent 系统，每个 Agent 都拥有自己的 `workspace/
 |---|---|
 | **统一编辑** | 一次性打开 / 编辑多个 Agent 的同名 prompt 文件；支持所见即所得（WYSIWYG）Markdown 预览并可直接在预览中编辑。 |
 | **跨 Agent 搜索** | 全文搜索所有 Agent 的 prompt 文件（基于 ripgrep），支持上下文行与点击跳转。 |
-| **导出 / 导入** | 将 Agent 的 prompt pack 打包为 `.tar.gz` 并可导入回，带 manifest 校验与逐文件冲突处理（`skip` / `merge` / `overwrite`）。 |
+| **导出** | 将 Agent 的 prompt pack 打包为 `.tar.gz`（含 SHA-256 manifest，便于归档 / 迁移）。 |
 | **Diff 对比** | 对比两个 Agent 的同名文件或与历史备份对比（相似度评分 + unified/HTML diff）。 |
 | **跨 Agent 同步** | 先生成同步计划，再只执行你确认的文件 —— 选择性合并，绝不整文件覆盖。 |
+| **超级同步** | 开启后以**独立进程**持续运行（关闭 Soulforge 主进程也照常同步），让多个 Agent 的同名核心文档在**秒级内保持一致**；支持 UI 一键启停、运行状态实时监测、同步范围矩阵配置与日志检索 / 导出。 |
 | **备份与回滚** | 每次写入前自动备份，支持保留策略、完整历史与一键回滚。 |
 | **Lint 检查** | 内置 8 条规则，包括 L4 反模式检测（时间戳 / 版本号 / 修复叙述）与核心文件缺失检查。 |
 | **统计与审计** | 仪表盘指标（Agent / 文件 / 备份 / 警告）与每次写操作的完整审计日志。 |
@@ -45,13 +46,14 @@ OpenClaw 是一个多 Agent 系统，每个 Agent 都拥有自己的 `workspace/
 
 ## 路线图
 
-Soulforge 分四个阶段交付：
+Soulforge 分阶段交付：
 
 | 阶段 | 范围 | 状态 |
 |---|---|---|
-| **Phase 1 · MVP** | 浏览 + 编辑 + 备份 + lint + 同步 + 导入导出 + 模板 + 仪表盘 | ✅ 已交付（v0.1 → v1.0） |
+| **Phase 1 · MVP** | 浏览 + 编辑 + 备份 + lint + 同步 + 导出 + 仪表盘 | ✅ 已交付（v0.1 → v1.0） |
 | **Phase 2 · UI 优化** | 布局微调、主题、快捷键、实时状态条 | 🚧 进行中 |
 | **Phase 2.5 · AI Editor** | 文档预设 → LLM 接入 → AI 自动整理（三步走） | 🚧 进行中 |
+| **超级同步** | 多 Agent 同名核心文档秒级实时同步（独立守护脚本 + UI 矩阵配置 / 状态 / 日志） | ✅ 已交付 |
 | **Phase 3 · 远期** | 团队协作 / 云端同步 / 第三方插件 | 📋 规划中 |
 
 完整规划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
@@ -71,7 +73,7 @@ Soulforge 分四个阶段交付：
 - **Node.js 18+ 与 npm**（仅构建或开发前端时需要）
 - **OpenClaw 安装** —— 应用读取 `openclaw.json` 发现各 Agent 及其 `workspace/` 目录
 
-所有运行时数据都存放在项目目录内的 `.soulforge/`（数据库、备份、上传、日志、`config.toml`），项目不依赖任何外部全局路径。
+所有运行时数据都存放在项目目录内的 `.soulforge/`（数据库、备份、日志、`config.toml`，以及超级同步的 `super_sync/`），项目不依赖任何外部全局路径。
 
 ## 本地部署与运行步骤
 
@@ -117,7 +119,7 @@ npm run dev        # Vite 开发服务器，将 /api 代理到 http://127.0.0.1:
 
 | 环境变量 | 默认值 | 作用 |
 |---|---|---|
-| `SOULFORGE_DATA_DIR` | `<项目根>/.soulforge` | 数据目录（数据库、备份、上传、日志、配置） |
+| `SOULFORGE_DATA_DIR` | `<项目根>/.soulforge` | 数据目录（数据库、备份、日志、配置、`super_sync/`） |
 | `SOULFORGE_OPENCLAW_DIR` | 自动探测的 OpenClaw 根目录 | 包含 `openclaw.json` 的目录 |
 | `SOULFORGE_PORT` | `8848` | 服务端口 |
 
@@ -140,8 +142,11 @@ npm run dev        # Vite 开发服务器，将 /api 代理到 http://127.0.0.1:
 | `GET` | `/api/diff` | 对比两个 Agent 的同名文件 |
 | `POST` | `/api/sync/plan` | 生成同步计划 |
 | `POST` | `/api/sync/execute` | 执行同步计划 |
+| `GET` / `PUT` | `/api/super-sync/config` | 读取 / 更新超级同步范围（参与 Agent + 文档） |
+| `GET` | `/api/super-sync/status` | 超级同步运行状态（运行中 / 已停止 / 异常） |
+| `POST` | `/api/super-sync/start` · `/api/super-sync/stop` | 启动 / 停止独立同步进程 |
+| `GET` | `/api/super-sync/logs` · `/api/super-sync/logs/export` | 查询 / 导出同步日志 |
 | `GET` | `/api/export/{id}` / `/api/export/all` | 导出单个 / 全部 Agent 为 `.tar.gz` |
-| `POST` | `/api/import/preview` / `/api/import/execute` | 导入 prompt pack |
 | `GET` | `/api/backups/{id}` | 列出 Agent 的所有备份 |
 | `POST` | `/api/backups/{id}/{path}/rollback` | 回滚文件到指定备份 |
 | `GET` | `/api/lint/{id}` / `/api/lint/file/{id}/{path}` / `/api/lint/all` | 对 Agent / 文件 / 全部执行 lint |
@@ -158,9 +163,10 @@ npm run dev        # Vite 开发服务器，将 /api 代理到 http://127.0.0.1:
 soulforge/
 ├── backend/                  # FastAPI 后端
 │   ├── main.py               # 应用入口
+│   ├── super_sync.py         # 超级同步独立守护脚本（可脱离主进程运行）
 │   ├── app/
-│   │   ├── api/              # 路由（agents、files、search、diff、sync…）
-│   │   ├── services/         # 业务服务（发现、备份、lint…）
+│   │   ├── api/              # 路由（agents、files、search、diff、sync、super-sync…）
+│   │   ├── services/         # 业务服务（发现、备份、lint、super_sync…）
 │   │   ├── models/           # SQLAlchemy 模型 + Pydantic schema
 │   │   └── core/             # 错误、日志、安全
 │   ├── tests/                # pytest 测试套件

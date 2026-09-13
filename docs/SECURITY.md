@@ -33,8 +33,14 @@
 |---|---|---|
 | **🟢 低** | 浏览 / 搜索 / diff / lint / stats | 直接执行 |
 | **🟡 中** | 编辑单文件保存 | 自动备份 + Toast 提示 |
-| **🟠 高** | 跨 Agent 编辑 / 同步 / 导入 | Dialog 确认 + 显示影响范围 + 自动备份 |
+| **🟠 高** | 跨 Agent 编辑 / 同步 | Dialog 确认 + 显示影响范围 + 自动备份 |
 | **🔴 极高** | 整 workspace 删除 / 批量删除备份 / 修改 openclaw.json | 老板本人私聊确认 + 输入"确认删除" |
+
+> **超级同步（后台自动写入）**：独立守护进程按「最新修改优先」覆盖同名核心文档，
+> **写入前不落盘备份**，仅记录变更 diff 日志；属于用户显式开启的后台自动同步，
+> 与上表中「交互式写操作必须写前备份」的要求不同。同步范围被限制为
+> `SOUL.md` / `AGENTS.md` / `USER.md` / `MEMORY.md` / `IDENTITY.md` 这 5 个核心文档，
+> 且仅作用于用户显式选中的 Agent 与文件。
 
 ---
 
@@ -170,47 +176,16 @@ POST /api/sync/execute
 
 ---
 
-## 六、导入导出安全
+## 六、导出安全
 
-### 6.1 tar 安全
+导出为**只读**操作，不修改任何 workspace 文件：
 
-```python
-def safe_extract(tar: tarfile.TarFile, path: Path):
-    """拒绝路径穿越 tar bomb"""
-    for member in tar.getmembers():
-        member_path = (path / member.name).resolve()
-        if not str(member_path).startswith(str(path.resolve()) + os.sep):
-            raise UnsafePathError(f"tar 含路径穿越：{member.name}")
-    tar.extractall(path)
-```
+1. 目标 Agent 必须存在于发现列表（`discovery.require`），否则 404；
+2. 仅打包该 workspace 下可管理的 `.md` 文件（隐藏文件 / 敏感文件已被 FileManager 过滤）；
+3. 包内附 `MANIFEST.json`（每个文件的 SHA-256），便于校验与迁移；
+4. 产物写入临时目录后以 `.tar.gz` 返回，不落业务目录。
 
-### 6.2 导入冲突策略
-
-**绝不默认覆盖**：
-
-```python
-CONFLICT_STRATEGIES = ["skip", "merge", "overwrite"]
-
-# 前端 UI：每个冲突文件默认 skip，用户主动改
-```
-
-### 6.3 Manifest 校验
-
-```python
-def verify_manifest(extract_dir: Path) -> dict:
-    manifest_path = extract_dir / "MANIFEST.json"
-    manifest = json.loads(manifest_path.read_text())
-
-    # 校验文件 sha256 跟实际一致（防篡改）
-    for file_info in manifest["files"]:
-        actual_hash = hashlib.sha256(
-            (extract_dir / file_info["path"]).read_bytes()
-        ).hexdigest()
-        if actual_hash != file_info["sha256"]:
-            raise ManifestCorruptedError(f"sha256 不匹配：{file_info['path']}")
-
-    return manifest
-```
+> 说明：原先的「导入」能力（tar 解压防护 / 冲突策略 / manifest 校验）已随该功能一并移除。
 
 ---
 
@@ -219,7 +194,7 @@ def verify_manifest(extract_dir: Path) -> dict:
 **所有写操作记录**，包括：
 
 - 时间（精确到秒）
-- 操作类型（write / rollback / import / sync / delete 等）
+- 操作类型（write / rollback / sync / export / delete 等）
 - Agent ID
 - 目标文件
 - 详细信息（diff 大小、备份 ID 等）

@@ -15,7 +15,23 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
-from app.api import agents, ai, audit, backups, config, diff, export_import, files, lint, llm, presets, search, stats, sync, templates
+from app.api import (
+    agents,
+    ai,
+    audit,
+    backups,
+    config,
+    diff,
+    export_import,
+    files,
+    lint,
+    llm,
+    presets,
+    search,
+    stats,
+    super_sync,
+    sync,
+)
 from app.core.errors import SoulforgeError
 from app.core.logging import setup_logging
 from app.deps import init_registry
@@ -70,10 +86,10 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.include_router(search.router)
     app.include_router(diff.router)
     app.include_router(sync.router)
+    app.include_router(super_sync.router)
     app.include_router(export_import.router)
     app.include_router(backups.router)
     app.include_router(lint.router)
-    app.include_router(templates.router)
     app.include_router(stats.router)
     app.include_router(audit.router)
     app.include_router(config.router)

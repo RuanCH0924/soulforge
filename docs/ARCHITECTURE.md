@@ -23,11 +23,10 @@
 │  │  ├── /search       搜索路由                          │    │
 │  │  ├── /diff         diff 路由                         │    │
 │  │  ├── /sync         跨 Agent 同步路由                 │    │
+│  │  ├── /super-sync   超级同步路由（启停 / 状态 / 日志）│    │
 │  │  ├── /export       导出路由                          │    │
-│  │  ├── /import       导入路由                          │    │
 │  │  ├── /backups      备份路由                          │    │
 │  │  ├── /lint         lint 路由                         │    │
-│  │  ├── /templates    模板路由                          │    │
 │  │  └── /stats        统计路由                          │    │
 │  └─────────────────────────────────────────────────────┘    │
 │                                                              │
@@ -40,15 +39,15 @@
 │  │  ├── LintService        8 条规则执行                  │    │
 │  │  ├── DiffService        unified diff → HTML          │    │
 │  │  ├── SyncService        跨 Agent 选择性合并           │    │
-│  │  ├── ImportExport       tar.gz 打包 / 解压 / manifest │    │
-│  │  └── TemplateService    内置模板                      │    │
+│  │  ├── SuperSyncService   超级同步：启停 / 状态 / 日志 │    │
+│  │  └── ImportExport       Prompt Pack 导出             │    │
 │  └─────────────────────────────────────────────────────┘    │
 │                                                              │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │  Storage 层                                          │    │
-│  │  ├── SQLite (~/.soulforge/index.db)                  │    │
+│  │  ├── SQLite (<data_dir>/index.db)                    │    │
 │  │  │     └── agents / files / backups / audit_log       │    │
-│  │  └── 文件系统 (OpenClaw workspace / ~/.soulforge/)   │    │
+│  │  └── 文件系统（workspace / <data_dir>、super_sync/） │    │
 │  └─────────────────────────────────────────────────────┘    │
 │                                                              │
 └────────────┬────────────────────────────────────────────────┘
@@ -346,80 +345,47 @@ class SyncService:
 - ❌ 整 workspace cp（`shutil.copytree`）
 - ❌ 没有 plan 直接写
 
-### 3.7 ImportExport
+### 3.7 ImportExport（导出）
 
 ```python
-class ImportExport:
-    def export(self, agent_id: str) -> Path:
-        """导出 Prompt Pack 为 .tar.gz"""
-        agent = self.agent_discovery.get(agent_id)
+class ImportExportService:
+    def export_agent(self, agent_id: str) -> Path:
+        """导出单个 Agent 的 Prompt Pack 为 .tar.gz"""
+        agent = self.discovery.require(agent_id)
         tmp_dir = Path(tempfile.mkdtemp())
 
         # 拷贝全部 .md 文件到临时目录
         for f in self.file_manager.list(agent_id):
-            src = agent.workspace / f.path
+            src = Path(agent.workspace) / f.path
             dst = tmp_dir / f.path
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
 
-        # 生成 manifest
-        manifest = {
-            "soulforge_version": "0.1.0",
-            "export_time": datetime.now().isoformat(),
-            "agent_id": agent_id,
-            "files": [
-                {"path": f.path, "size": f.size, "sha256": hashlib.sha256(...).hexdigest()}
+        # 生成 manifest（SHA-256 校验信息）
+        manifest = Manifest(
+            soulforge_version="0.1.0",
+            export_time=datetime.now().isoformat(),
+            agent_id=agent_id,
+            files=[
+                ManifestFile(path=f.path, size=f.size_bytes,
+                             sha256=sha256_of(Path(agent.workspace) / f.path))
                 for f in self.file_manager.list(agent_id)
             ],
-        }
-        (tmp_dir / "MANIFEST.json").write_text(json.dumps(manifest, indent=2))
+        )
+        (tmp_dir / "MANIFEST.json").write_text(
+            json.dumps(manifest.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8",
+        )
 
         # 打包
         output = Path(tempfile.mkdtemp()) / f"soulforge-{agent_id}-{datetime.now():%Y%m%d-%H%M%S}.tar.gz"
-        shutil.make_archive(str(output).replace(".tar.gz", ""), "gztar", tmp_dir)
+        shutil.make_archive(str(output).removesuffix(".tar.gz"), "gztar", tmp_dir)
         return output
 
-    def import_pack(self, tarball: Path, target_agent_id: str, *, conflicts: dict[str, str]) -> ImportResult:
-        """导入 tar.gz 到指定 Agent
-
-        conflicts: {"file_path": "skip" | "merge" | "overwrite"}
-        """
-        # 1. 解压到临时目录
-        extract_dir = Path(tempfile.mkdtemp())
-        with tarfile.open(tarball, "r:gz") as tf:
-            tf.extractall(extract_dir)
-
-        # 2. 读 manifest
-        manifest = json.loads((extract_dir / "MANIFEST.json").read_text())
-
-        # 3. 逐文件处理（按 conflicts 策略）
-        results = []
-        for file_info in manifest["files"]:
-            path = file_info["path"]
-            src = extract_dir / path
-            target_agent = self.agent_discovery.get(target_agent_id)
-
-            target_file = target_agent.workspace / path
-            exists = target_file.exists()
-
-            if exists and path not in conflicts:
-                strategy = "skip"  # 默认跳过冲突
-            else:
-                strategy = conflicts.get(path, "skip")
-
-            if strategy == "skip":
-                continue
-            elif strategy == "overwrite":
-                self.file_manager.write(target_agent_id, path, src.read_text())
-                results.append({"file": path, "action": "overwritten"})
-            elif strategy == "merge":
-                # 简单行级合并（不全可靠，留 TODO）
-                merged = self._merge_files(target_file, src)
-                self.file_manager.write(target_agent_id, path, merged)
-                results.append({"file": path, "action": "merged"})
-
-        return ImportResult(manifest=manifest, results=results)
+    def export_all(self) -> Path:
+        """导出全部 Agent：每个 Agent 一个子目录 + 根 manifest"""
 ```
+
+> 导入功能已移除；类名 `ImportExportService` 为历史命名保留。
 
 ---
 
@@ -618,6 +584,59 @@ v1.x: ARQ / Celery / RQ       ──── 多 worker 时换
 当前 MVP 阶段用 `asyncio.create_task()`，单进程足够。
 
 **Prompt 构造**（见 DEVELOPMENT.md M13 节）。
+
+---
+
+### 3.11 超级同步（Super Sync · 独立守护脚本）
+
+**目标**：多个 Agent 之间对「同名文件」做**秒级双向同步**，且**脱离主进程**持续运行。
+
+```
+┌──────────────────────────────┐        ┌────────────────────────────────────┐
+│  Soulforge Server (FastAPI)  │        │  super_sync.py（独立进程，可脱离）  │
+│  /api/super-sync/*           │        │  轮询 → 比较同名文件 → 最新覆盖其余  │
+│  ├─ SuperSyncService         │ 分离    │  写入 status.json（心跳）           │
+│  │   start(): Popen(detach)  │ 进程    │  追加 logs/*.jsonl（按天滚动）      │
+│  │   stop(): taskkill/SIGTERM│ ─────▶  └────────────────────────────────────┘
+│  │   status(): pid+心跳判定  │                     ▲
+│  └─ 读 config.json 供 UI     │                     │ 同一份 config.json / status.json
+└──────────────────────────────┘                     │（UI 与命令行两种启动方式等价）
+```
+
+**模块划分**：
+
+| 文件 | 职责 |
+|---|---|
+| `app/services/super_sync_common.py` | 路径 / 配置 / 状态 / 日志的落盘协议；跨平台进程存活检测 |
+| `app/services/super_sync_engine.py` | 同步引擎：扫描 + 冲突裁决 + 原子写入 + diff 记录 |
+| `backend/super_sync.py` | 独立守护脚本（CLI 入口；心跳、日志、信号、单实例互斥） |
+| `app/services/super_sync_service.py` | 后端管理面：启停 / 状态 / 日志查询导出 |
+| `app/api/super_sync.py` | 路由 `/api/super-sync/*` |
+
+**冲突策略**：最新修改优先（双向）——同一相对路径在各参与 Agent 间内容不一致时，
+取 `mtime` 最新者为源覆盖其余；并列时按 Agent id 升序择源，保证确定性。
+内容一致则跳过（天然避免回声循环）。
+
+**同步范围**：仅 `SOUL.md` / `AGENTS.md` / `USER.md` / `MEMORY.md` / `IDENTITY.md`
+这 5 个核心文档可纳入同步（`SYNC_FILENAMES` 白名单，配置层强制过滤，其余路径一律丢弃）。
+`config.json` 显式声明参与 Agent 及每个 Agent 的文件清单；未选中的 Agent / 文件绝不触碰。
+文件缺失于某 Agent 时不凭空创建（仅同步「同名且已存在」的文件）。
+UI 以「矩阵」呈现：行 = Agent、列 = 文档、交叉打勾；全选/清空按**文档列**操作
+（对同一文档一次勾选所有拥有它的 Agent）。
+
+**安全性 / 稳定性**：
+
+- 写目标走「临时文件 + `os.replace`」原子替换，杜绝读到半截内容；
+- 以 `(mtime, size)` 缓存 `sha256`，未变更文件不重复读取，降低轮询开销；
+- 跳过隐藏目录 / `node_modules` / 敏感文件（`.credentials.md`、`.env`）；
+- 相对路径经规范化并拒绝越界；引擎吞掉单轮异常，守护循环不因单点失败退出。
+
+**状态可视化**：脚本每轮写 `status.json`（含 `pid` + `last_heartbeat`）；
+后端据此判定 `running`（进程在 + 心跳新鲜）/ `error`（进程在 + 心跳超时）/ `stopped`；
+UI 每 2.5s 轮询一次（满足 ≤ 3s 延迟）并支持手动刷新。
+
+**日志**：JSON Lines 结构化记录（时间 / 级别 / 事件 / 文件 / 源→目标 / 结果 / 变更 diff / 异常），
+按天滚动且留存 ≥ 30 天，UI 可按级别与时间范围检索、下载导出。
 
 ---
 

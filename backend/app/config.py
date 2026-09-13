@@ -85,10 +85,6 @@ class Config:
         return self.data_dir / "backups"
 
     @property
-    def uploads_dir(self) -> Path:
-        return self.data_dir / "uploads"
-
-    @property
     def config_file(self) -> Path:
         return self.data_dir / "config.toml"
 

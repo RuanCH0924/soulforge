@@ -18,6 +18,8 @@ interface CommandPaletteProps {
   items: CommandItem[];
   /** 最近使用过的动作 id（MRU 顺序，M-05） */
   recentIds: string[];
+  /** 最近打开过的文件（MRU 顺序） */
+  recentFiles: { agentId: string; path: string; at: number }[];
   /** 上报一次动作使用，用于维护「最近使用」（M-05） */
   onUsed: (id: string) => void;
   onSearchFiles: (q: string) => Promise<SearchHit[]>;
@@ -27,7 +29,10 @@ interface CommandPaletteProps {
 /** 空查询时每个分组的展示上限（M-05）：控制首屏长度，避免长列表 */
 const MAX_PER_GROUP = 6;
 
-type Row = CommandItem | { type: 'file'; hit: SearchHit };
+type Row =
+  | CommandItem
+  | { type: 'file'; hit: SearchHit }
+  | { type: 'recent'; agentId: string; path: string };
 
 function match(q: string, text: string): boolean {
   const t = text.toLowerCase();
@@ -40,6 +45,7 @@ export function CommandPalette({
   onClose,
   items,
   recentIds,
+  recentFiles,
   onUsed,
   onSearchFiles,
   onOpenFile,
@@ -111,6 +117,15 @@ export function CommandPalette({
   // 必须在提前 return 之前调用，保持 Hooks 顺序稳定
   const groups = useMemo(() => {
     const gs: { name: string; rows: Row[] }[] = [];
+    // 空查询时把「最近打开的文件」置顶，便于回到刚编辑的文档
+    if (!q && recentFiles.length > 0) {
+      gs.push({
+        name: '最近打开',
+        rows: recentFiles
+          .slice(0, MAX_PER_GROUP)
+          .map((f) => ({ type: 'recent' as const, agentId: f.agentId, path: f.path })),
+      });
+    }
     if (recentItems.length > 0) gs.push({ name: '最近使用', rows: recentItems });
     matchedItems.forEach((it) => {
       const found = gs.find((g) => g.name === it.group);
@@ -132,7 +147,7 @@ export function CommandPalette({
       offset += g.rows.length;
       return { ...g, start };
     });
-  }, [recentItems, matchedItems, files, q]);
+  }, [recentItems, recentFiles, matchedItems, files, q]);
 
   const flat = useMemo<Row[]>(() => groups.flatMap((g) => g.rows), [groups]);
   const total = flat.length;
@@ -144,6 +159,9 @@ export function CommandPalette({
     if (!it) return;
     if (it.type === 'file') {
       onOpenFile(it.hit.agent_id, it.hit.file_path, it.hit.line_number);
+      onClose();
+    } else if (it.type === 'recent') {
+      onOpenFile(it.agentId, it.path);
       onClose();
     } else {
       onUsed(it.id);
@@ -191,6 +209,21 @@ export function CommandPalette({
               </div>
               {g.rows.map((it, i) => {
                 const idx = g.start + i;
+                if (it.type === 'recent') {
+                  return (
+                    <div
+                      key={`recent-${it.agentId}-${it.path}`}
+                      className={`command-item${idx === active ? ' active' : ''}`}
+                      onMouseEnter={() => setActive(idx)}
+                      onClick={() => selectAt(idx)}
+                    >
+                      <span className="command-item-label mono" title={it.path}>
+                        {it.path}
+                      </span>
+                      <span className="command-item-meta">{it.agentId}</span>
+                    </div>
+                  );
+                }
                 if (it.type === 'file') {
                   return (
                     <div

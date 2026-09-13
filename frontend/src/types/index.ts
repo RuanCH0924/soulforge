@@ -65,6 +65,9 @@ export interface SearchResult {
   duration_ms: number;
 }
 
+/** 对比归一化口径：默认忽略格式噪声，strict 仅忽略 BOM / 换行风格 / 零宽字符 */
+export type DiffMode = 'ignore_whitespace' | 'strict';
+
 export interface DiffResult {
   agent_a: string;
   agent_b: string;
@@ -72,6 +75,12 @@ export interface DiffResult {
   similarity: number;
   unified_diff: string;
   html_diff: string;
+  /** 有效内容（归一化后）是否一致；为 true 时 unified_diff / html_diff 为空 */
+  identical: boolean;
+  /** 解释本次差异的格式噪声类型（空表示差异是真实业务差异） */
+  noise_kinds: string[];
+  /** 归一化口径：strict | ignore_whitespace */
+  mode: string;
 }
 
 export interface SyncFilePlan {
@@ -80,6 +89,9 @@ export interface SyncFilePlan {
   html_diff: string;
   size_src: number;
   size_dst: number;
+  /** 有效内容是否一致（一致时不建议同步） */
+  identical: boolean;
+  noise_kinds: string[];
 }
 
 export interface SyncPlanResult {
@@ -131,52 +143,6 @@ export interface LintFileResult {
   agent_id: string;
   file_path: string;
   warnings: LintWarning[];
-}
-
-export interface ManifestFile {
-  path: string;
-  size: number;
-  sha256: string;
-}
-
-export interface Manifest {
-  soulforge_version: string;
-  export_time: string;
-  agent_id: string;
-  files: ManifestFile[];
-}
-
-export interface ConflictItem {
-  path: string;
-  exists_in_target: boolean;
-  target_size?: number | null;
-}
-
-export interface ImportPreviewResult {
-  upload_id: string;
-  target_agent_id: string;
-  manifest: Manifest;
-  conflicts: ConflictItem[];
-}
-
-export type ImportStrategy = 'skip' | 'merge' | 'overwrite';
-
-export interface ImportExecuteResult {
-  manifest: Manifest;
-  results: { file: string; action: string }[];
-}
-
-export interface TemplateInfo {
-  id: string;
-  name: string;
-  description: string;
-  file_count: number;
-}
-
-export interface TemplateApplyResult {
-  agent_id: string;
-  workspace: string;
-  files_created: string[];
 }
 
 export interface StatsResult {
@@ -390,4 +356,60 @@ export interface AIJobApplyResult {
   status: AIJobStatus;
   backup_id?: number | null;
   file_size: number;
+}
+
+// ---- 超级同步（独立守护脚本） ----
+export type SuperSyncState = 'running' | 'stopped' | 'error';
+export type SuperSyncLogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
+
+export interface SuperSyncConfig {
+  /** 轮询间隔（秒），越小越实时 */
+  interval_seconds: number;
+  /** 日志留存天数（后端保证 ≥ 30） */
+  retention_days: number;
+  /** 参与同步的 Agent id 列表 */
+  agents: string[];
+  /** 每个 Agent 纳入同步范围的文件（相对 workspace 路径） */
+  files: Record<string, string[]>;
+}
+
+export interface SuperSyncStatus {
+  state: SuperSyncState;
+  pid?: number | null;
+  pid_alive: boolean;
+  source?: string | null;
+  started_at?: string | null;
+  last_heartbeat?: string | null;
+  heartbeat_age_seconds?: number | null;
+  interval_seconds: number;
+  agents: string[];
+  synced_total: number;
+  ticks: number;
+  last_sync_at?: string | null;
+  last_duration_ms?: number | null;
+  last_error?: string | null;
+}
+
+export interface SuperSyncLogEntry {
+  ts: string;
+  ts_unix: number;
+  level: SuperSyncLogLevel;
+  event: string;
+  message?: string;
+  path?: string | null;
+  source_agent?: string | null;
+  target_agent?: string | null;
+  result?: string | null;
+  size_bytes?: number | null;
+  sha256?: string | null;
+  diff?: string | null;
+  error?: string | null;
+}
+
+export interface SuperSyncLogResult {
+  items: SuperSyncLogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+  retention_days: number;
 }

@@ -47,11 +47,6 @@ class ConflictError(SoulforgeError):
     code = "CONFLICT"
 
 
-class ManifestCorruptedError(SoulforgeError):
-    http_status = 400
-    code = "MANIFEST_CORRUPTED"
-
-
 class SyncPlanExpiredError(SoulforgeError):
     http_status = 410
     code = "SYNC_PLAN_EXPIRED"
@@ -60,16 +55,6 @@ class SyncPlanExpiredError(SoulforgeError):
 class SyncPlanNotFoundError(SoulforgeError):
     http_status = 404
     code = "SYNC_PLAN_NOT_FOUND"
-
-
-class TemplateNotFoundError(SoulforgeError):
-    http_status = 404
-    code = "TEMPLATE_NOT_FOUND"
-
-
-class UploadNotFoundError(SoulforgeError):
-    http_status = 404
-    code = "UPLOAD_NOT_FOUND"
 
 
 class PresetNotFoundError(SoulforgeError):

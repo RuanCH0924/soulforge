@@ -14,7 +14,7 @@ export function TopBar(props: TopBarProps) {
 
   return (
     <header className="topbar">
-      <div className="topbar-title">Soulforge</div>
+      <div className="topbar-title">SoulForge</div>
       <span className="topbar-sub">{agentCount > 0 ? `${agentCount} 个 Agent` : ''}</span>
 
       <div className="topbar-search" onClick={onOpenSearch} role="button" tabIndex={0}>

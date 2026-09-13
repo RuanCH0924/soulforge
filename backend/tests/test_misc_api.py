@@ -1,42 +1,5 @@
-"""集成测试：模板系统 / diff / 统计 / lint API / 跨 Agent 编辑 / 审计。"""
+"""集成测试：diff / 统计 / lint API / 跨 Agent 编辑 / 审计。"""
 from __future__ import annotations
-
-from pathlib import Path
-
-
-# ---------- 模板 ----------
-
-def test_list_templates(client):
-    res = client.get("/api/templates")
-    assert res.status_code == 200
-    templates = res.json()["data"]
-    ids = {t["id"] for t in templates}
-    assert {"standard", "minimal", "lawyer-agent", "writer-agent"} <= ids
-    std = next(t for t in templates if t["id"] == "standard")
-    assert std["file_count"] >= 8
-
-
-def test_apply_template(client, tmp_path: Path):
-    target = tmp_path / "new-agent-workspace"
-    res = client.post("/api/templates/apply", json={
-        "template_id": "minimal",
-        "new_agent_id": "gamma",
-        "target_workspace": str(target),
-    })
-    assert res.status_code == 200
-    data = res.json()["data"]
-    assert data["agent_id"] == "gamma"
-    assert len(data["files_created"]) == 2
-    assert (target / "AGENTS.md").is_file()
-    assert (target / "IDENTITY.md").is_file()
-
-
-def test_apply_template_not_found(client):
-    res = client.post("/api/templates/apply", json={
-        "template_id": "nope", "new_agent_id": "gamma", "target_workspace": "x",
-    })
-    assert res.status_code == 404
-    assert res.json()["error"]["code"] == "TEMPLATE_NOT_FOUND"
 
 
 # ---------- Diff ----------

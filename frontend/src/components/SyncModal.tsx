@@ -3,6 +3,7 @@ import { api } from '../api';
 import { isRoleVisible, useSettings } from '../hooks/useSettings';
 import { useToast } from '../hooks/useToast';
 import { ConfirmDialog } from './ConfirmDialog';
+import { DiffView } from './DiffView';
 import { Modal } from './Modal';
 import type { AgentInfo, SyncPlanResult } from '../types';
 import { formatBytes, similarityColor, similarityPercent } from '../utils/format';
@@ -184,6 +185,13 @@ export function SyncModal({ agents, onClose, onDone, embedded }: SyncModalProps)
         <>
           <div className="alert-banner warning">
             计划已生成（{plan.files.length} 个文件）。请逐个查看差异，勾选确认要同步的文件——<b>默认全部不勾选</b>。
+            {plan.files.some((f) => f.identical) && (
+              <>
+                <br />
+                其中 <b>{plan.files.filter((f) => f.identical).length}</b>{' '}
+                个文件的有效内容已经一致（仅格式噪声不同），通常无需同步。
+              </>
+            )}
           </div>
           {plan.files.map((f) => {
             const isChecked = checked.has(f.path);
@@ -202,6 +210,11 @@ export function SyncModal({ agents, onClose, onDone, embedded }: SyncModalProps)
                   <span className="mono sync-plan-path" style={{ fontWeight: 700 }} title={f.path}>
                     {f.path}
                   </span>
+                  {f.identical && (
+                    <span className="plan-identical-badge" title="有效内容一致，无需同步">
+                      ✓ 内容一致
+                    </span>
+                  )}
                   <span
                     className={`similarity-bar ${similarityColor(f.similarity)}`}
                     style={{ margin: 0, flex: 'none', minWidth: 120 }}
@@ -216,7 +229,12 @@ export function SyncModal({ agents, onClose, onDone, embedded }: SyncModalProps)
                   </span>
                 </label>
                 <div style={{ padding: '0 10px 10px' }}>
-                  <div dangerouslySetInnerHTML={{ __html: f.html_diff }} />
+                  <DiffView
+                    htmlDiff={f.html_diff}
+                    identical={f.identical}
+                    noiseKinds={f.noise_kinds}
+                    identicalText="有效内容一致，同步不会改变业务内容"
+                  />
                 </div>
               </div>
             );
@@ -247,6 +265,13 @@ export function SyncModal({ agents, onClose, onDone, embedded }: SyncModalProps)
                 ))}
               </ul>
               <p className="hint">每个文件写入前会自动备份目标 Agent 的当前版本。</p>
+              {plan.files.filter((f) => f.identical && checked.has(f.path)).length > 0 && (
+                <p className="hint">
+                  注意：所选文件中有{' '}
+                  <b>{plan.files.filter((f) => f.identical && checked.has(f.path)).length}</b>{' '}
+                  个的有效内容已一致，同步只会改写其格式（换行 / 空白等），业务内容不变。
+                </p>
+              )}
             </>
           }
         />

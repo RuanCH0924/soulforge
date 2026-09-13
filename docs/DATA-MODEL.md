@@ -65,7 +65,7 @@ CREATE TABLE backups (
     agent_id        TEXT NOT NULL,
     file_path       TEXT NOT NULL,           -- 备份的文件
     backup_path     TEXT NOT NULL,           -- 备份文件位置：'~/.soulforge/backups/main/SOUL.md/SOUL.md.20260806-105830.bak'
-    reason          TEXT,                    -- 'auto-write' | 'manual' | 'pre-rollback' | 'pre-import'
+    reason          TEXT,                    -- 'auto-write' | 'manual' | 'pre-rollback' | 'pre-sync'
     sha256          TEXT NOT NULL,
     size_bytes      INTEGER NOT NULL,
     created_at      INTEGER NOT NULL,
@@ -90,7 +90,7 @@ DELETE FROM backups WHERE created_at < strftime('%s', 'now', '-30 days');
 CREATE TABLE audit_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp       INTEGER NOT NULL,
-    action          TEXT NOT NULL,           -- 'write' | 'delete' | 'rollback' | 'import' | 'sync' | 'lint' | 'export'
+    action          TEXT NOT NULL,           -- 'write' | 'delete' | 'rollback' | 'sync' | 'lint' | 'export'
     agent_id        TEXT,                    -- 涉及的 Agent（可空，如 export-all）
     target_path     TEXT,                    -- 操作的文件路径
     details_json    TEXT,                    -- 灵活字段，如 diff 大小、备份 ID 列表等
@@ -446,6 +446,22 @@ show_meta = false
 ```
 
 **为什么用 TOML**：比 JSON 适合人改，比 YAML 不缩进敏感，比 INI 表达力强。
+
+### 7.1 超级同步（文件存储，不进 DB）
+
+超级同步的运行数据以文件形式落在 `<data_dir>/super_sync/`，**不写入 SQLite**：
+
+```
+<data_dir>/super_sync/
+├── config.json     # 同步范围：参与 Agent + 每个 Agent 的文档清单（仅 5 个核心文档）
+├── status.json     # 运行状态 + 心跳（独立脚本每轮覆盖写入）
+└── logs/
+    └── super_sync-YYYYMMDD.jsonl   # 结构化日志（按天滚动，留存 ≥ 30 天）
+```
+
+- `status.json` 含 `pid` / `last_heartbeat`，后端据此判定 运行中 / 已停止 / 异常；
+- 日志为 JSON Lines（时间 / 级别 / 事件 / 文件 / 源→目标 / 结果 / 变更 diff / 异常），不落 DB；
+- 该目录随数据目录一起迁移，无需重建索引。
 
 ---
 

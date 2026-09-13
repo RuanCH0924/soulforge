@@ -12,7 +12,7 @@
 
 ### 一句话描述
 
-> 把 OpenClaw 所有 Agent 的「灵魂文件」当作源码管理：浏览、搜索、编辑、同步、备份、导入导出，一个 Web 页面搞定。
+> 把 OpenClaw 所有 Agent 的「灵魂文件」当作源码管理：浏览、搜索、编辑、同步、备份、导出，一个 Web 页面搞定。
 
 ### 核心痛点
 
@@ -83,7 +83,7 @@ workspace 下的所有 Markdown 文件，按"角色"分四类：
 
 一个 Agent 的全部 CORE + MEMORY 文件 = 一个 **Prompt Pack**。
 
-Soulforge 的导入导出单位就是 Prompt Pack（`.tar.gz`，含 SHA256 manifest）。
+Soulforge 的导出单位就是 Prompt Pack（`.tar.gz`，含 SHA256 manifest）。
 
 ### 2.4 Lint 规则（呼应老板 SOUL/AGENTS 护栏）
 
@@ -115,14 +115,15 @@ Soulforge 内置一套 lint 检查，发现违规主动提示：
 | M3 | 跨 Agent 搜索 | 1 | ✅ |
 | M4 | Diff 对比 | 1 | ✅ |
 | M5 | 跨 Agent 同步 | 1 | ✅ |
-| M6 | 导入导出 | 1 | ✅ |
+| M6 | 导出 | 1 | ✅ |
 | M7 | 备份/回滚 | 1 | ✅ |
 | M8 | Lint | 1 | ✅ |
-| M9 | 模板系统 | 1 | ✅ |
+| M9 | 模板系统（已移除） | 1 | ❌ |
 | M10 | 统计/仪表盘 | 1 | ✅ |
 | **M11** | **文档预设系统** | **2.5** | **🚧** |
 | **M12** | **LLM Provider 接入** | **2.5** | **🚧** |
 | **M13** | **AI 自动整理** | **2.5** | **🚧** |
+| **M14** | **超级同步（独立守护脚本）** | **2.5** | **✅** |
 
 ---
 
@@ -133,6 +134,9 @@ Soulforge 内置一套 lint 检查，发现违规主动提示：
 | `GET /api/agents` | 左侧栏 | 列出全部 Agent（含 workspace 路径、文件数、最后修改时间） |
 | `GET /api/agents/{id}` | Agent 详情页 | 单个 Agent 的元数据 + 文件清单 |
 | `POST /api/agents/scan` | 顶部「重新扫描」 | 重新读 `openclaw.json` + 重建索引 |
+
+**自动发现**：优先读 `openclaw.json` 的 `agents.list`；兜底扫描 OpenClaw 根下 `workspace*` 目录，
+其中 `workspace-attestations` 等非 Agent 目录会被自动忽略。
 
 ### 模块 M2：文件浏览 & 编辑
 
@@ -173,14 +177,12 @@ Diff 渲染用 `diff2html`（业界标准）。
 
 **安全护栏**：跨 Agent 同步必须走「plan + confirm」两步，绝不允许一键 cp。
 
-### 模块 M6：导入导出
+### 模块 M6：导出
 
 | 命令 | UI 入口 | 功能 |
 |---|---|---|
 | `GET /api/export/{id}` | Agent 详情 → 「导出」 | 导出 Prompt Pack 为 `.tar.gz` |
-| `GET /api/export/all` | 顶部 → 「导出全部」 | 全部 Agent |
-| `POST /api/import` | 顶部 → 「导入」按钮 | 上传 `.tar.gz` → 解压 → 备份 → 写入 |
-| `POST /api/import/preview` | 导入流程 → 「先预览」 | 先解析 manifest，列出冲突文件，让老板选择 skip/merge/overwrite |
+| `GET /api/export/all` | 业务工具 → 「导出全部」 | 全部 Agent |
 
 ### 模块 M7：备份与回滚
 
@@ -200,20 +202,6 @@ Diff 渲染用 `diff2html`（业界标准）。
 | `GET /api/lint/file/{agent}/{file}` | 文件编辑页 → 「检查」 | 单文件 lint（编辑器右侧实时提示） |
 
 违规显示为「红点」+ 悬浮提示 + 「一键跳转修复」。
-
-### 模块 M9：模板系统
-
-| 命令 | UI 入口 | 功能 |
-|---|---|---|
-| `GET /api/templates` | 顶部 → 「新建 Agent」→ 「从模板」 | 列出内置模板 |
-| `POST /api/templates/apply` | 模板页 → 「应用到新 Agent」 | 生成新 Agent 的 Prompt Pack |
-
-内置模板：
-
-- `standard` — 标准配置（含全部 CORE 文件 + 一个 SOUL.md 示例）
-- `minimal` — 极简（仅 AGENTS.md + IDENTITY.md）
-- `lawyer-agent` — 律师专用（含法答 / IMA 知识库偏好）
-- `writer-agent` — 作家专用（含小说 / 公众号）
 
 ### 模块 M10：统计 & 仪表盘
 
@@ -350,6 +338,26 @@ class LLMProvider(Protocol):
 只输出整理后的 Markdown 内容，不要解释，不要前缀。
 ```
 
+### 模块 M14：超级同步（独立守护脚本）
+
+> 与 M5「跨 Agent 同步（plan + confirm 两步）」不同：超级同步是**持续运行的独立进程**，
+> 对多个 Agent 的同名核心文档做**秒级双向同步**（冲突策略：最新修改优先）。
+
+| 命令 | UI 入口 | 功能 |
+|---|---|---|
+| `GET` / `PUT /api/super-sync/config` | 业务工具 → 超级同步 → 同步范围 | 读取 / 更新同步范围（参与 Agent + 文档矩阵） |
+| `GET /api/super-sync/status` | 业务工具 → 超级同步 → 运行状态 | 运行中 / 已停止 / 异常（UI 每 2.5s 轮询） |
+| `POST /api/super-sync/start` · `/stop` | 运行状态 → 启动 / 停止 / 重启 | 以**分离进程**启停独立脚本 |
+| `GET /api/super-sync/logs`（+ `/export`） | 业务工具 → 超级同步 → 同步日志 | 按级别 / 时间检索、导出 `.jsonl` |
+
+**同步文档白名单**：仅 `SOUL.md` / `AGENTS.md` / `USER.md` / `MEMORY.md` / `IDENTITY.md` 这 5 个核心文档参与同步（配置层强制过滤，其余路径一律丢弃）。
+
+**双启动**：UI 按钮（后端以分离进程拉起，主进程退出后继续运行）与命令行 `python super_sync.py` 等价，共用同一份 `config.json` / `status.json`。
+
+**落盘**：`<data_dir>/super_sync/`（`config.json` / `status.json` / `logs/*.jsonl`，日志留存 ≥ 30 天）。
+
+详见 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) 3.11 与 [docs/API.md](./docs/API.md) 3.13。
+
 ---
 
 ## 四、核心流程（老板视角）
@@ -380,7 +388,7 @@ class LLMProvider(Protocol):
 ```
 1. Agent 详情 → 「导出」→ 下载 main.tar.gz
 2. 手动 push 到 GitHub 仓库
-3. 以后想恢复 → 「导入」→ 上传 tar.gz → 解压到指定 Agent
+3. 需要恢复时：从 GitHub 拉取 tar.gz 后手动解压覆盖对应 Agent 的 workspace
 ```
 
 ### 流程 D：误改后回滚
@@ -441,8 +449,8 @@ class LLMProvider(Protocol):
 │  ├── LintService      ← 8 条 lint 规则           │
 │  ├── DiffService      ← unified diff → html      │
 │  ├── SyncService      ← 跨 Agent 同步            │
-│  ├── ImportExport     ← tar.gz 打包 / 解压       │
-│  └── TemplateService  ← 内置模板                  │
+│  ├── SuperSyncService ← 超级同步（独立进程启停）  │
+│  └── ImportExport     ← Prompt Pack 导出（tar.gz） │
 │                                                  │
 │  Storage:                                        │
 │  └── SQLite (.soulforge/index.db)                 │
@@ -485,7 +493,8 @@ class LLMProvider(Protocol):
 
 老板的硬约束：
 
-1. **任何写操作必须先自动备份** —— 不允许"直接覆盖"
+1. **任何交互式写操作必须先自动备份** —— 不允许"直接覆盖"
+   （例外：M14 超级同步为后台自动同步，仅记录变更 diff 日志、不落盘备份；范围限于 5 个核心文档）
 2. **跨 Agent 整文件覆盖 = 禁止** —— 必须走 diff + confirm
 3. **危险操作必须图形化确认** —— 不能只在 API 层确认
 
@@ -508,8 +517,8 @@ class LLMProvider(Protocol):
 5. 然后加 lint（M8）
 6. 然后加跨 Agent 编辑（M2 扩展）
 7. 然后加 diff / sync（M4 / M5）
-8. 然后加导入导出（M6）
-9. 最后加模板（M9）+ 仪表盘（M10）
+8. 然后加导出（M6）
+9. 最后加仪表盘（M10）
 
 **开发风格约束**：
 

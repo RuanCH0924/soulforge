@@ -22,15 +22,31 @@ const turndown = new TurndownService({
   blankReplacement: (content: string) => (content ? '\n\n' : '\n'),
 });
 
+/** 读取单元格对齐信息（marked 可能写到 align 属性或 text-align 行内样式） */
+function cellAlign(cell: Element): string {
+  const attr = (cell.getAttribute('align') ?? '').toLowerCase();
+  const style = ((cell as HTMLElement).style?.textAlign ?? '').toLowerCase();
+  const v = attr || style;
+  if (v === 'center') return ':---:';
+  if (v === 'right') return '---:';
+  if (v === 'left') return ':---';
+  return '---';
+}
+
 // GFM 表格：marked 渲染出的 <table> 回写为 markdown 表格语法
 turndown.addRule('tables', {
   filter: 'table',
   replacement: (_content, node) => {
     const table = node as HTMLTableElement;
     const rows: string[][] = [];
-    table.querySelectorAll('tr').forEach((tr) => {
+    // 保留列对齐（marked 可能输出 align 属性或 text-align 行内样式）
+    let aligns: string[] = [];
+    table.querySelectorAll('tr').forEach((tr, rowIndex) => {
       const cells: string[] = [];
-      tr.querySelectorAll('th, td').forEach((td) => cells.push(td.textContent?.trim() ?? ''));
+      tr.querySelectorAll('th, td').forEach((cell) => {
+        cells.push(cell.textContent?.trim() ?? '');
+        if (rowIndex === 0) aligns.push(cellAlign(cell));
+      });
       if (cells.length > 0) rows.push(cells);
     });
     if (rows.length === 0) return '\n\n';
@@ -39,9 +55,23 @@ turndown.addRule('tables', {
       Array.from({ length: cols }, (_, i) => r[i] ?? '')
         .map((c) => c.replace(/\|/g, '\\|').replace(/\n/g, ' '))
         .join(' | ');
-    const lines = [pad(rows[0]), Array.from({ length: cols }, () => '---').join(' | ')];
+    const separator = Array.from({ length: cols }, (_, i) => aligns[i] ?? '---').join(' | ');
+    const lines = [pad(rows[0]), separator];
     for (const r of rows.slice(1)) lines.push(pad(r));
     return '\n\n' + lines.join('\n') + '\n\n';
+  },
+});
+
+// GFM 任务列表：保留 `- [ ]` / `- [x]` 标记（turndown 默认会丢弃 checkbox）
+turndown.addRule('taskListItems', {
+  filter: (node) =>
+    node.nodeName === 'LI' && (node as HTMLElement).querySelector('input[type="checkbox"]') !== null,
+  replacement: (content, node) => {
+    const input = (node as HTMLElement).querySelector('input[type="checkbox"]');
+    const box = input?.hasAttribute('checked') ? '[x]' : '[ ]';
+    // 去掉 checkbox 自身残留文本，并保持多行内容缩进
+    const text = content.replace(/^\s*(✓|✔)?\s*/, '').trim().replace(/\n/g, '\n  ');
+    return `- ${box} ${text}\n`;
   },
 });
 
@@ -61,7 +91,8 @@ turndown.addRule('br', {
 export function renderMarkdown(markdown: string): string {
   if (!markdown) return '';
   const raw = marked.parse(markdown, { async: false }) as string;
-  return DOMPurify.sanitize(raw);
+  // ADD_ATTR: 保留表格列对齐属性，供回写时还原 `:---:` / `---:`
+  return DOMPurify.sanitize(raw, { ADD_ATTR: ['align'] });
 }
 
 /** 把预览 DOM 的 HTML 转换回 markdown 源文本。 */

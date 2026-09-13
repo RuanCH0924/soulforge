@@ -1,6 +1,6 @@
 """路由：文档预设系统（M11 · Phase 2.5 Step 1）。
 
-端点见 docs/API.md §3.11。应用预设走 plan + execute 两步，绝不直接覆盖。
+端点见 docs/API.md §3.10。应用预设走 plan + execute 两步，绝不直接覆盖。
 """
 from __future__ import annotations
 

@@ -12,10 +12,13 @@ import { markdownFromHtml, renderMarkdown } from '../utils/markdown';
 interface MarkdownPreviewProps {
   markdown: string;
   onChange: (md: string) => void;
+  /** 宿主节点 ref：供父组件在预览中滚动定位到指定标题（大纲跳转） */
+  hostRef?: React.MutableRefObject<HTMLDivElement | null>;
 }
 
-export function MarkdownPreview({ markdown, onChange }: MarkdownPreviewProps) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
+export function MarkdownPreview({ markdown, onChange, hostRef }: MarkdownPreviewProps) {
+  const localRef = useRef<HTMLDivElement | null>(null);
+  const host = hostRef ?? localRef;
   const [html, setHtml] = useState<string>(() => renderMarkdown(markdown));
   // 最近一次推给父组件的 markdown（用于识别“外部变化”，避免自己触发重渲染）
   const lastPushedRef = useRef<string>(markdown);
@@ -29,16 +32,16 @@ export function MarkdownPreview({ markdown, onChange }: MarkdownPreviewProps) {
   }, [markdown]);
 
   const handleInput = useCallback(() => {
-    const el = hostRef.current;
+    const el = host.current;
     if (!el) return;
     const md = markdownFromHtml(el.innerHTML);
     lastPushedRef.current = md;
     onChange(md);
-  }, [onChange]);
+  }, [host, onChange]);
 
   return (
     <div
-      ref={hostRef}
+      ref={host}
       className="md-preview"
       contentEditable
       suppressContentEditableWarning

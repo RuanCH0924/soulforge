@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useToast } from '../hooks/useToast';
 import { ConfirmDialog } from './ConfirmDialog';
+import { DiffView } from './DiffView';
 import { Modal } from './Modal';
 import type { BackupEntry } from '../types';
 import { formatBytes, formatTime } from '../utils/format';
@@ -17,8 +18,14 @@ export function HistoryModal({ agentId, path, onClose, onRolledBack }: HistoryMo
   const { push: toast } = useToast();
   const [history, setHistory] = useState<BackupEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [confirm, setConfirm] = useState<BackupEntry | null>(null);
+  const [pending, setPending] = useState<BackupEntry | null>(null);
   const [rolling, setRolling] = useState(false);
+  /** 回滚前的「当前 vs 该备份」差异（后端已提供 /api/diff/history） */
+  const [diffHtml, setDiffHtml] = useState<string | null>(null);
+  const [diffIdentical, setDiffIdentical] = useState(false);
+  const [diffNoise, setDiffNoise] = useState<string[]>([]);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffError, setDiffError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,12 +44,32 @@ export function HistoryModal({ agentId, path, onClose, onRolledBack }: HistoryMo
     };
   }, [agentId, path, toast]);
 
+  /** 打开回滚确认，并先加载「当前 vs 该备份」的差异供确认 */
+  async function openRollback(b: BackupEntry) {
+    setPending(b);
+    setDiffHtml(null);
+    setDiffIdentical(false);
+    setDiffNoise([]);
+    setDiffError(null);
+    setDiffLoading(true);
+    try {
+      const res = await api.diffHistory(agentId, path, b.backup_id);
+      setDiffHtml(res.html_diff);
+      setDiffIdentical(res.identical);
+      setDiffNoise(res.noise_kinds);
+    } catch (e) {
+      setDiffError((e as Error).message);
+    } finally {
+      setDiffLoading(false);
+    }
+  }
+
   async function doRollback() {
-    if (!confirm) return;
+    if (!pending) return;
     setRolling(true);
     try {
-      const res = await api.rollback(agentId, path, confirm.backup_id);
-      toast(`已回滚到 ${formatTime(confirm.created_at)} 的版本（新备份 #${res.new_backup_id}）`, 'success');
+      const res = await api.rollback(agentId, path, pending.backup_id);
+      toast(`已回滚到 ${formatTime(pending.created_at)} 的版本（新备份 #${res.new_backup_id}）`, 'success');
       onRolledBack();
       onClose();
     } catch (e) {
@@ -75,7 +102,7 @@ export function HistoryModal({ agentId, path, onClose, onRolledBack }: HistoryMo
                 </div>
                 <div className="item-sub">{b.reason || 'auto-write'}</div>
               </div>
-              <button className="btn btn-danger btn-sm" onClick={() => setConfirm(b)}>
+              <button className="btn btn-danger btn-sm" onClick={() => void openRollback(b)}>
                 回滚到此版本
               </button>
             </div>
@@ -83,22 +110,40 @@ export function HistoryModal({ agentId, path, onClose, onRolledBack }: HistoryMo
         </div>
       )}
 
-      {confirm && (
+      {pending && (
         <ConfirmDialog
           title="确认回滚"
           danger
-          busy={rolling}
+          busy={rolling || diffLoading}
           confirmText="确认回滚"
           cancelText="取消"
           onConfirm={doRollback}
-          onCancel={() => setConfirm(null)}
+          onCancel={() => setPending(null)}
           message={
             <>
               <p>
                 将把 <b className="mono">{path}</b> 回滚到{' '}
-                <b>{formatTime(confirm.created_at)}</b> 的备份版本（备份 #{confirm.backup_id}）。
+                <b>{formatTime(pending.created_at)}</b> 的备份版本（备份 #{pending.backup_id}）。
               </p>
               <p className="hint">回滚前会先自动备份当前内容，避免丢失任何修改。</p>
+              <div className="rollback-diff-label">差异预览（当前内容 → 该备份版本）：</div>
+              {diffLoading ? (
+                <div className="state-block">
+                  <div className="spinner-lg" />
+                  <div>正在生成差异…</div>
+                </div>
+              ) : diffError ? (
+                <div className="hint">差异加载失败（{diffError}）；确认后将按该备份整篇覆盖。</div>
+              ) : diffHtml !== null ? (
+                <div className="rollback-diff">
+                  <DiffView
+                    htmlDiff={diffHtml}
+                    identical={diffIdentical}
+                    noiseKinds={diffNoise}
+                    identicalText="该备份与当前内容一致，回滚不会改变业务内容"
+                  />
+                </div>
+              ) : null}
             </>
           }
         />

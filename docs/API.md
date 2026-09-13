@@ -301,6 +301,7 @@
 | `a` | string | Agent A id |
 | `b` | string | Agent B id |
 | `file` | string | 文件路径 |
+| `mode` | string | 归一化口径（可选，默认 `ignore_whitespace`）。`ignore_whitespace` 忽略空白 / 空行 / 缩进 / BOM / 零宽字符等格式噪声；`strict` 仅忽略 BOM / 换行符风格 / 零宽字符。非法值回落到默认 |
 
 **响应**：
 
@@ -310,12 +311,32 @@
     "agent_a": "main",
     "agent_b": "xiaowei-ops",
     "file": "SOUL.md",
-    "similarity": 0.42,           // 0-1，越高越相似
+    "similarity": 0.42,           // 0-1，在归一化文本上计算；内容一致时恒为 1.0
     "unified_diff": "--- main/SOUL.md\n+++ xiaowei-ops/SOUL.md\n@@ ...",
-    "html_diff": "<div class='diff'>...</div>"  // diff2html 输出
+    "html_diff": "<pre class='diff-view'>...</pre>",  // 一致时为空字符串
+    "identical": false,           // 有效内容（归一化后）是否一致
+    "noise_kinds": [],            // 解释本次差异的格式噪声类型；空表示差异是真实业务差异
+    "mode": "ignore_whitespace"
   }
 }
 ```
+
+**`noise_kinds` 取值**：
+
+| 值 | 含义 |
+|---|---|
+| `bom` | UTF-8 BOM 差异 |
+| `line_ending` | 换行符风格差异（CRLF / CR / LF） |
+| `invisible_char` | 零宽 / 不可见字符（U+200B–200F、U+2060、U+FEFF、U+FE0F 等） |
+| `space_like_char` | 全角空格 / 不换行空格等「看似空格」的字符 |
+| `trailing_whitespace` | 行尾空白差异 |
+| `multiple_spaces` | 连续空白 / Tab 缩进差异 |
+| `blank_lines` | 多余空行差异 |
+| `edge_blank_lines` | 文首 / 文末空行差异 |
+
+> `identical=true` 时 `unified_diff` 与 `html_diff` 均为空字符串；若文件字节不同，
+> `noise_kinds` 会列出导致差异的噪声类型，便于前端明确告知用户「差异仅来自格式噪声」。
+> 性能：内容一致时走快路径，不做 diff 计算（大文件从秒级降到亚毫秒级）。
 
 #### `GET /api/diff/history`
 
@@ -328,6 +349,9 @@
 | `agent` | string | Agent id |
 | `file` | string | 文件路径 |
 | `against` | string | 备份 ID（数字） |
+| `mode` | string | 归一化口径（可选，同 `GET /api/diff`） |
+
+**响应**：同 `GET /api/diff`。
 
 ---
 
@@ -398,7 +422,7 @@
 
 ---
 
-### 3.6 导入导出
+### 3.6 导出
 
 #### `GET /api/export/{agent_id}`
 
@@ -415,48 +439,6 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 #### `GET /api/export/all`
 
 导出全部 Agent（打包成一个 tarball，每个 Agent 一个子目录）。
-
-#### `POST /api/import/preview`
-
-上传 tar.gz，先解析 manifest 列出冲突。
-
-**请求**：`multipart/form-data`，file 字段为 tar.gz。
-
-**响应**：
-
-```json
-{
-  "data": {
-    "manifest": {
-      "soulforge_version": "0.1.0",
-      "agent_id": "main",
-      "files": [
-        { "path": "SOUL.md", "size": 4500, "sha256": "..." }
-      ]
-    },
-    "conflicts": [
-      { "path": "SOUL.md", "exists_in_target": true, "target_size": 4300 }
-    ],
-    "target_agent_id": "main"
-  }
-}
-```
-
-#### `POST /api/import/execute`
-
-执行导入。
-
-**请求**：
-
-```json
-{
-  "upload_id": "upload-uuid-xxx",    // 上传时返回的临时 id
-  "target_agent_id": "main",
-  "conflicts": {
-    "SOUL.md": "skip"                 // skip | merge | overwrite
-  }
-}
-```
 
 ---
 
@@ -554,62 +536,7 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 
 ---
 
-### 3.9 模板
-
-#### `GET /api/templates`
-
-列出内置模板。
-
-**响应**：
-
-```json
-{
-  "data": [
-    {
-      "id": "standard",
-      "name": "Standard",
-      "description": "标准配置（含全部 CORE 文件）",
-      "file_count": 8
-    },
-    {
-      "id": "minimal",
-      "name": "Minimal",
-      "description": "极简（仅 AGENTS.md + IDENTITY.md）",
-      "file_count": 2
-    },
-    {
-      "id": "lawyer-agent",
-      "name": "Lawyer Agent",
-      "description": "律师专用模板",
-      "file_count": 9
-    },
-    {
-      "id": "writer-agent",
-      "name": "Writer Agent",
-      "description": "作家专用模板",
-      "file_count": 9
-    }
-  ]
-}
-```
-
-#### `POST /api/templates/apply`
-
-应用模板创建新 Agent。
-
-**请求**：
-
-```json
-{
-  "template_id": "lawyer-agent",
-  "new_agent_id": "xiaoxi-lawyer-v2",
-  "target_workspace": "/root/.openclaw/workspace-agents/xiaoxi-lawyer-v2"
-}
-```
-
----
-
-### 3.10 统计
+### 3.9 统计
 
 #### `GET /api/stats`
 
@@ -635,7 +562,7 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 
 ---
 
-### 3.11 文档预设（Phase 2.5 · Step 1）
+### 3.10 文档预设（Phase 2.5 · Step 1）
 
 > 数据模型见 `DATA-MODEL.md` 的 `presets` 表。
 
@@ -778,7 +705,7 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 
 ---
 
-### 3.12 LLM Provider（Phase 2.5 · Step 2）
+### 3.11 LLM Provider（Phase 2.5 · Step 2）
 
 > 数据模型见 `DATA-MODEL.md` 的 `llm_providers` 表。
 
@@ -878,7 +805,7 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 
 ---
 
-### 3.13 AI 自动整理（Phase 2.5 · Step 3）
+### 3.12 AI 自动整理（Phase 2.5 · Step 3）
 
 > 数据模型见 `DATA-MODEL.md` 的 `ai_jobs` 表。
 
@@ -961,6 +888,122 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 列出 AI 任务历史（按时间倒序）。
 
 **Query**：`?agent_id=main&status=applied&limit=50`
+
+### 3.13 超级同步（独立守护脚本）
+
+> 与 3.5「跨 Agent 同步（plan + confirm 两步）」不同：超级同步是**持续运行的独立进程**，
+> 在多个 Agent 之间对「同名文件」做秒级双向同步（冲突策略：最新修改优先）。
+> 该进程由后端以「分离进程」方式拉起，Soulforge 主进程退出后仍继续运行。
+> 落盘目录：`<data_dir>/super_sync/`（`config.json` / `status.json` / `logs/*.jsonl`）。
+
+#### `GET /api/super-sync/config`
+
+读取同步范围配置。
+
+```json
+{
+  "data": {
+    "interval_seconds": 1,
+    "retention_days": 30,
+    "agents": ["alpha", "beta"],
+    "files": {"alpha": ["SOUL.md", "AGENTS.md"], "beta": ["SOUL.md"]}
+  }
+}
+```
+
+#### `PUT /api/super-sync/config`
+
+更新同步范围（局部合并）。`retention_days` 后端强制 ≥ 30；`interval_seconds` 钳制在 0.5–60；
+`files` 仅接受 5 个核心文档（`SOUL.md` / `AGENTS.md` / `USER.md` / `MEMORY.md` / `IDENTITY.md`），
+其余路径（含子目录 / 历史遗留配置）一律被丢弃。
+
+```json
+{
+  "agents": ["alpha", "beta"],
+  "files": {"alpha": ["SOUL.md"], "beta": ["SOUL.md"]},
+  "interval_seconds": 1
+}
+```
+
+#### `GET /api/super-sync/status`
+
+运行状态：`running | stopped | error`（`error` = 进程存活但心跳超时）。
+
+```json
+{
+  "data": {
+    "state": "running",
+    "pid": 12345,
+    "pid_alive": true,
+    "source": "ui",
+    "started_at": "2026-09-13T20:00:00.000",
+    "last_heartbeat": "2026-09-13T20:05:00.000",
+    "heartbeat_age_seconds": 0.42,
+    "interval_seconds": 1,
+    "agents": ["alpha", "beta"],
+    "synced_total": 12,
+    "ticks": 300,
+    "last_sync_at": "2026-09-13T20:04:59.000",
+    "last_error": null
+  }
+}
+```
+
+#### `POST /api/super-sync/start`
+
+以独立进程启动超级同步（已在运行则直接返回当前状态）。响应体同 `GET /status`。
+
+#### `POST /api/super-sync/stop`
+
+停止独立进程（Windows 走 `taskkill /F`，POSIX 走 `SIGTERM`）。响应体同 `GET /status`。
+
+#### `GET /api/super-sync/logs`
+
+按级别 / 时间范围查询日志（倒序）。
+
+**Query**：`?levels=INFO,ERROR&since=1754478700&until=1754479000&limit=200&offset=0`
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "ts": "2026-09-13T20:00:01.000",
+        "ts_unix": 1757772001.0,
+        "level": "INFO",
+        "event": "sync",
+        "path": "SOUL.md",
+        "source_agent": "alpha",
+        "target_agent": "beta",
+        "result": "ok",
+        "size_bytes": 128,
+        "sha256": "…",
+        "diff": "--- a/SOUL.md\n+++ b/SOUL.md\n@@ -1 +1 @@\n-…\n+…"
+      }
+    ],
+    "total": 1,
+    "limit": 200,
+    "offset": 0,
+    "retention_days": 30
+  }
+}
+```
+
+非法级别返回 `400 BAD_REQUEST`。
+
+#### `GET /api/super-sync/logs/export`
+
+导出筛选后的日志（`application/x-ndjson`，`Content-Disposition` 附件下载）。Query 同 `GET /logs`（不含分页）。
+
+#### 命令行启动（等价入口）
+
+```bash
+cd backend
+python super_sync.py --data-dir <data_dir> --openclaw-dir <openclaw_dir> --source cli
+python super_sync.py --once        # 只执行一轮（自检）
+```
+
+两种启动方式共用同一份 `config.json` 与 `status.json`，因此 UI 能正确识别命令行启动的进程。
 
 ---
 

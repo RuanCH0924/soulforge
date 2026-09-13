@@ -15,6 +15,9 @@ from app.models.schemas import AgentInfo
 
 DEFAULT_WORKSPACE_NAME = "workspace"
 
+# 扫描 workspace* 目录时需要忽略的目录名
+IGNORED_WORKSPACE_DIRS = {"workspace-attestations"}
+
 
 class AgentDiscovery:
     def __init__(self, config: Config):
@@ -61,6 +64,8 @@ class AgentDiscovery:
         if root.is_dir():
             for sub in sorted(root.iterdir()):
                 if not sub.is_dir() or not sub.name.startswith("workspace"):
+                    continue
+                if sub.name in IGNORED_WORKSPACE_DIRS:
                     continue
                 agent_id = "main" if sub.name == "workspace" else sub.name.removeprefix("workspace-")
                 if agent_id and agent_id not in agents:

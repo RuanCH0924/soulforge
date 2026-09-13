@@ -16,6 +16,8 @@
 |---|---|---|
 | v1.0 | — | 初版（桌面三栏、≥1280px 强制） |
 | v1.1 | 2026-09-02 | M-08 同步实现：加入侧边导航、四档断点、最小宽度 320px、自定义组件清单、Alt 折叠快捷键、一致性核对表 |
+| v1.2 | 2026-09-02 | 文档编辑体验升级：默认视图模式改为源码编辑、`Ctrl+B` 让位给加粗、新增多窗口/大纲/lint 跳转快捷键、新增草稿保护与会话恢复、回滚增加 diff 预览、文件树支持过滤与键盘导航 |
+| v1.3 | 2026-09-02 | 对比工具专项修复：新增文本归一化两档口径（忽略格式噪声 / 严格）、`identical` 与 `noise_kinds` 结果字段、一致时的明确结论展示、同步计划标注「内容一致」、默认 A/B 不再选到同一 Agent |
 
 ---
 
@@ -165,11 +167,11 @@
 
 | 页面组件 | 承载内容 | 路由 |
 |---|---|---|
-| `pages/ToolsPage.tsx` | 同步 / 跨Agent编辑 / 对比 / 导入 / 新建Agent | `#/tools` |
+| `pages/ToolsPage.tsx` | 同步 / 超级同步 / 跨Agent编辑 / 对比 | `#/tools` |
 | `pages/DataPage.tsx` | 统计仪表盘 / 健康检查报告 / 审计日志 | `#/data` |
 | `pages/SettingsPage.tsx` | 常规设置 / LLM Provider / 文档预设 | `#/settings` |
 
-> 功能面板（`SyncModal` / `CrossEditModal` / `DiffModal` / `ImportModal` / `TemplateModal` / `StatsModal` / `GlobalLintModal` / `AuditModal` / `SettingsModal` / `LLMProvidersModal` / `PresetModal`）在上述三页内以 `Modal embedded + headerless` 形式渲染，页面内**不出现第二层标题栏与「返回」按钮**。
+> 功能面板（`SyncModal` / `SuperSyncPanel` / `CrossEditModal` / `DiffModal` / `StatsModal` / `GlobalLintModal` / `AuditModal` / `SettingsModal` / `LLMProvidersModal` / `PresetModal`）在上述三页内以 `Modal embedded + headerless` 形式渲染，页面内**不出现第二层标题栏与「返回」按钮**。
 
 ---
 
@@ -177,17 +179,28 @@
 
 ### 5.1 文件编辑
 
-- **保存快捷键**：`Cmd/Ctrl + S`
+- **视图模式**（工具栏「编辑 / 预览」，偏好全局记忆）：
+  - **源码编辑（默认）**：Monaco 直接编辑 Markdown 源码，所见即所存，**不会改动格式**
+  - **预览编辑**：可视化编辑，保存时会把 DOM 转回 Markdown → 列表/强调符号会被规范化、HTML 注释无法保留（表格对齐与任务列表已做保真处理）。工具栏常驻提示「预览保存会规范化 Markdown 格式」
+  - 切换文件不再重置视图模式
+- **保存快捷键**：`Cmd/Ctrl + S`；`Cmd/Ctrl + Shift + S` 保存全部未保存窗口
 - **保存状态位**（编辑器路径栏，二者互斥显示）：
   - 有未保存修改 → `● 未保存`（`--warning` 色）
   - 无修改且已保存过 → `已保存 HH:mm:ss`（`--text-tertiary` 色），时间取最近一次成功保存
   - 自动保存与手动保存共用同一状态位
+- **重新加载**：工具栏「重新加载」放弃未保存修改、重新读取磁盘版本（有修改时二次确认）
+- **草稿保护**：未保存内容防抖 1.5s 写入 `localStorage`（单条上限 200KB）；重开应用时若发现草稿会询问「恢复 / 丢弃」。草稿在保存成功、关闭窗口、重新加载、删除文档时清除
+- **会话恢复**：重开应用自动还原上次打开的编辑窗口（最多 3 个）与左侧选中的 Agent
 - **关闭未保存提示**：关闭窗口 / 刷新页面时弹确认（`beforeunload`）
-- **自动保存**：默认 **关闭**（老板手动控制，避免误操作）；开启后编辑暂停 **2s** 自动写入
+- **自动保存**：默认 **关闭**；开启后编辑暂停 **2s** 自动写入
 - **保存前校验**：
   - 单文件 > 50KB → 提示「文件过大，确认保存？」
   - 内容为空 → 提示「将清空文件，确认？」
-- **多窗口**：最多同时打开 **3** 个编辑窗口，超出时提示先关闭一个；单窗口模式打开新文档将替换当前窗口
+- **多窗口**：最多同时打开 **3** 个编辑窗口；`Ctrl/Cmd + 1/2/3` 切换、`Alt + W` 关闭当前；单窗口模式打开新文档将替换当前窗口
+- **文档状态条**（编辑器底部）：`第 L 行, 第 C 列 · N 字符 · ≈T tokens`（预览模式隐藏行列），选中时显示已选字符数
+  - token 为**估算值**：CJK 字符 ≈1 token/字，其余按 4 字符/token；超过 **2000** 转为警告色
+- **lint 提示**：点「检查」后警告会**标在正文行内**（波浪线 + 悬浮显示规则与建议），`F8` / `Shift + F8` 在警告间跳转
+- **文档大纲**：工具栏「大纲」或 `Cmd/Ctrl + Shift + O`，按 H1–H6 列出标题，点击跳转（预览模式下会先切回源码编辑）
 
 ### 5.2 危险操作确认
 
@@ -197,8 +210,8 @@
 |---|---|
 | 编辑单文件保存 | Toast 即可 |
 | 跨 Agent 编辑保存 | Dialog 确认（显示影响 Agent 列表） |
-| 导入 tar.gz | Dialog 确认（显示冲突文件） |
-| 回滚 | Dialog 确认（显示当前 vs 历史 diff） |
+| 回滚 | Dialog 确认 + **内嵌「当前内容 vs 该备份」差异预览**（`GET /api/diff/history`，差异加载中禁止确认） |
+| 删除文档 | Dialog 确认（提示「移入回收站，可从系统回收站恢复」；未保存的文档先拒绝删除） |
 | 删除备份 | Dialog 确认 + 输入「确认删除」 |
 
 ### 5.3 Lint 警告显示
@@ -231,6 +244,29 @@
 **高级搜索**（命令面板 → 「高级搜索文件内容」）：
 
 - 支持按 Agent / 文件范围等条件过滤，结果可点击回跳并定位行
+
+### 5.6 对比与同步工具（业务工具页）
+
+**对比口径**（「对比」tab 底部开关，默认「忽略格式噪声」）：
+
+| 口径 | 忽略范围 | 适用场景 |
+|---|---|---|
+| **忽略格式噪声**（默认） | BOM、换行符风格、零宽/不可见字符、全角空格与不换行空格、行尾空白、连续空白/缩进、多余空行、文首文末空行 | 判断「业务内容是否一致」——同一份 prompt 被不同工具/系统保存后仍应判为一致 |
+| **严格** | 仅 BOM、换行符风格、零宽/不可见字符 | 需要确认空白与空行也确实一致时 |
+
+**结果展示规则**
+
+- `identical = true`（有效内容一致）→ **不再显示空的差异框**，改为显示绿色结论「内容完全一致，无差异」；
+  若原始字节不同，追加一行说明「原始文件仅存在格式噪声差异（已忽略）：<噪声类型>」，**判定过程不静默**；
+- `identical = false` → 显示行内高亮差异（`diff-add` / `diff-del` / `diff-hunk`）；
+- 相似度在归一化文本上计算，**内容一致时恒为 100%**，不会再出现「看起来一样却显示 99%」；
+- 默认 Agent A / B 自动选择为**两个不同 Agent**，不会出现「自己和自己比」。
+
+**同步计划**（「同步」tab）：
+
+- 逐文件展示差异 + 相似度；有效内容一致的文件标注「✓ 内容一致」徽标，并在计划顶部汇总「其中 N 个文件的有效内容已经一致，通常无需同步」；
+- 执行确认弹窗中，若所选文件包含内容一致者会再次提示「同步只会改写其格式，业务内容不变」；
+- 铁律不变：默认全部不勾选，绝不整文件覆盖，写入前自动备份目标 Agent。
 
 ---
 
@@ -272,14 +308,24 @@
 | 快捷键 | 功能 | 作用域 |
 |---|---|---|
 | `Cmd/Ctrl + S` | 保存当前激活窗口的编辑内容 | 全局 |
-| `Cmd/Ctrl + K` | 打开命令面板（导航 / 功能 / 文件） | 全局 |
-| `Cmd/Ctrl + B` | 折叠 / 展开左栏（Agent 树） | 工作台 |
-| `Alt + 1` | 折叠 / 展开左栏（推荐，与浏览器无冲突） | 工作台 |
+| `Cmd/Ctrl + Shift + S` | 保存全部未保存窗口 | 全局 |
+| `Cmd/Ctrl + K` | 打开命令面板（导航 / 功能 / 文件 / 最近打开） | 全局 |
+| `Cmd/Ctrl + B` | **加粗**（仅编辑器聚焦时；Markdown 源码模式） | 编辑器 |
+| `Cmd/Ctrl + I` | 斜体（同上） | 编辑器 |
+| `Cmd/Ctrl + 1 / 2 / 3` | 切换到第 N 个编辑窗口 | 工作台 |
+| `Alt + W` | 关闭当前文档（有未保存修改会二次确认） | 工作台 |
+| `Alt + 1` | 折叠 / 展开左栏（Agent 树） | 工作台 |
 | `Alt + 2` | 折叠 / 展开中栏（文件树） | 工作台 |
+| `Cmd/Ctrl + Shift + O` | 打开 / 关闭文档大纲 | 编辑器 |
+| `F8` / `Shift + F8` | 跳到下一条 / 上一条 lint 警告 | 编辑器 |
+| `↑ / ↓`（文件树聚焦时） | 上下移动并打开文件；`Esc` 清空过滤 | 工作台 |
 | `Cmd/Ctrl + Shift + E` | 前往业务工具 → 跨 Agent 编辑 | 全局 |
 | `Esc` | 关闭弹窗 / 命令面板 / 下拉菜单 | 全局 |
 
-> `Alt + 1` / `Alt + 2` 仅在 `#/workbench` 路由生效；未采用 `Ctrl+Shift+B`，因其在 Chromium 系浏览器中与「显示/隐藏书签栏」冲突。
+> **快捷键冲突说明**
+> - 左栏折叠已由 `Alt + 1` 承担，`Ctrl/Cmd + B` 让位给 Markdown「加粗」（编辑器聚焦时生效，其余场景无绑定）。旧版 `Ctrl+B 折叠左栏` 已取消。
+> - 关闭文档使用 `Alt + W` 而非 `Ctrl + W`：后者是浏览器保留键（关闭标签页），页面无法拦截。
+> - `Alt + 1` / `Alt + 2`、`Ctrl + 1/2/3`、`Alt + W` 仅在 `#/workbench` 路由生效。
 
 - **字体**：`Inter`（主）+ `JetBrains Mono`（代码/路径）
 - **字号**：正文 14px（`--font-size-md`）/ 次要 12px（`--font-size-sm`）/ 区块标题 15px（`--font-size-lg`）/ 页面主标题 20px（`--font-size-xl`）
@@ -329,7 +375,18 @@
 | 命令面板空查询每组上限 | 6 | `components/CommandPalette.tsx` `MAX_PER_GROUP` |
 | 命令面板文件检索防抖 | 220ms | `components/CommandPalette.tsx` |
 | CORE 下拉滚动容器高度 | `min(320px, 50vh)` | `styles/global.css` `.core-agent-list .dropdown-menu` |
+| 对比默认归一化口径 | `ignore_whitespace` | `backend/app/services/diff_service.py` `MODE_IGNORE_WHITESPACE` |
+| 对比噪声类型集合 | 8 种（bom / line_ending / invisible_char / space_like_char / trailing_whitespace / multiple_spaces / blank_lines / edge_blank_lines） | `diff_service.py` `_NOISE_STAGES` |
+| 相似度行级降级阈值 | 20000 字符 | `diff_service.py` `LINE_SIMILARITY_THRESHOLD` |
+| 差异视图渲染口径 | `display_text`（保留空行与缩进） | `diff_service.py` `display_text` |
 | 自动保存防抖 | 2s | `App.tsx` 自动保存 effect |
+| 编辑器默认视图模式 | `edit`（源码编辑） | `components/EditorPane.tsx` `loadViewMode` |
+| 文档 token 提示阈值 | 2000 | `EditorPane.tsx` `TOKEN_WARN_THRESHOLD` |
+| 大纲面板宽度 | 260px | `styles/global.css` `.outline-panel` |
+| 编辑器状态条高度 | 22px | `styles/global.css` `.editor-statusline` |
+| 草稿单条体积上限 | 200KB | `App.tsx` `DRAFT_MAX_BYTES` |
+| 会话恢复窗口上限 | 3（同 `MAX_WINDOWS`） | `App.tsx` 会话恢复 effect |
+| 最近打开文件上限 | 8 | `App.tsx` `MAX_RECENT_FILES` |
 | 页面级内嵌面板数（需 `headerless`） | 11（Tools 5 + Data 3 + Settings 3） | `pages/ToolsPage.tsx` / `DataPage.tsx` / `SettingsPage.tsx` |
 | 运行时依赖数 | 7（零新增） | `package.json` `dependencies` |
-| localStorage 键全集 | `soulforge.settings`、`soulforge.editor.mode`、`soulforge.browse.mode`、`soulforge.intro-v2`、`soulforge.layout`、`soulforge.palette.recent` | 各实现处 |
+| localStorage 键全集 | `soulforge.settings`、`soulforge.editor.mode`、`soulforge.editor.view`、`soulforge.browse.mode`、`soulforge.intro-v3`、`soulforge.layout`、`soulforge.session`、`soulforge.drafts`、`soulforge.recent.files`、`soulforge.palette.recent`、`soulforge.filetree.collapsed`、`soulforge.filetree.warnOnly` | 各实现处 |

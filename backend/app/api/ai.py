@@ -1,6 +1,6 @@
 """路由：AI 自动整理（M13 · Phase 2.5 Step 3）。
 
-端点见 docs/API.md §3.13。AI 输出绝不直接覆盖原文件，必须经老板 diff 确认。
+端点见 docs/API.md §3.12。AI 输出绝不直接覆盖原文件，必须经老板 diff 确认。
 """
 from __future__ import annotations
 

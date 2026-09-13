@@ -147,7 +147,7 @@ class CoreMissingRule(LintRule):
             out.append(LintWarning(
                 rule_id=self.rule_id, rule_name=self.rule_name, severity="error",
                 agent_id=ctx.agent_id, file_path=name,
-                suggestion=f"该 Agent 缺少 CORE 文件 {name} —— 用模板系统补全",
+                suggestion=f"该 Agent 缺少 CORE 文件 {name} —— 请手工创建或用文档预设补全",
             ))
         return out
 

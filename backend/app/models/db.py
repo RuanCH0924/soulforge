@@ -66,7 +66,7 @@ class BackupRow(Base):
     agent_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     file_path: Mapped[str] = mapped_column(String, nullable=False)
     backup_path: Mapped[str] = mapped_column(String, nullable=False)
-    reason: Mapped[str | None] = mapped_column(String, nullable=True)  # auto-write | manual | pre-rollback | pre-import
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)  # auto-write | manual | pre-rollback | pre-sync
     sha256: Mapped[str] = mapped_column(String, nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False, default=_now, index=True)

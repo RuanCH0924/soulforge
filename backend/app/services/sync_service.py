@@ -14,7 +14,7 @@ from app.models.schemas import (
 )
 from app.services.audit_service import AuditService
 from app.services.backup_service import BackupService
-from app.services.diff_service import html_diff, similarity
+from app.services.diff_service import build_diff
 from app.services.file_manager import FileManager
 
 PLAN_TTL_SECONDS = 30 * 60  # plan ≤ 30 分钟有效
@@ -39,12 +39,20 @@ class SyncService:
         for f in files:
             src_content = self.file_manager.read(src_agent, f).content
             dst_content = self.file_manager.read(dst_agent, f).content
+            # 一次计算拿到相似度 / 差异 / 一致性判定：内容一致的文件会走快路径，
+            # 不再做无谓的 diff 计算（大文件与批量同步时收益明显）。
+            outcome = build_diff(
+                src_content, dst_content,
+                fromfile=f"{src_agent}/{f}", tofile=f"{dst_agent}/{f}",
+            )
             items.append(SyncFilePlan(
                 path=f,
-                similarity=similarity(src_content, dst_content),
-                html_diff=html_diff(src_content, dst_content, fromfile=f"{src_agent}/{f}", tofile=f"{dst_agent}/{f}"),
+                similarity=outcome.similarity,
+                html_diff=outcome.html_diff,
                 size_src=len(src_content.encode("utf-8")),
                 size_dst=len(dst_content.encode("utf-8")),
+                identical=outcome.identical,
+                noise_kinds=outcome.noise_kinds,
             ))
         result = SyncPlanResult(plan_id=str(uuid.uuid4()), src_agent=src_agent, dst_agent=dst_agent, files=items)
         self.plans[result.plan_id] = (time.time(), result)

@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 Role = Literal["CORE", "MEMORY", "SKILL", "META", "OTHER"]
 Severity = Literal["warning", "error"]
-ImportStrategy = Literal["skip", "merge", "overwrite"]
 PresetTargetType = Literal["SOUL", "AGENTS", "MEMORY", "USER", "IDENTITY", "TOOLS", "WORKLOG", "ANY"]
 
 
@@ -101,6 +100,12 @@ class DiffResult(BaseModel):
     similarity: float
     unified_diff: str
     html_diff: str
+    #: 有效内容（归一化后）是否一致；一致时 unified_diff/html_diff 为空
+    identical: bool = False
+    #: 解释本次差异的格式噪声类型（空表示差异是真实业务差异）
+    noise_kinds: list[str] = Field(default_factory=list, description="bom/line_ending/invisible_char/...")
+    #: 归一化口径：strict | ignore_whitespace
+    mode: str = "ignore_whitespace"
 
 
 class SyncFilePlan(BaseModel):
@@ -109,6 +114,9 @@ class SyncFilePlan(BaseModel):
     html_diff: str
     size_src: int
     size_dst: int
+    #: 有效内容是否一致（一致时该文件无需同步）
+    identical: bool = False
+    noise_kinds: list[str] = Field(default_factory=list)
 
 
 class SyncPlanResult(BaseModel):
@@ -167,54 +175,6 @@ class Manifest(BaseModel):
     export_time: str
     agent_id: str
     files: list[ManifestFile]
-
-
-class ConflictItem(BaseModel):
-    path: str
-    exists_in_target: bool
-    target_size: int | None = None
-
-
-class ImportPreviewResult(BaseModel):
-    upload_id: str
-    target_agent_id: str
-    manifest: Manifest
-    conflicts: list[ConflictItem]
-
-
-class ImportExecuteRequest(BaseModel):
-    upload_id: str
-    target_agent_id: str
-    conflicts: dict[str, ImportStrategy] = Field(default_factory=dict)
-
-
-class ImportResultItem(BaseModel):
-    file: str
-    action: str  # skipped | overwritten | merged | added
-
-
-class ImportExecuteResult(BaseModel):
-    manifest: Manifest
-    results: list[ImportResultItem]
-
-
-class TemplateInfo(BaseModel):
-    id: str
-    name: str
-    description: str
-    file_count: int
-
-
-class TemplateApplyRequest(BaseModel):
-    template_id: str
-    new_agent_id: str
-    target_workspace: str
-
-
-class TemplateApplyResult(BaseModel):
-    agent_id: str
-    workspace: str
-    files_created: list[str]
 
 
 class RollbackRequest(BaseModel):

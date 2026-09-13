@@ -7,6 +7,7 @@ import type {
   AIJobStatus,
   AIJobSummary,
   AgentInfo,
+  DiffMode,
   AuditEntry,
   BackupEntry,
   ConfigSnapshot,
@@ -15,9 +16,6 @@ import type {
   DiffResult,
   FileContent,
   FileInfo,
-  ImportExecuteResult,
-  ImportPreviewResult,
-  ImportStrategy,
   LintAgentResult,
   LintAllResult,
   LintFileResult,
@@ -35,10 +33,11 @@ import type {
   ScanResult,
   SearchResult,
   StatsResult,
+  SuperSyncConfig,
+  SuperSyncLogResult,
+  SuperSyncStatus,
   SyncExecuteResult,
   SyncPlanResult,
-  TemplateApplyResult,
-  TemplateInfo,
   WriteResult,
 } from '../types';
 
@@ -58,6 +57,12 @@ export const api = {
     }),
   fileHistory: (agentId: string, path: string) =>
     request<BackupEntry[]>('GET', `/api/agents/${encodeURIComponent(agentId)}/files/${encodePath(path)}/history`),
+  /** 删除文档（后端走回收站，可恢复） */
+  deleteFile: (agentId: string, path: string) =>
+    request<{ agent_id: string; path: string; deleted: boolean }>(
+      'DELETE',
+      `/api/agents/${encodeURIComponent(agentId)}/files/${encodePath(path)}`,
+    ),
   crossWrite: (files: CrossWriteItem[], content: string) =>
     request<CrossWriteResult>('POST', '/api/agents/files/cross-write', { json: { files, content } }),
 
@@ -73,10 +78,19 @@ export const api = {
   }) => request<SearchResult>('POST', '/api/search', { json: body }),
 
   // ---- M4 Diff ----
-  diff: (a: string, b: string, file: string) =>
+  /** 对比两个 Agent 的同名文件；mode 为归一化口径（默认忽略格式噪声） */
+  diff: (a: string, b: string, file: string, mode?: DiffMode) =>
     request<DiffResult>(
       'GET',
-      `/api/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}&file=${encodeURIComponent(file)}`,
+      `/api/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}&file=${encodeURIComponent(file)}` +
+        (mode ? `&mode=${encodeURIComponent(mode)}` : ''),
+    ),
+  /** 对比「当前文件」与指定历史备份（回滚前预览用） */
+  diffHistory: (agentId: string, file: string, against: number, mode?: DiffMode) =>
+    request<DiffResult>(
+      'GET',
+      `/api/diff/history?agent=${encodeURIComponent(agentId)}&file=${encodeURIComponent(file)}&against=${against}` +
+        (mode ? `&mode=${encodeURIComponent(mode)}` : ''),
     ),
 
   // ---- M5 同步 ----
@@ -85,20 +99,10 @@ export const api = {
   syncExecute: (planId: string, files: string[]) =>
     request<SyncExecuteResult>('POST', '/api/sync/execute', { json: { plan_id: planId, files } }),
 
-  // ---- M6 导入导出 ----
+  // ---- M6 导出 ----
   exportAgent: (agentId: string) =>
     downloadFile(`/api/export/${encodeURIComponent(agentId)}`, `soulforge-${agentId}.tar.gz`),
   exportAll: () => downloadFile('/api/export/all', 'soulforge-all.tar.gz'),
-  importPreview: (file: File, targetAgentId: string) => {
-    const form = new FormData();
-    form.append('file', file);
-    form.append('target_agent_id', targetAgentId);
-    return request<ImportPreviewResult>('POST', '/api/import/preview', { form });
-  },
-  importExecute: (uploadId: string, targetAgentId: string, conflicts: Record<string, ImportStrategy>) =>
-    request<ImportExecuteResult>('POST', '/api/import/execute', {
-      json: { upload_id: uploadId, target_agent_id: targetAgentId, conflicts },
-    }),
 
   // ---- M7 备份回滚 ----
   rollback: (agentId: string, path: string, backupId: number) =>
@@ -114,13 +118,6 @@ export const api = {
   lintAgent: (agentId: string) =>
     request<LintAgentResult>('GET', `/api/lint/${encodeURIComponent(agentId)}`),
   lintAll: () => request<LintAllResult>('GET', '/api/lint/all'),
-
-  // ---- M9 模板 ----
-  listTemplates: () => request<TemplateInfo[]>('GET', '/api/templates'),
-  applyTemplate: (templateId: string, newAgentId: string, targetWorkspace: string) =>
-    request<TemplateApplyResult>('POST', '/api/templates/apply', {
-      json: { template_id: templateId, new_agent_id: newAgentId, target_workspace: targetWorkspace },
-    }),
 
   // ---- M10 统计 / 审计 ----
   stats: () => request<StatsResult>('GET', '/api/stats'),
@@ -217,4 +214,34 @@ export const api = {
     request<AIJobCreateResult>('POST', `/api/ai/jobs/${encodeURIComponent(jobId)}/regenerate`, {
       json: { extra_instructions: extraInstructions },
     }),
+
+  // ---- 超级同步（独立守护脚本） ----
+  superSyncConfig: () => request<SuperSyncConfig>('GET', '/api/super-sync/config'),
+  updateSuperSyncConfig: (body: Partial<SuperSyncConfig>) =>
+    request<SuperSyncConfig>('PUT', '/api/super-sync/config', { json: body }),
+  superSyncStatus: () => request<SuperSyncStatus>('GET', '/api/super-sync/status'),
+  startSuperSync: () => request<SuperSyncStatus>('POST', '/api/super-sync/start'),
+  stopSuperSync: () => request<SuperSyncStatus>('POST', '/api/super-sync/stop'),
+  superSyncLogs: (params?: {
+    levels?: string;
+    since?: number;
+    until?: number;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.levels) q.set('levels', params.levels);
+    if (params?.since !== undefined) q.set('since', String(params.since));
+    if (params?.until !== undefined) q.set('until', String(params.until));
+    if (params?.limit !== undefined) q.set('limit', String(params.limit));
+    if (params?.offset !== undefined) q.set('offset', String(params.offset));
+    return request<SuperSyncLogResult>('GET', `/api/super-sync/logs?${q.toString()}`);
+  },
+  exportSuperSyncLogs: (params?: { levels?: string; since?: number; until?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.levels) q.set('levels', params.levels);
+    if (params?.since !== undefined) q.set('since', String(params.since));
+    if (params?.until !== undefined) q.set('until', String(params.until));
+    return downloadFile(`/api/super-sync/logs/export?${q.toString()}`, 'super-sync-logs.jsonl');
+  },
 };

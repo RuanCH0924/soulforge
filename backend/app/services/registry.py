@@ -20,15 +20,14 @@ from app.services.llm_registry import LLMRegistry
 from app.services.preset_service import PresetService
 from app.services.search_service import SearchService
 from app.services.stats_service import StatsService
+from app.services.super_sync_service import SuperSyncService
 from app.services.sync_service import SyncService
-from app.services.template_service import TemplateService
 
 
 class Registry:
     def __init__(self, config: Config):
         self.config = config
         self.config.data_dir.mkdir(parents=True, exist_ok=True)
-        self.config.uploads_dir.mkdir(parents=True, exist_ok=True)
 
         self.db = Database(config.db_path)
         self.db.init_db()
@@ -41,8 +40,8 @@ class Registry:
         self.search = SearchService(config, self.discovery, self.file_manager)
         self.diff = DiffService(self.file_manager, self.backup)
         self.sync = SyncService(self.file_manager, self.backup, self.audit)
+        self.super_sync = SuperSyncService(config, self.discovery)
         self.import_export = ImportExportService(config, self.discovery, self.file_manager, self.backup, self.audit)
-        self.templates = TemplateService(self.backup, self.audit)
         self.stats = StatsService(config, self.db, self.discovery)
         self.presets = PresetService(self.db, self.file_manager, self.backup, self.lint, self.audit)
         self.key_vault = KeyVault(config.data_dir)

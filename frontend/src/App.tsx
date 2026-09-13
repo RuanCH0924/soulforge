@@ -122,6 +122,59 @@ function saveLayout(next: LayoutState): void {
   }
 }
 
+/** ---- 会话恢复（重开应用还原打开的窗口）与草稿保护 ---- */
+const SESSION_KEY = 'soulforge.session';
+const DRAFTS_KEY = 'soulforge.drafts';
+const RECENT_FILES_KEY = 'soulforge.recent.files';
+
+/** 单条草稿体积上限：超过则不落盘，避免占满 localStorage */
+const DRAFT_MAX_BYTES = 200 * 1024;
+/** 最近打开文件记录上限 */
+const MAX_RECENT_FILES = 8;
+
+interface SessionState {
+  openKeys: string[];
+  activeKey: string | null;
+  selectedAgentId: string | null;
+}
+
+type DraftMap = Record<string, { content: string; at: number }>;
+
+export interface RecentFile {
+  agentId: string;
+  path: string;
+  at: number;
+}
+
+function loadJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveJson(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // localStorage 不可用 / 配额满时静默降级
+  }
+}
+
+function loadDrafts(): DraftMap {
+  const raw = loadJson<unknown>(DRAFTS_KEY, {});
+  return raw && typeof raw === 'object' ? (raw as DraftMap) : {};
+}
+
+function clearDrafts(keys: string[]): void {
+  const map = loadDrafts();
+  keys.forEach((k) => delete map[k]);
+  saveJson(DRAFTS_KEY, map);
+}
+
 export default function App() {
   const { settings } = useSettings();
   const { push: toast } = useToast();
@@ -224,16 +277,33 @@ export default function App() {
       return next;
     });
   }, []);
+  // ---- 最近打开的文件（命令面板「最近打开」分组） ----
+  const [recentFiles, setRecentFiles] = useState<RecentFile[]>(() =>
+    loadJson<RecentFile[]>(RECENT_FILES_KEY, []).filter(
+      (r) => r && typeof r.agentId === 'string' && typeof r.path === 'string',
+    ),
+  );
+  const markFileOpened = useCallback((agentId: string, path: string) => {
+    setRecentFiles((prev) => {
+      const next = [
+        { agentId, path, at: Date.now() },
+        ...prev.filter((r) => !(r.agentId === agentId && r.path === path)),
+      ].slice(0, MAX_RECENT_FILES);
+      saveJson(RECENT_FILES_KEY, next);
+      return next;
+    });
+  }, []);
+
   // ---- 路由（P2：四页面） ----
   const [route, navigate] = useHashRoute();
   const goWorkbench = useCallback(() => navigate('workbench'), [navigate]);
-  // ---- 首次使用引导（P5：一次性提示快捷键；M-01 升级为 v2，使存量用户看到更新后的导航说明） ----
+  // ---- 首次使用引导（P5：一次性提示快捷键；v3 起快捷键体系更新：Ctrl+B 让位给加粗） ----
   const [showIntro, setShowIntro] = useState(
-    () => !window.localStorage.getItem('soulforge.intro-v2'),
+    () => !window.localStorage.getItem('soulforge.intro-v3'),
   );
   const dismissIntro = useCallback(() => {
     try {
-      window.localStorage.setItem('soulforge.intro-v2', '1');
+      window.localStorage.setItem('soulforge.intro-v3', '1');
     } catch {
       // ignore
     }
@@ -335,6 +405,7 @@ export default function App() {
   const openFile = useCallback(
     async (agentId: string, path: string, line?: number) => {
       const key = `${agentId}/${path}`;
+      markFileOpened(agentId, path);
       // 单窗口模式：替换当前文档，不新增窗口
       if (editorModeRef.current === 'single') {
         const current = tabsRef.current.find((t) => t.key === key);
@@ -407,7 +478,7 @@ export default function App() {
         toast(`打开文件失败：${(e as Error).message}`, 'error');
       }
     },
-    [selectAgent, toast],
+    [selectAgent, toast, markFileOpened],
   );
 
   /** 切换编辑器模式；多 → 单窗口时仅保留激活窗口（有未保存修改需确认） */
@@ -441,6 +512,7 @@ export default function App() {
   const closeTab = useCallback((key: string) => {
     const tab = tabsRef.current.find((t) => t.key === key);
     if (tab?.dirty && !window.confirm('该文档有未保存的修改，确定关闭？')) return;
+    clearDrafts([key]);
     const remaining = tabsRef.current.filter((t) => t.key !== key);
     setTabs(remaining);
     setActiveKey((prev) => {
@@ -484,6 +556,7 @@ export default function App() {
           ),
         );
         toast(`已保存 ${tab.file.path}`, 'success');
+        clearDrafts([key]);
         void refreshFiles(tab.agentId);
         void refreshStats();
       } catch (e) {
@@ -635,21 +708,200 @@ export default function App() {
     };
   }, [tabs, settings.autoSave, saveTab]);
 
+  // ---- 草稿保护：未保存内容防抖落盘（崩溃 / 强制关闭后仍可恢复） ----
+  const draftsReadyRef = useRef(false);
+  useEffect(() => {
+    // 会话恢复完成前不写，避免把待恢复的草稿清空
+    if (!draftsReadyRef.current) return;
+    const timer = window.setTimeout(() => {
+      // 只增量写入「本标签页中处于脏状态」的条目，绝不删除其他条：
+      // 多标签页共用同一 localStorage，整体覆盖会清掉别处的草稿。
+      // 草稿的清除只发生在明确节点：保存成功 / 关闭窗口 / 重新加载 / 删除文档。
+      const map = loadDrafts();
+      let changed = false;
+      tabs.forEach((t) => {
+        if (t.dirty && t.content.length <= DRAFT_MAX_BYTES) {
+          map[t.key] = { content: t.content, at: Math.floor(Date.now() / 1000) };
+          changed = true;
+        }
+      });
+      if (changed) saveJson(DRAFTS_KEY, map);
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [tabs]);
+
+  // ---- 会话保存：仅记录「打开了哪些窗口」，内容按需重读 ----
+  useEffect(() => {
+    if (!draftsReadyRef.current) return;
+    const snapshot: SessionState = {
+      openKeys: tabs.map((t) => t.key),
+      activeKey,
+      selectedAgentId,
+    };
+    const timer = window.setTimeout(() => saveJson(SESSION_KEY, snapshot), 300);
+    return () => window.clearTimeout(timer);
+  }, [tabs, activeKey, selectedAgentId]);
+
+  // ---- 会话恢复：Agent 列表就绪后还原打开的编辑窗口（含草稿询问） ----
+  const sessionRestoreRef = useRef(false);
+  useEffect(() => {
+    if (sessionRestoreRef.current || agents.length === 0) return;
+    sessionRestoreRef.current = true;
+    const saved = loadJson<SessionState | null>(SESSION_KEY, null);
+    const keys = (saved?.openKeys ?? []).filter((k) => typeof k === 'string' && k.includes('/'));
+    if (saved?.selectedAgentId && agents.some((a) => a.id === saved.selectedAgentId)) {
+      void selectAgent(saved.selectedAgentId);
+    }
+    const drafts = loadDrafts();
+    const draftKeys = keys.filter((k) => drafts[k]);
+    let useDrafts = true;
+    if (draftKeys.length > 0) {
+      useDrafts = window.confirm(
+        `发现 ${draftKeys.length} 个未保存的草稿（上次未正常保存）。\n\n「确定」= 恢复草稿\n「取消」= 丢弃草稿，使用磁盘版本`,
+      );
+      if (!useDrafts) clearDrafts(draftKeys);
+    }
+    void (async () => {
+      const restored: EditorTab[] = [];
+      for (const key of keys.slice(0, MAX_WINDOWS)) {
+        const idx = key.indexOf('/');
+        const agentId = key.slice(0, idx);
+        const path = key.slice(idx + 1);
+        try {
+          const fc = await api.readFile(agentId, path);
+          const draft = useDrafts ? drafts[key] : undefined;
+          const content = draft && draft.content !== fc.content ? draft.content : fc.content;
+          restored.push({
+            key,
+            agentId,
+            file: fc,
+            content,
+            dirty: content !== fc.content,
+            saving: false,
+          });
+        } catch {
+          // 文件已被删除 / 移动：跳过该窗口
+        }
+      }
+      if (restored.length > 0) {
+        setTabs(restored);
+        const active = restored.find((t) => t.key === saved?.activeKey) ?? restored[restored.length - 1];
+        setActiveKey(active.key);
+        toast(`已恢复 ${restored.length} 个编辑窗口`, 'info');
+      }
+      draftsReadyRef.current = true;
+    })();
+  }, [agents, selectAgent, toast]);
+
+  // ---- 文档级操作（重新加载 / 新建 / 删除） ----
+  /** 放弃未保存修改，重新从磁盘加载该窗口 */
+  const reloadTab = useCallback(
+    async (key: string) => {
+      const tab = tabsRef.current.find((t) => t.key === key);
+      if (!tab) return;
+      if (tab.dirty && !window.confirm('放弃未保存的修改，重新从磁盘加载？')) return;
+      clearDrafts([key]);
+      await updateTabFromDisk(key);
+      toast('已重新加载磁盘版本', 'success');
+    },
+    [toast, updateTabFromDisk],
+  );
+
+  /** 新建文档：复用 PUT 的创建能力（写入一个标题骨架后直接打开） */
+  const createDoc = useCallback(
+    async (agentId: string) => {
+      const input = window.prompt('新文档文件名（可含子目录，建议带 .md 后缀）', 'NEW.md');
+      if (!input) return;
+      const path = input.trim().replace(/^[\\/]+/, '');
+      if (!path) return;
+      const base = path.split('/').pop() ?? path;
+      try {
+        await api.writeFile(agentId, path, `# ${base.replace(/\.md$/i, '')}\n\n`);
+        await refreshFiles(agentId);
+        await openFile(agentId, path);
+        toast(`已创建 ${path}`, 'success');
+        void refreshStats();
+      } catch (e) {
+        toast(`新建失败：${(e as Error).message}`, 'error');
+      }
+    },
+    [openFile, refreshFiles, refreshStats, toast],
+  );
+
+  /** 删除文档（后端走回收站，可恢复）；若有未保存窗口先提示 */
+  const deleteDoc = useCallback(
+    async (agentId: string, path: string) => {
+      const key = `${agentId}/${path}`;
+      const tab = tabsRef.current.find((t) => t.key === key);
+      if (tab?.dirty) {
+        toast('该文档有未保存的修改，请先保存或关闭窗口', 'warning');
+        return;
+      }
+      if (!window.confirm(`删除「${path}」？\n\n文件会移入回收站，可从系统回收站恢复。`)) return;
+      try {
+        await api.deleteFile(agentId, path);
+        if (tab) {
+          const remaining = tabsRef.current.filter((t) => t.key !== key);
+          setTabs(remaining);
+          setActiveKey((prev) =>
+            prev === key ? (remaining.length > 0 ? remaining[remaining.length - 1].key : null) : prev,
+          );
+        }
+        clearDrafts([key]);
+        await refreshFiles(agentId);
+        toast(`已删除 ${path}（已移入回收站）`, 'success');
+        void refreshStats();
+      } catch (e) {
+        toast(`删除失败：${(e as Error).message}`, 'error');
+      }
+    },
+    [refreshFiles, refreshStats, toast],
+  );
+
+  /** 保存全部未保存窗口 */
+  const saveAll = useCallback(async () => {
+    const dirtyTabs = tabsRef.current.filter((t) => t.dirty && !t.saving);
+    if (dirtyTabs.length === 0) {
+      toast('没有需要保存的文档', 'info');
+      return;
+    }
+    for (const t of dirtyTabs) {
+      await saveTab(t.key);
+    }
+  }, [saveTab, toast]);
+
   // ---- 快捷键 ----
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
-      if (mod && key === 's') {
+      if (mod && e.shiftKey && key === 's') {
+        // 保存全部未保存窗口
+        e.preventDefault();
+        void saveAll();
+      } else if (mod && key === 's') {
         e.preventDefault();
         const k = activeKeyRef.current;
         if (k) void saveTab(k);
       } else if (mod && key === 'k') {
         e.preventDefault();
         setPaletteOpen(true);
-      } else if (mod && key === 'b') {
-        e.preventDefault();
-        setLeftCollapsed((c) => !c);
+      } else if (mod && !e.shiftKey && !e.altKey && (key === '1' || key === '2' || key === '3')) {
+        // 切换激活的编辑窗口（Ctrl/Cmd + 1/2/3）
+        if (route !== 'workbench') return;
+        const target = tabsRef.current[Number(key) - 1];
+        if (target) {
+          e.preventDefault();
+          setActiveKey(target.key);
+        }
+      } else if (e.altKey && !mod && key === 'w') {
+        // 关闭当前文档。不用 Ctrl+W：该组合被浏览器保留（关闭标签页），页面无法拦截
+        if (route !== 'workbench') return;
+        const k = activeKeyRef.current;
+        if (k) {
+          e.preventDefault();
+          closeTab(k);
+        }
       } else if (e.altKey && !mod && (key === '1' || key === '2')) {
         // M-03：布局折叠快捷键，仅工作台内生效（避免在 Tools/Data/Settings 页误触发）
         if (route !== 'workbench') return;
@@ -663,7 +915,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [saveTab, route]);
+  }, [saveTab, saveAll, closeTab, route]);
 
   // 关闭页面前提示未保存
   useEffect(() => {
@@ -724,9 +976,7 @@ export default function App() {
       { type: 'action', id: 'sync', label: '跨 Agent 同步文件', group: '操作', onSelect: () => navigate('tools') },
       { type: 'action', id: 'cross-edit', label: '跨 Agent 批量编辑', keywords: 'batch', hint: 'Ctrl+Shift+E', group: '操作', onSelect: () => navigate('tools') },
       { type: 'action', id: 'diff', label: '对比两个 Agent', group: '操作', onSelect: () => navigate('tools') },
-      { type: 'action', id: 'import', label: '导入 Prompt Pack', group: '操作', onSelect: () => navigate('tools') },
       { type: 'action', id: 'export-all', label: '导出全部 Agent', group: '操作', onSelect: () => void exportAll() },
-      { type: 'action', id: 'new-agent', label: '新建 Agent', keywords: 'template', group: '操作', onSelect: () => navigate('tools') },
       { type: 'action', id: 'lint-all', label: '健康检查（全量 Lint）', group: '数据', onSelect: () => navigate('data') },
       { type: 'action', id: 'stats', label: '统计仪表盘', group: '数据', onSelect: () => navigate('data') },
       { type: 'action', id: 'audit', label: '审计日志', group: '数据', onSelect: () => navigate('data') },
@@ -760,9 +1010,10 @@ export default function App() {
             {showIntro && (
               <div className="intro-banner">
                 <span>
-                  <b>Ctrl+K</b> 命令面板（搜索功能 / 文件 / 页面） · <b>Ctrl+S</b> 保存 · 页面切换请用{' '}
-                  <b>左侧导航</b> · <b>Alt+1</b> / <b>Alt+2</b> 折叠 Agent / 文件栏 · 最多同时打开{' '}
-                  <b>{MAX_WINDOWS}</b> 个编辑窗口
+                  <b>Ctrl+K</b> 命令面板 · <b>Ctrl+S</b> 保存 · <b>Ctrl+Shift+S</b> 全部保存 ·{' '}
+                  <b>Ctrl+1/2/3</b> 切换编辑窗口 · <b>Alt+W</b> 关闭当前文档 · <b>Alt+1</b>/<b>Alt+2</b> 折叠栏 ·{' '}
+                  <b>Ctrl+B</b> 加粗 · <b>Ctrl+Shift+O</b> 大纲 · 页面切换用<b>左侧导航</b>（最多同时打开{' '}
+                  <b>{MAX_WINDOWS}</b> 个窗口）
                 </span>
                 <button className="btn btn-ghost btn-sm" onClick={dismissIntro}>
                   知道了
@@ -858,6 +1109,12 @@ export default function App() {
                   showMemory={settings.showMemory}
                   showOther={settings.showOther}
                   onSelect={handleSelectFile}
+                  onCreate={() => {
+                    if (selectedAgentId) void createDoc(selectedAgentId);
+                  }}
+                  onDelete={(p) => {
+                    if (selectedAgentId) void deleteDoc(selectedAgentId, p);
+                  }}
                 />
               )}
             </div>
@@ -936,6 +1193,7 @@ export default function App() {
                         }}
                         onClose={() => closeTab(tab.key)}
                         onSave={() => void saveTab(tab.key)}
+                        onReload={() => void reloadTab(tab.key)}
                         onHistory={() => setModal({ type: 'history', key: tab.key })}
                         onExport={() => void exportCurrent(tab.agentId)}
                         onApplyPreset={() => setModal({ type: 'apply-preset', key: tab.key })}
@@ -1039,6 +1297,7 @@ export default function App() {
         onClose={closePalette}
         items={paletteItems}
         recentIds={recentCommandIds}
+        recentFiles={recentFiles}
         onUsed={markCommandUsed}
         onSearchFiles={searchFilesForPalette}
         onOpenFile={(a, p, line) => {
