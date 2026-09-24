@@ -168,16 +168,23 @@ modules:
 - 当前状态速览
 """
 
-WORKLOG_TEMPLATE = """---
+# 「工作日志日标准化」（M15 的规则载体）：逐日归并 memory/ 下的日文件，
+# 契约来自外部 skill `memory-daily-standardizer`。注意：
+# 1) 章节标题含序号（一、二、三、四、五），因为 FormatValidator 对章节标题做精确匹配；
+# 2) 章节骨架里 关键决策 使用表格，FormatValidator 已按块级元素处理表格行，不会误判段落空行；
+# 3) 不含 HTML 注释提示：模板全文会进入 prompt，模型若照抄注释会触发 forbid_raw_html 而无机械修正手段。
+WLOG_DAILY_TEMPLATE = """---
 schema: soulforge.template/v1
+name: "工作日志日标准化"
 target_file_type: WORKLOG
 structure:
   section_heading_level: 2
   required_sections:
-    - title: 今日概览
-    - title: 关键决策
-    - title: 待办与风险
-    - title: 明日计划
+    - title: 一、今日概览
+    - title: 二、关键事件
+    - title: 三、关键决策
+    - title: 四、待办事项
+    - title: 五、明日计划
   section_order: strict
 elements:
   heading_style: atx
@@ -196,30 +203,42 @@ modules:
   frontmatter: optional
 ---
 
-# 工作日志标准模板
+# 工作日志日标准化模板
 
-> 严格遵循 YAML 格式化规则，按章节结构整理工作日志。
+> 逐日归并当日全部来源（标准日文件 / 同日 session 导出 / 同日主题文件），
+> 剥离元数据壳与对话腔噪音后改写成客观记录。产出文档第一行固定为
+> `# 工作日志 - <日期>`（如 `# 工作日志 - 2026-05-20`）；
+> 不写来源信息、不保留过程流水，原有事实、决策与待办不得丢失。
 
-## 今日概览
+## 一、今日概览
 
-- 当日核心成果
+- **日期**：YYYY-MM-DD
+- **核心活动**：用 1~3 条概括当天最重要的事
 
-## 关键决策
+## 二、关键事件
 
-- 值得长期记住的决定
+### 事件 1
 
-## 待办与风险
+- 事实 / 原因 / 结果
 
-- 未完成事项与隐患
+## 三、关键决策
 
-## 明日计划
+| 决策项 | 内容 |
+|--------|------|
+| ... | ... |
 
-- 下一步安排
+## 四、待办事项
+
+- [ ] ...
+
+## 五、明日计划
+
+- ...
 """
 
 BUILTIN_TEMPLATES: dict[str, str] = {
     "preset-soul-std": SOUL_TEMPLATE,
     "preset-agents-std": AGENTS_TEMPLATE,
     "preset-mem-std": MEMORY_TEMPLATE,
-    "preset-wlog-summary": WORKLOG_TEMPLATE,
+    "preset-wlog-daily-std": WLOG_DAILY_TEMPLATE,
 }

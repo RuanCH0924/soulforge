@@ -1,6 +1,6 @@
 # Soulforge — 安全护栏
 
-> 配套主文档 [DEVELOPMENT.md](../DEVELOPMENT.md) 的安全章节。
+> 配套主文档 [DEVELOPMENT.md](DEVELOPMENT.md) 的安全章节。
 > 设计原则：呼应老板「高危操作分级管控」+「核心文件保护」规则。
 
 ---
@@ -18,12 +18,14 @@
 | **备份丢失** | 备份和源文件在同一分区，磁盘挂了全没了 | 文档明确提示：用户应额外把重要 Agent 导出到 GitHub |
 | **lint 误判** | 自动修复把合法内容改了 | **lint 不自动修改**，只警告 |
 
-### 1.2 非目标（v0.x 不做）
+### 1.2 非目标
 
 - 多人协作（假设只有老板一个用户）
 - 云端同步（不连任何外部服务）
 - 账号系统 / 鉴权（单人本地工具）
-- 加密存储（老板不加密工作流）
+- 业务文件（workspace 内的 `.md`）加密存储
+  > 例外：LLM Provider 的 API key 是**唯一加密存储的敏感数据**（Fernet，见第四节与
+  > `app/core/key_vault.py`），业务文档本身保持明文，以便直接编辑与 diff。
 
 ---
 
@@ -99,11 +101,11 @@ def write(self, agent_id: str, path: str, content: str):
 ### 4.2 备份目录隔离
 
 ```
-~/.soulforge/backups/    ←  Soulforge 自己管
-~/.openclaw/workspace/   ←  源文件
+<data_dir>/backups/      ←  Soulforge 自己管（默认 <项目根>/.soulforge/backups）
+<OpenClaw 根>/workspace/ ←  源文件
 ```
 
-**绝不混用**。Soulforge 不会写任何文件到 workspace 之外（除了自己管理的 `~/.soulforge/`）。
+**绝不混用**。Soulforge 不会写任何文件到 workspace 之外（除了自己管理的 `<data_dir>/`）。
 
 ### 4.3 备份保留策略
 
@@ -136,6 +138,15 @@ def rollback(self, agent_id: str, file_path: str, backup_id: int):
         details={"from_backup": current_backup_id, "to_backup": backup_id}
     )
 ```
+
+### 4.5 密钥存储（KeyVault）
+
+LLM Provider 的 API key 是唯一的加密存储项（`app/core/key_vault.py`）：
+
+- 加密算法：Fernet 对称加密（`cryptography` 库）；
+- 密钥来源优先级：环境变量 `SOULFORGE_SECRET` → `<data_dir>/secrets/key`（首次启动生成，权限 600）；
+- 数据库只存密文；任何 GET 响应只回显掩码，**不提供回显明文的端点**；
+- `.gitignore` 排除 `.soulforge/secrets/`，备份与导出均不包含该目录。
 
 ---
 
@@ -202,23 +213,22 @@ POST /api/sync/execute
 
 **保留期**：永久（除非老板手动清理）
 
-**前端可查**：v1.0+ 暴露 `/api/audit` 接口 + UI 页面
+**前端可查**：已交付 —— `GET /api/audit` 接口 + 数据中心页「审计日志」标签（`AuditModal`）。
 
 ---
 
-## 八、销毁 / 重装安全
+## 八、数据清理
 
-老板想卸载 Soulforge：
+Soulforge 不提供 CLI 卸载命令，也**绝不自动清理**任何数据。需要清理时手工删除对应目录：
 
-```bash
-# 一键清理（保留备份和元数据）
-soulforge uninstall --keep-data
+| 目标 | 操作 |
+|---|---|
+| 仅清理运行数据（DB / 备份 / 日志 / 配置） | 删除 `<项目根>/.soulforge/`，下次启动重新扫描重建索引 |
+| 保留配置与备份，仅重建索引 | 删除 `<data_dir>/index.db` 后重新扫描 |
+| 保留备份，仅退出软件 | 直接停止进程；备份与审计记录保留在 `<data_dir>/` |
 
-# 彻底清理（包括备份和元数据）
-soulforge uninstall --purge
-```
-
-**绝不自动**清任何东西，所有清理都走显式命令 + Dialog 确认。
+> Agent workspace 内的原始文档不受影响；删除 `.soulforge/` 不会触碰 workspace。
+> 但其中包含的备份历史会一并丢失，请先导出需要保留的 Prompt Pack。
 
 ---
 
@@ -283,7 +293,7 @@ app.add_middleware(
 Soulforge Server 启动时不发任何外部请求：
 
 - ❌ 不发遥测
-- ❌ 不检查更新（v1.0+ 手动 `soulforge update` 命令）
+- ❌ 不检查更新（无自动更新机制，升级靠手动替换代码 + 重装依赖）
 - ❌ 不连任何 SaaS
 
 ---
@@ -305,5 +315,5 @@ Soulforge Server 启动时不发任何外部请求：
 
 - `_safe_join` 必须有完整单测（含路径穿越用例）
 - 备份流程必须有集成测试
-- 跨 Agent 同步必须有 plan-execute 两步测试
-- tar 解压必须有 tar bomb 测试
+- 跨 Agent 同步必须有 plan-execute 两步测试（含 plan 过期用例）
+- 删除操作必须有回收站（send2trash）路径测试

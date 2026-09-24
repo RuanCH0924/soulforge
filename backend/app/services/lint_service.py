@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.config import Config
-from app.models.schemas import LintAgentResult, LintStats, LintWarning
+from app.models.schemas import LintAgentResult, LintRuleInfo, LintStats, LintWarning
 
 LARGE_FILE_THRESHOLD = 50 * 1024  # 50KB
 EMPTY_FILE_THRESHOLD = 10  # 字节
@@ -63,6 +63,11 @@ class LintRule(ABC):
     rule_id: str
     rule_name: str
     severity: str = "warning"
+    # 作用域：file = 逐文件即可判定；agent = 需要 Agent 全貌（跨文件/跨 Agent）
+    scope: str = "file"
+    # 规则在检查什么：展示给用户的说明，是规则文案的唯一事实源
+    # （UI 经 GET /api/lint/rules 渲染，DEVELOPMENT.md 2.4 的规则表以本处为准）
+    description: str = ""
 
     def check_file(self, ctx: FileContext) -> list[LintWarning]:
         return []
@@ -74,6 +79,7 @@ class LintRule(ABC):
 class L4TimestampRule(LintRule):
     rule_id = "L4-TIMESTAMP"
     rule_name = "L4 反模式 — 时间戳"
+    description = "正文出现时效性标记（最后修订 / 最后更新 / ## 更新记录 / ## Changelog）——CORE 文档只保留最终规则，不记录时间"
     _pattern = re.compile(r"最后修订|最后更新|最后修改|##\s*更新记录|##\s*Changelog|更新日志")
 
     def check_file(self, ctx: FileContext) -> list[LintWarning]:
@@ -89,6 +95,7 @@ class L4TimestampRule(LintRule):
 class L4VersionRule(LintRule):
     rule_id = "L4-VERSION"
     rule_name = "L4 反模式 — 版本号"
+    description = "正文出现版本号或首次验证标记（## v1.0 / Skill 版本：v1.0 / 首次验证：YYYY-MM-DD）——版本叙述不应写进 CORE 文档"
     _pattern = re.compile(r"##\s*v\d+\.\d+|版本[：:]\s*v?\d+\.\d+|Skill\s*版本|首次验证[：:]\s*\d{4}-\d{2}-\d{2}")
 
     def check_file(self, ctx: FileContext) -> list[LintWarning]:
@@ -104,6 +111,7 @@ class L4VersionRule(LintRule):
 class L4NarrativeRule(LintRule):
     rule_id = "L4-NARRATIVE"
     rule_name = "L4 反模式 — 修复叙述"
+    description = "正文出现事件经过（「用户指出…触发…」/ 起因：… / 误判事故）——只保留最终规则，不写修复过程"
     _pattern = re.compile(r"用户(指出|反馈|提出|提醒|发现)|起因[：:]|误判事故|修复叙述|触发.*误判")
 
     def check_file(self, ctx: FileContext) -> list[LintWarning]:
@@ -120,6 +128,7 @@ class BoundaryViolateRule(LintRule):
     """5 大文档边界违规：老板个人偏好/习惯只能进 USER.md。"""
     rule_id = "BOUNDARY-VIOLATE"
     rule_name = "5 大文档边界违规"
+    description = "老板的个人偏好 / 习惯出现在 USER.md 以外的文档里——这类内容只应写进 USER.md"
     _pattern = re.compile(r"老板.{0,8}(偏好|喜欢|习惯|不爱|讨厌)|(偏好|喜欢|习惯).{0,8}老板")
 
     def check_file(self, ctx: FileContext) -> list[LintWarning]:
@@ -139,6 +148,8 @@ class CoreMissingRule(LintRule):
     rule_id = "CORE-MISSING"
     rule_name = "CORE 必填文件缺失"
     severity = "error"
+    scope = "agent"
+    description = "Agent 缺少必填 CORE 文件（SOUL / AGENTS / IDENTITY / USER / MEMORY / TOOLS）"
 
     def check_agent(self, ctx: AgentContext) -> list[LintWarning]:
         out = []
@@ -159,6 +170,8 @@ class CrossAgentDriftRule(LintRule):
     """
     rule_id = "CROSS-AGENT-DRIFT"
     rule_name = "跨 Agent 同名文件 drift 过大"
+    scope = "agent"
+    description = "多个 Agent 的同名 CORE 文件内容相似度低于 30%——同名文档已经跑偏，需要对齐"
 
     def check_agent(self, ctx: AgentContext) -> list[LintWarning]:
         return []
@@ -167,6 +180,7 @@ class CrossAgentDriftRule(LintRule):
 class EmptyFileRule(LintRule):
     rule_id = "EMPTY-FILE"
     rule_name = "空文件"
+    description = "文件小于 10 字节且未标注占位（占位 / placeholder / TODO）"
 
     def check_file(self, ctx: FileContext) -> list[LintWarning]:
         if ctx.size_bytes < EMPTY_FILE_THRESHOLD:
@@ -180,6 +194,7 @@ class EmptyFileRule(LintRule):
 class LargeFileRule(LintRule):
     rule_id = "LARGE-FILE"
     rule_name = "超大文件"
+    description = "单文件超过 50KB——建议拆分，避免超出模型上下文预算"
 
     def check_file(self, ctx: FileContext) -> list[LintWarning]:
         if ctx.size_bytes > LARGE_FILE_THRESHOLD:
@@ -196,6 +211,23 @@ class LintService:
             BoundaryViolateRule(), EmptyFileRule(), LargeFileRule(),
         ]
         self.agent_rules: list[LintRule] = [CoreMissingRule(), CrossAgentDriftRule()]
+
+    def rule_catalog(self) -> list[LintRuleInfo]:
+        """规则目录：id / 名称 / 作用域 / 级别 / 说明，供 UI 展示「在检查什么」。
+
+        规则文案只在这里定义一次：前端经 `GET /api/lint/rules` 渲染，
+        `docs/DEVELOPMENT.md` 的规则表以本处为准，避免出现多份副本。
+        """
+        return [
+            LintRuleInfo(
+                rule_id=r.rule_id,
+                rule_name=r.rule_name,
+                scope=r.scope,  # type: ignore[arg-type]
+                severity=r.severity,  # type: ignore[arg-type]
+                description=r.description,
+            )
+            for r in [*self.file_rules, *self.agent_rules]
+        ]
 
     def lint_file(self, agent_id: str, file_path: str, content: str, size_bytes: int | None = None) -> list[LintWarning]:
         if not self.config.lint.enabled:

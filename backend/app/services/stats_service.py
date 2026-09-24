@@ -25,7 +25,6 @@ class StatsService:
         memory_files = sum(1 for f in files if f.role == "MEMORY")
         backup_total = len(backups)
         backup_size_bytes = sum(b.size_bytes for b in backups)
-        lint_warnings_total = sum(f.lint_warnings or 0 for f in files)
         disk_usage_bytes = sum(f.size_bytes for f in files)
         return StatsResult(
             agents_total=agents_total,
@@ -34,7 +33,6 @@ class StatsService:
             memory_files=memory_files,
             backup_total=backup_total,
             backup_size_bytes=backup_size_bytes,
-            lint_warnings_total=lint_warnings_total,
             last_scan_at=last_scan.last_scanned_at if last_scan else None,
             disk_usage_bytes=disk_usage_bytes,
         )

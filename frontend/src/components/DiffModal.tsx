@@ -131,7 +131,7 @@ export function DiffModal({ agents, initialAgent, onClose, embedded }: DiffModal
               onClick={() => changeMode('ignore_whitespace')}
               title="忽略空白、空行、缩进、BOM、零宽字符等格式噪声（默认）"
             >
-              忽略格式噪声
+              忽略噪声
             </button>
             <button
               type="button"

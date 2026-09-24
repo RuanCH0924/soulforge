@@ -19,7 +19,7 @@ interface DropdownProps {
  * 通用下拉菜单：点击外部 / Esc 关闭。
  *
  * 菜单经 createPortal 挂到 body 并采用 fixed 定位 —— 若就地绝对定位，
- * 会被带 overflow 的祖先容器（如 .editor-toolbar 的 overflow-x: auto）裁剪。
+ * 会被带 overflow 的祖先容器（如收起的侧栏、滚动面板）裁剪。
  */
 export function Dropdown({ trigger, items, title, align = 'right' }: DropdownProps) {
   const [open, setOpen] = useState(false);

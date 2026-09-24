@@ -5,7 +5,7 @@
 2. `.soulforge/secrets/key` 文件
 3. 首次启动生成并写入 `.soulforge/secrets/key`（chmod 600）
 
-约束（docs/DATA-MODEL.md 2.6）：数据库只存密文，UI 只显示掩码，明文永不落盘/git。
+约束（docs/DATA-MODEL.md 2.7）：数据库只存密文，UI 只显示掩码，明文永不落盘/git。
 """
 from __future__ import annotations
 

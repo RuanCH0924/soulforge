@@ -10,6 +10,7 @@ import type { CommandItem } from './components/CommandPalette';
 import { CoreAgentList, CoreCategoryList } from './components/CoreBrowser';
 import { FileTree } from './components/FileTree';
 import { HistoryModal } from './components/HistoryModal';
+import { SaveAsPresetModal } from './components/SaveAsPresetModal';
 import { SearchModal } from './components/SearchModal';
 import { StatusBar } from './components/StatusBar';
 import { TopBar } from './components/TopBar';
@@ -17,6 +18,7 @@ import { SideNav } from './components/SideNav';
 import { ViewToggle } from './components/ViewToggle';
 import type { BrowseMode } from './components/ViewToggle';
 import { DataPage } from './pages/DataPage';
+import type { DataTab } from './pages/DataPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ToolsPage } from './pages/ToolsPage';
 import { useHashRoute } from './hooks/useHashRoute';
@@ -34,7 +36,7 @@ const EditorPane = lazy(() =>
 type ModalState =
   | null
   | 'search'
-  | { type: 'history' | 'apply-preset' | 'ai-cleanup'; key: string };
+  | { type: 'history' | 'apply-preset' | 'ai-cleanup' | 'save-preset'; key: string };
 
 /** 编辑栏内最多允许同时打开的编辑窗口数（固定横向平铺） */
 const MAX_WINDOWS = 3;
@@ -185,7 +187,11 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [warningCounts, setWarningCounts] = useState<Record<string, number>>({});
+  // lint 警告总数：与「检查报告」同源（GET /api/lint/all），null = 还没跑完
+  const [lintWarningsTotal, setLintWarningsTotal] = useState<number | null>(null);
   const [stats, setStats] = useState<StatsResult | null>(null);
+  // 后端版本号（GET /api/health）：版本号链路末端展示，事实源见 backend/app/__init__.py
+  const [version, setVersion] = useState<string>('');
 
   // ---- 浏览状态（左/中栏当前浏览的 Agent 与其文件列表） ----
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -297,6 +303,12 @@ export default function App() {
   // ---- 路由（P2：四页面） ----
   const [route, navigate] = useHashRoute();
   const goWorkbench = useCallback(() => navigate('workbench'), [navigate]);
+  // ---- 数据中心的初始 tab（仅用于跨页跳转，如编辑器 lint 面板「查看规则」直接落到检查报告）----
+  const [dataTab, setDataTab] = useState<DataTab>('stats');
+  useEffect(() => {
+    // 离开数据中心即复位，避免下次进来落到非默认 tab
+    if (route !== 'data') setDataTab('stats');
+  }, [route]);
   // ---- 首次使用引导（P5：一次性提示快捷键；v3 起快捷键体系更新：Ctrl+B 让位给加粗） ----
   const [showIntro, setShowIntro] = useState(
     () => !window.localStorage.getItem('soulforge.intro-v3'),
@@ -596,18 +608,26 @@ export default function App() {
       }
     })();
     void refreshStats();
-    // 后台跑 lint，填充 Agent 警告角标
+    // 读取后端版本号（失败不影响界面）
+    api
+      .health()
+      .then((h) => setVersion(h.version))
+      .catch(() => {
+        // 版本号获取失败时状态栏不显示
+      });
+    // 后台跑 lint，填充 Agent 警告角标 + 状态栏警告总数（与「检查报告」同一数据源与口径）
     api
       .lintAll()
       .then((r) => {
         const counts: Record<string, number> = {};
         r.results.forEach((x) => {
-          counts[x.agent_id] = x.stats.warnings;
+          counts[x.agent_id] = x.warnings.length;
         });
         setWarningCounts(counts);
+        setLintWarningsTotal(r.results.reduce((n, x) => n + x.warnings.length, 0));
       })
       .catch(() => {
-        // lint 失败不阻塞界面
+        // lint 失败不阻塞界面；总数保持 null，状态栏显示「检查中…」而非谎报无警告
       });
     return () => {
       cancelled = true;
@@ -978,7 +998,7 @@ export default function App() {
       { type: 'action', id: 'diff', label: '对比两个 Agent', group: '操作', onSelect: () => navigate('tools') },
       { type: 'action', id: 'export-all', label: '导出全部 Agent', group: '操作', onSelect: () => void exportAll() },
       { type: 'action', id: 'lint-all', label: '健康检查（全量 Lint）', group: '数据', onSelect: () => navigate('data') },
-      { type: 'action', id: 'stats', label: '统计仪表盘', group: '数据', onSelect: () => navigate('data') },
+      { type: 'action', id: 'stats', label: '统计面板', group: '数据', onSelect: () => navigate('data') },
       { type: 'action', id: 'audit', label: '审计日志', group: '数据', onSelect: () => navigate('data') },
       { type: 'action', id: 'preset', label: '管理文档预设', group: '管理', onSelect: () => navigate('settings') },
       { type: 'action', id: 'settings', label: '打开系统设置', group: '管理', onSelect: () => navigate('settings') },
@@ -1198,6 +1218,11 @@ export default function App() {
                         onExport={() => void exportCurrent(tab.agentId)}
                         onApplyPreset={() => setModal({ type: 'apply-preset', key: tab.key })}
                         onApplyAI={() => setModal({ type: 'ai-cleanup', key: tab.key })}
+                        onSaveAsPreset={() => setModal({ type: 'save-preset', key: tab.key })}
+                        onOpenLintRules={() => {
+                          setDataTab('lint');
+                          navigate('data');
+                        }}
                         onLintDone={(count) => {
                           setFiles((prev) =>
                             prev.map((f) =>
@@ -1218,6 +1243,7 @@ export default function App() {
         ) : route === 'data' ? (
           <DataPage
             onBack={goWorkbench}
+            initialTab={dataTab}
             onOpenResult={(a, p, line) => {
               void openFile(a, p, line);
               navigate('workbench');
@@ -1240,7 +1266,8 @@ export default function App() {
         agentsTotal={agentsTotal}
         filesTotal={filesTotal}
         lastScanAt={stats?.last_scan_at}
-        warningsTotal={stats?.lint_warnings_total ?? 0}
+        warningsTotal={lintWarningsTotal}
+        version={version}
       />
 
       {/* ---- 弹窗 ---- */}
@@ -1284,6 +1311,15 @@ export default function App() {
                 {...base}
                 filePath={tab.file.path}
                 onDone={() => void handleDataChanged(tab.key)}
+              />
+            );
+          case 'save-preset':
+            return (
+              <SaveAsPresetModal
+                agentId={tab.agentId}
+                filePath={tab.file.path}
+                content={tab.content}
+                onClose={closeModal}
               />
             );
           default:

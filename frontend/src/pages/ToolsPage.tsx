@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { CrossEditModal } from '../components/CrossEditModal';
+import { DailyStandardizerPanel } from '../components/DailyStandardizerPanel';
 import { DiffModal } from '../components/DiffModal';
 import { SuperSyncPanel } from '../components/SuperSyncPanel';
 import { SyncModal } from '../components/SyncModal';
 import type { AgentInfo } from '../types';
 
-type Tab = 'sync' | 'super-sync' | 'cross-edit' | 'diff';
+type Tab = 'sync' | 'super-sync' | 'cross-edit' | 'diff' | 'daily';
 
 interface ToolsPageProps {
   agents: AgentInfo[];
@@ -29,6 +30,7 @@ export function ToolsPage({ agents, initialPath, initialContent, onBack, onDone,
             ['super-sync', '超级同步'],
             ['cross-edit', '跨Agent编辑'],
             ['diff', '对比'],
+            ['daily', '日志标准化'],
           ] as [Tab, string][]
         ).map(([key, label]) => (
           <button
@@ -59,6 +61,7 @@ export function ToolsPage({ agents, initialPath, initialContent, onBack, onDone,
           />
         )}
         {tab === 'diff' && <DiffModal agents={agents} initialAgent={null} onClose={onBack} embedded />}
+        {tab === 'daily' && <DailyStandardizerPanel agents={agents} />}
       </div>
     </div>
   );

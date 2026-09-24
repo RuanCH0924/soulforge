@@ -8,7 +8,7 @@ interface SideNavProps {
 const NAV: { route: AppRoute; label: string; icon: string; hint: string }[] = [
   { route: 'workbench', label: '主工作台', icon: '⌂', hint: '日常编辑：Agent / 文件 / 编辑器' },
   { route: 'tools', label: '业务工具', icon: '⇄', hint: '跨 Agent 协同：同步 / 对比 / 批量编辑 / 导出' },
-  { route: 'data', label: '数据中心', icon: '◇', hint: '统计 / 审计 / 健康检查报告' },
+  { route: 'data', label: '数据中心', icon: '◇', hint: '统计 / 检查报告 / 审计日志' },
   { route: 'settings', label: '系统配置', icon: '⚙', hint: '设置 / LLM Provider / 文档预设' },
 ];
 

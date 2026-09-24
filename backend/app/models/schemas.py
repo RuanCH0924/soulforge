@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app import __version__
+
 Role = Literal["CORE", "MEMORY", "SKILL", "META", "OTHER"]
 Severity = Literal["warning", "error"]
 PresetTargetType = Literal["SOUL", "AGENTS", "MEMORY", "USER", "IDENTITY", "TOOLS", "WORKLOG", "ANY"]
@@ -164,6 +166,20 @@ class LintAgentResult(BaseModel):
     stats: LintStats
 
 
+class LintRuleInfo(BaseModel):
+    """lint 规则目录项（`GET /api/lint/rules`）。
+
+    规则文案的唯一事实源是 `LintService` 的规则类；前端与文档都从这里取，
+    不各自再抄一份。
+    """
+
+    rule_id: str
+    rule_name: str
+    scope: Literal["file", "agent"] = Field(..., description="作用域：file = 逐文件检查；agent = 需要 Agent 全貌")
+    severity: Severity
+    description: str = Field(..., description="规则在检查什么（展示给用户）")
+
+
 class ManifestFile(BaseModel):
     path: str
     size: int
@@ -230,6 +246,8 @@ class PresetSummary(BaseModel):
     target_file_type: PresetTargetType
     description: str | None = None
     is_system: bool = False
+    # 是否内置预设（随版本分发，下次升级可能被刷新）——UI 展示「预设来源」用
+    is_builtin: bool = False
     version: int = 1
     created_at: int
     updated_at: int
@@ -247,6 +265,7 @@ class Preset(BaseModel):
     frontmatter_json: dict[str, str] = Field(default_factory=dict)
     style_rules: list[str] = Field(default_factory=list)
     is_system: bool = False
+    is_builtin: bool = False
     version: int = 1
     created_at: int
     updated_at: int
@@ -256,6 +275,27 @@ class PresetApplyRequest(BaseModel):
     agent_id: str
     file_path: str
     extra_instructions: str | None = None
+
+
+class PresetFromDocument(BaseModel):
+    """由当前文档生成预设（编辑栏「设为预设」）。
+
+    以编辑器当前内容作为模板正文，配合用户填写的参数生成带规则 frontmatter 的模板文档，
+    从而得到一个可「应用预设 / AI 整理」复用的结构预设。
+    """
+
+    name: str = Field(..., min_length=1, description="预设名称")
+    target_file_type: PresetTargetType = Field(..., description="适用文件类型")
+    content: str = Field(..., min_length=1, description="作为模板正文的文档内容（编辑器当前内容）")
+    description: str | None = Field(None, description="用途说明")
+    section_heading_level: int = Field(
+        2, ge=1, le=6, description="章节标题层级：该层级的标题构成预设的章节清单")
+    required_sections: list[str] = Field(
+        default_factory=list,
+        description="必填章节（须为文档中该层级的标题）；留空 = 文档中该层级的全部标题",
+    )
+    section_order: Literal["strict", "loose"] = Field("strict", description="章节顺序是否严格")
+    require_frontmatter: bool = Field(False, description="是否要求文档带 YAML frontmatter")
 
 
 class PresetApplyExecuteRequest(BaseModel):
@@ -472,13 +512,19 @@ class ScanResult(BaseModel):
 
 
 class StatsResult(BaseModel):
+    """统计面板数据。
+
+    **不含 lint 警告数**：该指标需实时跑 lint 才能得到（`files.lint_warnings` 索引列
+    从不被扫描填充，取索引只会得到恒为 0 的假数据）。UI 的 lint 计数统一取自
+    `GET /api/lint/all`（与「检查报告」同源），见 docs/API.md。
+    """
+
     agents_total: int
     files_total: int
     core_files: int
     memory_files: int
     backup_total: int
     backup_size_bytes: int
-    lint_warnings_total: int
     last_scan_at: int | None = None
     disk_usage_bytes: int
 
@@ -494,9 +540,140 @@ class AuditEntry(BaseModel):
     result: str = "ok"
 
 
+# ---------- M15 · 工作日志标准化（P2 批次） ----------
+
+
+class DailySourceInfo(BaseModel):
+    """一个来源在归并前后的体积与剥壳事实。"""
+
+    path: str
+    kind: Literal["A", "B", "C"]
+    raw_bytes: int
+    clean_bytes: int
+    removed_total: int = 0
+    summarized: bool = False   # 是否经「分块摘要」
+    chunks: int = 0
+
+
+class DailyRunItem(BaseModel):
+    """批次的逐日条目。"""
+
+    date: str
+    target_path: str
+    has_standard: bool = False
+    sources: list[DailySourceInfo] = Field(default_factory=list)
+    fragments_to_delete: list[str] = Field(default_factory=list)
+    output_content: str | None = None
+    unified_diff: str | None = None
+    html_diff: str | None = None
+    format_report: FormatReport = Field(default_factory=lambda: FormatReport(ok=False))
+    lint_warnings: list[LintWarning] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    empty_reason: str | None = None  # 非空 = 模型判定「本日无可归档内容」（不产出日文件，只清碎片）
+    decision: str = "pending"        # pending | applied | skipped
+    status: str = "pending"          # pending|planned|failed|blocked|applied|partially_applied|skipped|empty
+    error: str | None = None
+    backup_id: int | None = None
+    applied_at: int | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cost_estimate_usd: float = 0.0
+
+
+class DailyRunSummary(BaseModel):
+    id: str
+    agent_id: str
+    date_from: str
+    date_to: str
+    preset_id: str
+    preset_version: int = 1
+    provider_id: str
+    status: str
+    days_total: int = 0
+    token_budget: int = 0
+    tokens_used: int = 0
+    cost_estimate_usd: float = 0.0
+    error: str | None = None
+    created_at: int
+    updated_at: int
+    finished_at: int | None = None
+
+
+class DailyRun(DailyRunSummary):
+    extra_instructions: str | None = None
+    items: list[DailyRunItem] = Field(default_factory=list)
+
+
+class DailyRunCreate(BaseModel):
+    agent_id: str
+    date_from: str = Field(..., description="YYYY-MM-DD")
+    date_to: str = Field(..., description="YYYY-MM-DD")
+    preset_id: str = Field("preset-wlog-daily-std", description="技能预设（默认「工作日志日标准化」）")
+    provider_id: str
+    extra_instructions: str | None = None
+
+
+class DailyRunCreateResult(BaseModel):
+    run_id: str
+    status: str
+    days_total: int
+    reused: bool = False      # 命中幂等键 → 复用既有批次，未产生新的 LLM 调用
+    created_at: int
+
+
+class DailyRunApplyRequest(BaseModel):
+    dates: list[str] = Field(default_factory=list, description="要应用的日期；为空且 apply_all=false 时视为无操作")
+    apply_all: bool = Field(False, description="整批应用（等价于列出全部 pending 日）")
+
+
+class DailyRunApplyResult(BaseModel):
+    run_id: str
+    status: str
+    applied: list[str] = Field(default_factory=list)
+    partial: list[str] = Field(default_factory=list)     # 日文件已写，碎片删失败
+    blocked: list[str] = Field(default_factory=list)     # 写前验收不过，未写入
+    failed: list[str] = Field(default_factory=list)
+    no_content: list[str] = Field(default_factory=list)  # 判定无可归档内容：未产出日文件，仅清理碎片
+    skipped: list[str] = Field(default_factory=list)
+
+
+class DailyRunSkipRequest(BaseModel):
+    dates: list[str] = Field(..., min_length=1)
+
+
+class DailyRunReportItem(BaseModel):
+    """单日的验收结果（对手写盘后的真实文件核对）。"""
+
+    date: str
+    target_path: str
+    status: str = "pending"          # 该日的 item 状态
+    empty: bool = False              # 该日判定「无可归档内容」：不产出日文件，只核对碎片是否已清
+    delivered: bool = False          # 该日是否已交付（applied / partially_applied）
+    single_file: bool = True         # memory/ 顶层该日期只剩目标文件
+    naming_ok: bool = True           # 命名合规 memory/YYYY-MM-DD.md
+    sections_ok: bool = True         # 必填章节齐全 + 顺序正确（对磁盘内容跑强规则）
+    no_residue: bool = True          # 12 类低价值元数据残留 = 0
+    fragments_gone: bool = True      # 拟删碎片已不在磁盘上
+    details: list[str] = Field(default_factory=list)
+
+
+class DailyRunReport(BaseModel):
+    run_id: str
+    agent_id: str
+    status: str
+    passed: bool
+    items: list[DailyRunReportItem] = Field(default_factory=list)
+    days_delivered: int = 0
+    days_total: int = 0
+    tokens_used: int = 0
+    cost_estimate_usd: float = 0.0
+    generated_at: int
+
+
 class Meta(BaseModel):
     timestamp: int
-    version: str = "0.1.0"
+    version: str = __version__
 
 
 class Envelope(BaseModel):

@@ -5,6 +5,7 @@
 **OpenClaw 跨 Agent system-prompt 文件管理器（Web GUI）**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.5.0-blue)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](backend/pyproject.toml)
 [![Backend](https://img.shields.io/badge/Backend-FastAPI-009688.svg)](backend)
 [![Frontend](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-61DAFB.svg)](frontend)
@@ -43,6 +44,7 @@ OpenClaw 是一个多 Agent 系统，每个 Agent 都拥有自己的 `workspace/
 | **文档预设** *(Phase 2.5)*     | 为 `SOUL.md` / `AGENTS.md` / `MEMORY.md` / 工作日志等保存可复用的结构模板，通过 plan + confirm 两步应用。 |
 | **LLM 接入** *(Phase 2.5)*     | 接入任意 OpenAI 兼容协议的 LLM（OpenAI / Anthropic / DeepSeek / Ollama），API key 加密存储 + 配置热加载。       |
 | **AI 整理** *(Phase 2.5)*       | 选预设 + 选 provider → Agent 按预设重写文档 → diff 预览 → 老板确认后写入，保证所有灵魂文档结构一致。       |
+| **工作日志标准化** *(M15)*     | 把 `memory/` 里同一天的多份记录（日文件 / 会话导出 / 主题碎片）归并成**每天恰好 1 个 `YYYY-MM-DD.md`**：确定性剥壳（零 token）→ 大模型归并 → 逐日 diff 确认 → 写入并清理碎片（走回收站）。整天确实无内容时由模型判定「无可归档内容」，不产出日文件、不硬凑。 |
 
 ## 路线图
 
@@ -50,12 +52,14 @@ Soulforge 分阶段交付：
 
 | 阶段 | 范围 | 状态 |
 |---|---|---|
-| **Phase 1 · MVP** | 浏览 + 编辑 + 备份 + lint + 同步 + 导出 + 仪表盘 | ✅ 已交付（v0.1 → v1.0） |
-| **Phase 2 · UI 优化** | 布局微调、主题、快捷键、实时状态条 | 🚧 进行中 |
-| **Phase 2.5 · AI Editor** | 文档预设 → LLM 接入 → AI 自动整理（三步走） | 🚧 进行中 |
+| **Phase 1 · MVP** | 浏览 + 编辑 + 备份 + lint + 同步 + 导出 + 仪表盘 | ✅ 已交付 |
+| **Phase 2 · UI 优化** | 布局微调、主题、快捷键、实时状态条 | ✅ 已交付 |
+| **Phase 2.5 · AI Editor** | 文档预设 → LLM 接入 → AI 自动整理（三步走） | ✅ 已交付 |
 | **超级同步** | 多 Agent 同名核心文档秒级实时同步（独立守护脚本 + UI 矩阵配置 / 状态 / 日志） | ✅ 已交付 |
+| **M15 · 工作日志标准化** | `memory/` 日文件归并（每天 1 个 `YYYY-MM-DD.md` + 元数据剥壳 + 碎片清理），手动批次 + 逐日确认 | ✅ 已交付 |
 | **Phase 3 · 远期** | 团队协作 / 云端同步 / 第三方插件 | 📋 规划中 |
 
+统一版本基线自 **v0.5.0** 起 —— 见 [CHANGELOG.md](CHANGELOG.md)。
 完整规划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ## 技术栈
@@ -157,6 +161,8 @@ npm run dev        # Vite 开发服务器，将 /api 代理到 http://127.0.0.1:
 | `GET` | `/api/agents/{id}/files` | 列出 Agent 的 prompt-pack 文件 |
 | `GET` | `/api/agents/{id}/files/{path}` | 读取文件内容 |
 | `PUT` | `/api/agents/{id}/files/{path}` | 写入文件（自动备份、乐观锁） |
+| `DELETE` | `/api/agents/{id}/files/{path}` | 删除文件（移入回收站） |
+| `POST` | `/api/agents/files/cross-write` | 一次写入多个 Agent 的同名文件 |
 | `GET` | `/api/agents/{id}/files/{path}/history` | 文件备份历史 |
 | `POST` | `/api/search` | 跨 Agent 全文搜索 |
 | `GET` | `/api/diff` | 对比两个 Agent 的同名文件 |
@@ -173,8 +179,14 @@ npm run dev        # Vite 开发服务器，将 /api 代理到 http://127.0.0.1:
 | `GET` | `/api/stats` | 仪表盘统计数据 |
 | `GET` | `/api/audit` | 审计日志 |
 | `GET` / `PUT` | `/api/config` | 读取 / 更新配置 |
+| `GET` / `POST` / `PUT` / `DELETE` | `/api/presets[/{id}]` · `/api/presets/{id}/versions[/{vid}/restore]` | 文档预设 CRUD + 版本历史 |
+| `POST` | `/api/presets/{id}/apply` · `/api/presets/{id}/apply/execute` | 应用预设（plan + 确认两步） |
+| `GET` / `POST` / `PUT` / `DELETE` | `/api/llm/providers[/{id}]` · `/api/llm/providers/{id}/test` · `/api/llm/chat` | LLM Provider 管理与连通性测试 |
+| `GET` / `POST` | `/api/ai/jobs[/{id}]` · `/api/ai/jobs/{id}/apply` · `/reject` · `/regenerate` | AI 整理任务（生成 → diff → 写入） |
+| `GET` / `POST` | `/api/daily-runs[/{id}]` · `/api/daily-runs/{id}/apply` · `/reject` · `/skip` · `/report` | 工作日志标准化批次（生成计划 → 逐日确认 → 写入 + 碎片清理 → 验收报告） |
 
 所有响应统一封装为 `{"data": ...}`；错误返回 `{"error": {"code", "message", "details"}}`。
+`GET /api/health` 返回运行时版本号（`data.version`），与 `backend/app/__init__.py` 中的值一致。
 完整规范见 [docs/API.md](docs/API.md)。
 
 ## 项目结构
@@ -199,6 +211,7 @@ soulforge/
 ├── start.bat / start.sh      # 一键启动（Windows / Linux·macOS）
 ├── .github/                  # Issue 与 PR 模板
 ├── README.md                 # 本文件
+├── CHANGELOG.md              # 版本历史与发版流程
 └── LICENSE                   # MIT 许可证
 ```
 
@@ -206,13 +219,14 @@ soulforge/
 
 | 文档 | 内容 |
 |---|---|
-| [DEVELOPMENT.md](DEVELOPMENT.md) | 主开发文档（目标 / 架构 / 功能 / 数据模型） |
+| [CHANGELOG.md](CHANGELOG.md) | 版本历史、版本号事实源与发版流程 |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 主开发文档（目标 / 架构 / 功能 / 数据模型） |
 | [docs/API.md](docs/API.md) | REST API 完整定义 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统架构详解 |
 | [docs/DATA-MODEL.md](docs/DATA-MODEL.md) | 数据模型（SQLite schema、文件元数据） |
 | [docs/SECURITY.md](docs/SECURITY.md) | 安全护栏 |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 落地路径（MVP / v1.0 / v1.x） |
-| [UI-SPECS.md](UI-SPECS.md) | UI 设计规范 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 落地路径（分阶段目标与验收清单） |
+| [docs/UI-SPECS.md](docs/UI-SPECS.md) | UI 设计规范 |
 
 ## 贡献指南
 
@@ -220,7 +234,7 @@ soulforge/
 
 1. **Fork** 本仓库并创建特性分支：`git checkout -b feat/my-feature`
 2. **编写代码** —— 保持改动聚焦且与现有风格一致：
-   - 后端：遵循 [DEVELOPMENT.md](DEVELOPMENT.md)，运行 `ruff check`，并用 `pytest` 补充 / 扩展测试（在 `backend/` 下执行）。
+   - 后端：遵循 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)，运行 `ruff check`，并用 `pytest` 补充 / 扩展测试（在 `backend/` 下执行）。
    - 前端：提交前运行 `npm run build`（包含 `tsc --noEmit`）。
 3. **提交** —— 提交信息清晰，说明变更的*原因*。
 4. **发起 Pull Request** —— 使用 [PR 模板](.github/PULL_REQUEST_TEMPLATE.md)，确保所有 CI 检查通过。

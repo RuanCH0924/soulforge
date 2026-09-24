@@ -11,6 +11,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+from app import __version__
 from app.config import Config
 from app.models.schemas import Manifest, ManifestFile
 from app.services.agent_discovery import AgentDiscovery
@@ -48,7 +49,7 @@ class ImportExportService:
             for f in files
         ]
         manifest = Manifest(
-            soulforge_version="0.1.0",
+            soulforge_version=__version__,
             export_time=datetime.now().isoformat(),
             agent_id=agent_id,
             files=manifest_files,
@@ -76,7 +77,7 @@ class ImportExportService:
                 "files": [{"path": f.path, "size": f.size_bytes, "sha256": sha256_of(Path(a.workspace) / f.path)} for f in files],
             })
         root_manifest = {
-            "soulforge_version": "0.1.0",
+            "soulforge_version": __version__,
             "export_time": datetime.now().isoformat(),
             "export_all": True,
             "agents": all_agents,

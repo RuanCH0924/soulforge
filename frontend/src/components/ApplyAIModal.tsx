@@ -33,7 +33,8 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    Promise.all([api.listPresets(), api.listLLMProviders()])
+    // scope=workbench：排除「专供大模型处理工作日志」的预设（那类只在日志标准化界面用）
+    Promise.all([api.listPresets(undefined, 'workbench'), api.listLLMProviders()])
       .then(([ps, lps]) => {
         setPresets(ps);
         const enabled = lps.filter((p) => p.enabled);

@@ -13,12 +13,20 @@ import type {
   ConfigSnapshot,
   CrossWriteItem,
   CrossWriteResult,
+  DailyRun,
+  DailyRunApplyResult,
+  DailyRunCreateResult,
+  DailyRunReport,
+  DailyRunStatus,
+  DailyRunSummary,
   DiffResult,
   FileContent,
   FileInfo,
+  HealthResult,
   LintAgentResult,
   LintAllResult,
   LintFileResult,
+  LintRulesResult,
   LLMProtocol,
   LLMProvider,
   LLMResponseOut,
@@ -42,6 +50,9 @@ import type {
 } from '../types';
 
 export const api = {
+  // ---- 健康检查（版本号链路端点） ----
+  health: () => request<HealthResult>('GET', '/api/health'),
+
   // ---- M1 Agent ----
   listAgents: () => request<AgentInfo[]>('GET', '/api/agents'),
   scanAgents: () => request<ScanResult>('POST', '/api/agents/scan'),
@@ -118,6 +129,8 @@ export const api = {
   lintAgent: (agentId: string) =>
     request<LintAgentResult>('GET', `/api/lint/${encodeURIComponent(agentId)}`),
   lintAll: () => request<LintAllResult>('GET', '/api/lint/all'),
+  /** lint 规则目录（「在检查什么」；文案事实源在后端，前端只渲染） */
+  lintRules: () => request<LintRulesResult>('GET', '/api/lint/rules'),
 
   // ---- M10 统计 / 审计 ----
   stats: () => request<StatsResult>('GET', '/api/stats'),
@@ -129,10 +142,18 @@ export const api = {
     request<ConfigSnapshot>('PUT', '/api/config', { json: patch }),
 
   // ---- M11 文档预设（Phase 2.5） ----
-  listPresets: (targetFileType?: PresetTargetType) =>
+  /**
+   * 列出预设。
+   * @param targetFileType 按适用文件类型过滤
+   * @param scope `workbench` = 主工作台 / 设置页用，排除「专供大模型处理工作日志」的预设
+   */
+  listPresets: (targetFileType?: PresetTargetType, scope?: 'workbench') =>
     request<PresetSummary[]>(
       'GET',
-      targetFileType ? `/api/presets?target_file_type=${encodeURIComponent(targetFileType)}` : '/api/presets',
+      `/api/presets?${new URLSearchParams({
+        ...(targetFileType ? { target_file_type: targetFileType } : {}),
+        ...(scope ? { scope } : {}),
+      }).toString()}`,
     ),
   getPreset: (id: string) => request<Preset>('GET', `/api/presets/${encodeURIComponent(id)}`),
   createPreset: (body: {
@@ -146,6 +167,17 @@ export const api = {
   }) => request<Preset>('POST', '/api/presets', { json: body }),
   updatePreset: (id: string, body: Record<string, unknown>) =>
     request<Preset>('PUT', `/api/presets/${encodeURIComponent(id)}`, { json: body }),
+  /** 由当前文档生成预设（编辑栏「设为预设」） */
+  createPresetFromDocument: (body: {
+    name: string;
+    target_file_type: PresetTargetType;
+    content: string;
+    description?: string;
+    section_heading_level?: number;
+    required_sections?: string[];
+    section_order?: 'strict' | 'loose';
+    require_frontmatter?: boolean;
+  }) => request<Preset>('POST', '/api/presets/from-document', { json: body }),
   deletePreset: (id: string) =>
     request<{ id: string; deleted: boolean }>('DELETE', `/api/presets/${encodeURIComponent(id)}`),
   presetApplyPlan: (presetId: string, agentId: string, filePath: string, extraInstructions?: string) =>
@@ -214,6 +246,38 @@ export const api = {
     request<AIJobCreateResult>('POST', `/api/ai/jobs/${encodeURIComponent(jobId)}/regenerate`, {
       json: { extra_instructions: extraInstructions },
     }),
+
+  // ---- M15 工作日志标准化（Phase 2.6） ----
+  /** 创建批次（异步逐日生成计划，立即返回 planned） */
+  createDailyRun: (body: {
+    agent_id: string;
+    date_from: string;
+    date_to: string;
+    preset_id?: string;
+    provider_id: string;
+    extra_instructions?: string;
+  }) => request<DailyRunCreateResult>('POST', '/api/daily-runs', { json: body }),
+  listDailyRuns: (params?: { agent_id?: string; status?: DailyRunStatus; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.agent_id) q.set('agent_id', params.agent_id);
+    if (params?.status) q.set('status', params.status);
+    if (params?.limit !== undefined) q.set('limit', String(params.limit));
+    return request<DailyRunSummary[]>('GET', `/api/daily-runs?${q.toString()}`);
+  },
+  getDailyRun: (runId: string) =>
+    request<DailyRun>('GET', `/api/daily-runs/${encodeURIComponent(runId)}`),
+  /** 应用选中的日期（写前验收 + 乐观锁 → 写入 → 删碎片）；applyAll 时忽略 dates */
+  applyDailyRun: (runId: string, dates: string[], applyAll = false) =>
+    request<DailyRunApplyResult>('POST', `/api/daily-runs/${encodeURIComponent(runId)}/apply`, {
+      json: { dates, apply_all: applyAll },
+    }),
+  rejectDailyRun: (runId: string) =>
+    request<DailyRun>('POST', `/api/daily-runs/${encodeURIComponent(runId)}/reject`),
+  skipDailyRun: (runId: string, dates: string[]) =>
+    request<DailyRun>('POST', `/api/daily-runs/${encodeURIComponent(runId)}/skip`, { json: { dates } }),
+  /** 验收报告（对磁盘真实文件核对，只读可重复跑） */
+  dailyRunReport: (runId: string) =>
+    request<DailyRunReport>('GET', `/api/daily-runs/${encodeURIComponent(runId)}/report`),
 
   // ---- 超级同步（独立守护脚本） ----
   superSyncConfig: () => request<SuperSyncConfig>('GET', '/api/super-sync/config'),

@@ -4,10 +4,14 @@
 """
 from __future__ import annotations
 
+import asyncio
+
+import pytest
 from sqlalchemy import text
 
+from app.core.errors import LLMOutputTruncatedError
 from app.models.db import LLMProviderRow
-from app.services.llm_registry import LLMResponse, LLMTokenUsage
+from app.services.llm_registry import LLMClient, LLMProvider, LLMResponse, LLMTokenUsage
 
 PAYLOAD = {
     "id": "openai-test",
@@ -180,3 +184,64 @@ def test_test_provider_failure_reports_ok_false(client, monkeypatch):
 def test_test_provider_not_found(client):
     res = client.post("/api/llm/providers/ghost/test")
     assert res.status_code == 404
+
+
+# ---------- 输出截断（finish_reason）识别 + 自动重试 ----------
+
+def _client(max_tokens: int = 64):
+    return LLMClient(LLMProvider(
+        id="p1", base_url="http://llm.local/v1", api_key="k", model="m",
+        protocol="openai-completions", max_tokens=max_tokens))
+
+
+def test_truncated_flag_reads_finish_reason():
+    """`length`（OpenAI）/ `max_tokens`（Anthropic）= 被额度截断；`stop` / 缺失 = 正常结束。"""
+    assert LLMResponse(content="x", finish_reason="length").truncated is True
+    assert LLMResponse(content="x", finish_reason="max_tokens").truncated is True
+    assert LLMResponse(content="x", finish_reason="stop").truncated is False
+    assert LLMResponse(content="x").truncated is False
+
+
+def test_truncated_output_retries_once_with_doubled_budget(monkeypatch):
+    budgets: list[int] = []
+
+    async def fake(self, messages, max_tokens, temperature):
+        budgets.append(max_tokens)
+        if len(budgets) == 1:
+            return LLMResponse(content="半截", usage=LLMTokenUsage(completion_tokens=64),
+                               finish_reason="length")
+        return LLMResponse(content="写完了", finish_reason="stop")
+
+    monkeypatch.setattr("app.services.llm_registry.LLMClient._complete", fake)
+    resp = asyncio.run(_client(64).chat([{"role": "user", "content": "x"}]))
+    assert resp.content == "写完了"
+    assert budgets == [64, 128]   # 只重试一次，且预算翻倍
+
+
+def test_persistent_truncation_raises_dedicated_error(monkeypatch):
+    async def fake(self, messages, max_tokens, temperature):
+        return LLMResponse(content="半截", usage=LLMTokenUsage(completion_tokens=max_tokens),
+                           finish_reason="length")
+
+    monkeypatch.setattr("app.services.llm_registry.LLMClient._complete", fake)
+    with pytest.raises(LLMOutputTruncatedError) as excinfo:
+        asyncio.run(_client(64).chat([{"role": "user", "content": "x"}]))
+    assert excinfo.value.code == "LLM_OUTPUT_TRUNCATED"
+    # 报的是重试后实际生效的预算，并给出可执行的指引
+    assert "128" in str(excinfo.value)
+    assert "max_tokens" in str(excinfo.value)
+
+
+async def _fake_chat_truncated(self, messages, max_tokens=None, temperature=None):
+    raise LLMOutputTruncatedError("模型输出被 max_tokens=4096 截断（finish_reason=length），文档没有写完。")
+
+
+def test_chat_endpoint_maps_truncation_to_422(client, monkeypatch):
+    client.post("/api/llm/providers", json=PAYLOAD)
+    monkeypatch.setattr("app.services.llm_registry.LLMClient.chat", _fake_chat_truncated)
+    res = client.post("/api/llm/chat", json={
+        "provider_id": "openai-test",
+        "messages": [{"role": "user", "content": "ping"}],
+    })
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "LLM_OUTPUT_TRUNCATED"

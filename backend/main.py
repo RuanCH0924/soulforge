@@ -21,6 +21,7 @@ from app.api import (
     audit,
     backups,
     config,
+    daily,
     diff,
     export_import,
     files,
@@ -32,6 +33,7 @@ from app.api import (
     super_sync,
     sync,
 )
+from app.api.common import ok
 from app.core.errors import SoulforgeError
 from app.core.logging import setup_logging
 from app.deps import init_registry
@@ -96,11 +98,12 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.include_router(presets.router)
     app.include_router(llm.router)
     app.include_router(ai.router)
+    app.include_router(daily.router)
 
-    # 健康检查（不发外部请求）
+    # 健康检查（不发外部请求）；响应与全站一致，走统一 {data, meta} 包装
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "version": __version__}
+        return ok({"status": "ok", "version": __version__})
 
     # 前端静态托管（若已 build）
     if FRONTEND_DIST.is_dir():

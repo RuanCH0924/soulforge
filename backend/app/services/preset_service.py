@@ -1,8 +1,8 @@
 """PresetService（M11 · 文档预设系统，Phase 2.5 Step 1）。
 
 职责：
-- 预设 CRUD（系统预设不可删、仅允许改 description + style_rules；version 自增）
-- 内置预设播种（4 个，is_system=1）
+- 预设 CRUD（内置预设与用户预设同等可编辑、可删除；version 自增 + 版本快照）
+- 内置预设播种（4 个，与用户预设同等可编辑；首次空表全量播种，存量安装补种新增项）
 - 应用预设：plan + execute 两步，plan 只读不写，execute 是唯一写入口
   （写前备份 + 审计，绝不直接覆盖）
 """
@@ -28,6 +28,7 @@ from app.models.schemas import (
     PresetApplyPlan,
     PresetApplyResult,
     PresetCreate,
+    PresetFromDocument,
     PresetSection,
     PresetSummary,
     PresetUpdate,
@@ -42,7 +43,42 @@ from app.services.lint_service import LintService
 from app.services.preset_templates import BUILTIN_TEMPLATES
 from app.services.template_rules import RequiredSection, TemplateRules, derive_sections, parse_template
 
+# ---------- 预设两类用途的边界（UI-SPECS §5.7） ----------
+# 「专供大模型处理工作日志」的预设类型 = M15 日志标准化的规则载体。
+# 这类预设**不出现在** 系统配置 → 文档预设，也不出现在主工作台「应用预设」下拉；
+# 只在 业务工具 → 日志标准化界面（及其 API）里可见、可编辑。
+# 判据就是类型本身，不额外加开关字段：M15 的预设选择器本来就只列 WORKLOG。
+DAILY_PRESET_TYPE = "WORKLOG"
+
+# `list()` 的可选范围：workbench = 主工作台 / 设置页（排除大模型专用预设）
+SCOPE_ALL = "all"
+SCOPE_WORKBENCH = "workbench"
+SCOPES: tuple[str, ...] = (SCOPE_ALL, SCOPE_WORKBENCH)
+
 PLAN_TTL_SECONDS = 30 * 60  # apply plan ≤ 30 分钟有效（与 sync plan 一致）
+
+# 「设为预设」的模板正文体积上限：模板全文会注入 AI 提示词，过大将撑爆 token 预算
+MAX_TEMPLATE_BYTES = 30 * 1024
+
+_HEADING_LINE_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+_FENCE_LINE_RE = re.compile(r"^\s*(```|~~~)")
+
+
+def _scan_headings(content: str) -> list[tuple[int, str]]:
+    """扫描 Markdown 标题（跳过围栏代码块），返回 [(level, title)]，保持文档顺序。"""
+    out: list[tuple[int, str]] = []
+    in_fence = False
+    for raw in content.split("\n"):
+        line = raw.rstrip()
+        if _FENCE_LINE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = _HEADING_LINE_RE.match(line)
+        if m:
+            out.append((len(m.group(1)), m.group(2).rstrip("#").strip()))
+    return out
 
 
 def _parse_json(value: str | None, default):
@@ -53,7 +89,8 @@ def _parse_json(value: str | None, default):
     except (json.JSONDecodeError, TypeError):
         return default
 
-# 内置预设（v1）：id 前缀 preset-，is_system=1，见 docs/ROADMAP.md 2.3
+# 内置预设（v1）：id 前缀 preset-，见 docs/ROADMAP.md 2.3 / docs/MEMORY-DAILY-STANDARDIZER-PLAN.md
+# 播种时 is_system=0（与用户预设同等可编辑、可删除）
 BUILTIN_PRESETS: list[dict] = [
     {
         "id": "preset-soul-std",
@@ -99,8 +136,106 @@ BUILTIN_PRESETS: list[dict] = [
         "frontmatter": {"schema": "soulforge.preset/v1", "owner": "user"},
         "style_rules": ["事实优先、结论先行", "不写过程叙述", "必须带时间标注"],
     },
+    # 注：原「工作日志汇总」（preset-wlog-summary）已退役 —— 它与本条是同一件事的两种口径
+    # （单文件整理 vs 逐日归并），两个并列选项让用户无法判断该选哪个。现将它的归档顺序规则与
+    # 「明日计划」章节并入本条，WORKLOG 类型只保留一个预设。退役 id 见 BUILTIN_PRESETS_RETIRED。
     {
-        "id": "preset-wlog-summary",
+        "id": "preset-wlog-daily-std",
+        "name": "工作日志日标准化",
+        "target_file_type": "WORKLOG",
+        "description": (
+            "把同一天的多份来源（日文件 / session 导出 / 主题碎片）归并成 1 份标准工作日志"
+            "并清理碎片；也可用于整理已有的单份 memory/YYYY-MM-DD.md"
+        ),
+        "sections": [
+            {"title": "一、今日概览", "required": True, "order": 1, "hint": "1~3 条概括当天最重要的事"},
+            {"title": "二、关键事件", "required": True, "order": 2, "hint": "每个事件写 事实 / 原因 / 结果"},
+            {"title": "三、关键决策", "required": True, "order": 3, "hint": "用户做出的选择与配置变更"},
+            {"title": "四、待办事项", "required": True, "order": 4, "hint": "未解决的问题与后续安排"},
+            {"title": "五、明日计划", "required": True, "order": 5, "hint": "下一步安排；无明确计划时写「无」"},
+        ],
+        "frontmatter": {"schema": "soulforge.preset/v1", "owner": "user"},
+        "style_rules": [
+            (
+                "保留：明确问题与根因、修复方案与结果、用户做出的选择、配置项含义与变更、"
+                "模型/工具/技能/cron 行为、安全审计结果、可复用数据（余额、盘中收盘、日报）、"
+                "文档与文件产出、未决问题与待办"
+            ),
+            (
+                "删除：Session Key / Session ID / Source、Conversation info (untrusted metadata) 整段 JSON、"
+                "Sender (untrusted metadata) 整段 JSON、Reply target of current user message 上下文壳、"
+                "Queued messages while agent was busy、重复的「让我检查一下」「我来看看」「任务还在运行中」、"
+                "单纯重复的 HEARTBEAT_OK 记录"
+            ),
+            "只保留结论，不保留过程：多轮状态轮询、重复的失败重试日志、调试中间态、同一问题的重复解释",
+            "改写成客观记录：去掉「喵呜～」「蹭蹭～」「给主人看看」「我来帮你查一下」等对话腔与过渡语，只保留事实",
+            "默认不做敏感信息脱敏：仅当用户明确要求过滤敏感信息时，才处理密钥、open_id、token 等",
+            "整理目标是有用而非最短：不为了精简而牺牲长期可检索的事实",
+            # 并入原「工作日志汇总」的两条口径（归档顺序 + 不保留流水账）；
+            # 它的第三条「口语化禁令」已由上面的「改写成客观记录」覆盖，故不重复
+            "按时间倒序归档：同一天内的事项按发生时间倒序排列；只提取关键决策与关键事件，不保留流水账",
+        ],
+    },
+]
+
+# 随版本新增的内置预设（append-only 白名单）：存量安装（presets 表非空）只补种这些，
+# 不重建上表其余内置预设 —— 用户可能已主动删除它们，升级时塞回来属于数据污染。
+# 维护规则：每次新增内置预设就把 id 追加到末尾；已进入名单的不要移除
+#（否则跨版本升级、跳过中间版本的安装会永久漏掉该预设）。
+BUILTIN_PRESETS_ADDED: tuple[str, ...] = ("preset-wlog-daily-std",)
+
+# 全部内置预设 id（随版本分发的那些）：`Preset.is_builtin` 用它区分
+# 「内置预设（下次升级可能被刷新）」与「用户自建」——UI 上用于展示预设来源。
+BUILTIN_PRESET_IDS: frozenset[str] = frozenset(d["id"] for d in BUILTIN_PRESETS)
+
+# ---------- 存量安装的内置预设迁移（内容锚点）----------
+# 下面两张表的 value 都是「该预设上一版发布时的定义」，作用是**判断用户改过没有**：
+# 库里那条预设若仍与该定义逐字段一致，说明它一直是我们发出去的样子，可以安全升级/下线；
+# 不一致说明用户编辑过 —— 那是用户自己的资产，一律不动。
+# 只比对内容字段（name / target_type / description / sections / style_rules），不含 template_md：
+# 老安装的 template_md 可能由「存量回填」自动合成，不等于内置模板常量，不能当改动信号。
+#
+# 维护规则：每次要修订某个内置预设的内容 → 把「修订前的定义」补进 REFRESHED 再改 BUILTIN_PRESETS；
+# 每次要下线某个内置预设 → 从 BUILTIN_PRESETS 删掉，把「下线的定义」记进 RETIRED（append-only）。
+
+# 内容有更新的内置预设：存量安装上，库中内容 == 这里记的上一版 → 覆盖为 BUILTIN_PRESETS 里的最新定义
+BUILTIN_PRESETS_REFRESHED: dict[str, dict] = {
+    "preset-wlog-daily-std": {
+        "name": "工作日志日标准化",
+        "target_file_type": "WORKLOG",
+        "description": "逐日归并 memory/ 下的日文件：每天只留 1 个 YYYY-MM-DD.md，剥离元数据壳与对话腔噪音",
+        "sections": [
+            {"title": "一、今日概览", "required": True, "order": 1, "hint": "1~3 条概括当天最重要的事"},
+            {"title": "二、关键事件", "required": True, "order": 2, "hint": "每个事件写 事实 / 原因 / 结果"},
+            {"title": "三、关键决策", "required": True, "order": 3, "hint": "用户做出的选择与配置变更"},
+            {"title": "四、待办事项", "required": True, "order": 4, "hint": "未解决的问题与后续安排"},
+        ],
+        "style_rules": [
+            (
+                "保留：明确问题与根因、修复方案与结果、用户做出的选择、配置项含义与变更、"
+                "模型/工具/技能/cron 行为、安全审计结果、可复用数据（余额、盘中收盘、日报）、"
+                "文档与文件产出、未决问题与待办"
+            ),
+            (
+                "删除：Session Key / Session ID / Source、Conversation info (untrusted metadata) 整段 JSON、"
+                "Sender (untrusted metadata) 整段 JSON、Reply target of current user message 上下文壳、"
+                "Queued messages while agent was busy、重复的「让我检查一下」「我来看看」「任务还在运行中」、"
+                "单纯重复的 HEARTBEAT_OK 记录"
+            ),
+            "只保留结论，不保留过程：多轮状态轮询、重复的失败重试日志、调试中间态、同一问题的重复解释",
+            "改写成客观记录：去掉「喵呜～」「蹭蹭～」「给主人看看」「我来帮你查一下」等对话腔与过渡语，只保留事实",
+            "默认不做敏感信息脱敏：仅当用户明确要求过滤敏感信息时，才处理密钥、open_id、token 等",
+            "整理目标是有用而非最短：不为了精简而牺牲长期可检索的事实",
+        ],
+        "frontmatter": {"schema": "soulforge.preset/v1", "owner": "user"},
+    },
+}
+
+# 已退役的内置预设：存量安装上，库中内容 == 这里记的最后一版 → 标记 retired_at（列表里不再出现）。
+# 行本身保留（不删行），以免历史上引用它的批次 / AI 任务读取时报 404。
+BUILTIN_PRESETS_RETIRED: dict[str, dict] = {
+    # 与原「工作日志汇总」合并为 preset-wlog-daily-std（见 BUILTIN_PRESETS 里的说明）
+    "preset-wlog-summary": {
         "name": "工作日志汇总",
         "target_file_type": "WORKLOG",
         "description": "整理 memory/YYYY-MM-DD.md：按时间倒序归档、提取关键决策",
@@ -110,10 +245,10 @@ BUILTIN_PRESETS: list[dict] = [
             {"title": "待办与风险", "required": True, "order": 3, "hint": "未完成事项与隐患"},
             {"title": "明日计划", "required": True, "order": 4, "hint": "下一步安排"},
         ],
-        "frontmatter": {"schema": "soulforge.preset/v1", "owner": "user"},
         "style_rules": ["按时间倒序归档", "只提取关键决策，不保留流水账", "口语化禁令"],
+        "frontmatter": {"schema": "soulforge.preset/v1", "owner": "user"},
     },
-]
+}
 
 
 class PresetService:
@@ -140,7 +275,8 @@ class PresetService:
     def _row_to_summary(row: PresetRow) -> PresetSummary:
         return PresetSummary(
             id=row.id, name=row.name, target_file_type=row.target_file_type,  # type: ignore[arg-type]
-            description=row.description, is_system=bool(row.is_system), version=row.version,
+            description=row.description, is_system=bool(row.is_system),
+            is_builtin=row.id in BUILTIN_PRESET_IDS, version=row.version,
             created_at=row.created_at, updated_at=row.updated_at,
         )
 
@@ -152,7 +288,8 @@ class PresetService:
             sections_json=[PresetSection(**s) for s in _parse_json(row.sections_json, [])],
             frontmatter_json=_parse_json(row.frontmatter_json, {}),
             style_rules=_parse_json(row.style_rules, []),
-            is_system=bool(row.is_system), version=row.version,
+            is_system=bool(row.is_system), is_builtin=row.id in BUILTIN_PRESET_IDS,
+            version=row.version,
             created_at=row.created_at, updated_at=row.updated_at,
         )
 
@@ -185,30 +322,100 @@ class PresetService:
 
     # ---------- 播种 ----------
 
+    @staticmethod
+    def _apply_definition(row: PresetRow, data: dict) -> None:
+        """把内置定义写进一行（内容字段全覆盖，不动 version / 时间戳 / 退役标记）。"""
+        row.name = data["name"]
+        row.target_file_type = data["target_file_type"]
+        row.description = data["description"]
+        row.template_md = BUILTIN_TEMPLATES.get(data["id"]) or None
+        row.sections_json = json.dumps(data["sections"], ensure_ascii=False)
+        row.frontmatter_json = json.dumps(data["frontmatter"], ensure_ascii=False)
+        row.style_rules = json.dumps(data["style_rules"], ensure_ascii=False)
+
+    @classmethod
+    def _new_builtin_row(cls, data: dict) -> PresetRow:
+        """构造一条内置预设行（is_system=0：与用户预设同等可编辑、可删除）。"""
+        row = PresetRow(id=data["id"], is_system=0, version=1)
+        cls._apply_definition(row, data)
+        return row
+
+    @staticmethod
+    def _matches_definition(row: PresetRow, data: dict) -> bool:
+        """库中该预设的内容是否与给定定义一致（判定「用户改过没有」/「已是这一版」）。
+
+        只比对内容字段，不含 template_md：老安装的 template_md 可能由「存量回填」
+        自动合成，与内置模板常量不同，不能当改动信号。
+        JSON 字段按解析后的结构比对，避免受写入时的空格 / 转义差异影响。
+        """
+        return (
+            row.name == data["name"]
+            and row.target_file_type == data["target_file_type"]
+            and row.description == data["description"]
+            and _parse_json(row.sections_json, []) == data["sections"]
+            and _parse_json(row.frontmatter_json, {}) == data["frontmatter"]
+            and _parse_json(row.style_rules, []) == data["style_rules"]
+        )
+
     def seed_builtins(self) -> None:
-        """首次启动播种 4 个默认预设（仅当 presets 表为空）。
+        """播种内置预设（启动时调用）。
 
-        不做系统/用户区分：默认预设与用户预设完全一致，可自由修改/删除，
-        删除后不会在下次启动时被重建。
+        - 首次启动（presets 表为空）→ 按当前 BUILTIN_PRESETS 全量播种
+        - 存量安装（表非空）→ 三件事，且都只作用于**内容仍是内置定义**的预设
+          （用户改过的一律不动，那是用户自己的资产）：
+          ① 补种 BUILTIN_PRESETS_ADDED（随版本新增的）
+          ② 刷新 BUILTIN_PRESETS_REFRESHED（内容有更新的，覆盖为新定义）
+          ③ 退役 BUILTIN_PRESETS_RETIRED（已下线的，标记 retired_at）
+          不重建用户已删除的历史内置预设
+        - 存量回填：早期版本内置预设只有 sections_json，template_md 为空则用内置
+          模板文档补齐（保留用户已改内容）
 
-        另对存量数据回填 template_md：早期版本内置预设只有 sections_json，
-        此处若发现内置预设 template_md 为空则用内置模板文档补齐（不覆盖用户已改内容）。
+        所有内置预设 is_system=0，即与用户预设同等可编辑、可自由删除。
+        播种/补种时写入 v1 版本快照，该快照同时充当「已补种」标记：
+        用户日后删掉它，启动流程不会再塞回来（删除即视为已知悉并拒绝）。
         """
         with self.db.session() as s:
             if s.query(PresetRow).count() == 0:
                 for data in BUILTIN_PRESETS:
-                    template_md = BUILTIN_TEMPLATES.get(data["id"], "")
-                    s.add(PresetRow(
-                        id=data["id"], name=data["name"], target_file_type=data["target_file_type"],
-                        description=data["description"],
-                        template_md=template_md or None,
-                        sections_json=json.dumps(data["sections"], ensure_ascii=False),
-                        frontmatter_json=json.dumps(data["frontmatter"], ensure_ascii=False),
-                        style_rules=json.dumps(data["style_rules"], ensure_ascii=False),
-                        is_system=0, version=1,
-                    ))
+                    row = self._new_builtin_row(data)
+                    s.add(row)
+                    s.flush()
+                    self._save_version(s, row)
                 s.commit()
                 return
+            # ① 存量安装：补种本版本新增的内置预设；已有版本快照说明补种过（用户后来删了）
+            for data in BUILTIN_PRESETS:
+                preset_id = data["id"]
+                if preset_id not in BUILTIN_PRESETS_ADDED or s.get(PresetRow, preset_id) is not None:
+                    continue
+                seeded = (s.query(PresetVersionRow)
+                          .filter(PresetVersionRow.preset_id == preset_id).count())
+                if seeded:
+                    continue
+                row = self._new_builtin_row(data)
+                s.add(row)
+                s.flush()
+                self._save_version(s, row)
+            # ② 存量安装：内置预设内容随版本更新（仅在内容仍是上一版发布的样子时覆盖）
+            for preset_id, prev_def in BUILTIN_PRESETS_REFRESHED.items():
+                row = s.get(PresetRow, preset_id)
+                data = next((d for d in BUILTIN_PRESETS if d["id"] == preset_id), None)
+                if row is None or data is None or self._matches_definition(row, data):
+                    continue
+                if not self._matches_definition(row, prev_def):
+                    continue
+                self._apply_definition(row, data)
+                row.version += 1
+                row.updated_at = int(time.time())
+                self._save_version(s, row)
+            # ③ 存量安装：退役已下线的内置预设（仅在内容仍是最后一版发布的样子时隐藏）
+            for preset_id, last_def in BUILTIN_PRESETS_RETIRED.items():
+                row = s.get(PresetRow, preset_id)
+                if row is None or row.retired_at is not None:
+                    continue
+                if self._matches_definition(row, last_def):
+                    row.retired_at = int(time.time())
+                    row.updated_at = int(time.time())
             # 存量回填：内置预设 template_md 为空 → 由现有 sections 反向合成模板
             # （保留用户已编辑的章节，不覆盖）
             for preset_id in BUILTIN_TEMPLATES:
@@ -224,6 +431,54 @@ class PresetService:
             s.commit()
 
     @staticmethod
+    def _yaml_str(value: str) -> str:
+        """把自由文本安全地写成 YAML 双引号标量（JSON 字符串与 YAML flow 标量兼容）。"""
+        return json.dumps(value, ensure_ascii=False)
+
+    @staticmethod
+    def _compose_template(
+        *,
+        name: str,
+        target_type: str,
+        section_titles: list[str],
+        body: str,
+        section_heading_level: int = 2,
+        section_order: str = "strict",
+        max_heading_level: int = 3,
+        frontmatter_required: bool = False,
+        title: str | None = None,
+    ) -> str:
+        """拼装标准模板文档：YAML 规则 frontmatter +（可选 H1 标题）+ 正文骨架。"""
+        required = "\n".join(f"    - title: {t}" for t in section_titles)
+        title_block = f"# {title}\n\n" if title else ""
+        return (
+            "---\n"
+            "schema: soulforge.template/v1\n"
+            f"name: {PresetService._yaml_str(name)}\n"
+            f"target_file_type: {target_type}\n"
+            "structure:\n"
+            f"  section_heading_level: {section_heading_level}\n"
+            "  required_sections:\n"
+            f"{required}\n"
+            f"  section_order: {section_order}\n"
+            "elements:\n"
+            "  heading_style: atx\n"
+            "  list_style: \"-\"\n"
+            "  heading_blank_line: true\n"
+            "  paragraph_blank_line: true\n"
+            "typography:\n"
+            f"  max_heading_level: {max_heading_level}\n"
+            "  allow_bold: true\n"
+            "  allow_italic: true\n"
+            "  forbid_emoji: true\n"
+            "  forbid_raw_html: true\n"
+            "modules:\n"
+            f"  frontmatter: {'required' if frontmatter_required else 'optional'}\n"
+            "---\n\n"
+            f"{title_block}{body}\n"
+        )
+
+    @staticmethod
     def _synthesize_template(name: str, target_type: str, sections: list[PresetSection]) -> str:
         """旧数据（无 template_md）→ 由 sections_json 反向生成模板文档。"""
         secs = sorted(sections, key=lambda x: x.order)
@@ -233,40 +488,30 @@ class PresetService:
             + f"- 在此填写{sec.title}内容"
             for sec in secs
         )
-        required = "\n".join(f"    - title: {sec.title}" for sec in secs)
-        return (
-            "---\n"
-            "schema: soulforge.template/v1\n"
-            f"target_file_type: {target_type}\n"
-            "structure:\n"
-            "  section_heading_level: 2\n"
-            "  required_sections:\n"
-            f"{required}\n"
-            "  section_order: strict\n"
-            "elements:\n"
-            "  heading_style: atx\n"
-            "  list_style: \"-\"\n"
-            "  heading_blank_line: true\n"
-            "  paragraph_blank_line: true\n"
-            "typography:\n"
-            "  max_heading_level: 3\n"
-            "  allow_bold: true\n"
-            "  allow_italic: true\n"
-            "  forbid_emoji: true\n"
-            "  forbid_raw_html: true\n"
-            "modules:\n"
-            "  frontmatter: optional\n"
-            "---\n\n"
-            f"# {name}\n\n{body}\n"
+        return PresetService._compose_template(
+            name=name, target_type=target_type,
+            section_titles=[sec.title for sec in secs], body=body, title=name,
         )
 
     # ---------- CRUD ----------
 
-    def list(self, target_file_type: str | None = None) -> list[PresetSummary]:
+    def list(self, target_file_type: str | None = None,
+             scope: str = SCOPE_ALL) -> list[PresetSummary]:
+        """列出可选预设。已退役的内置预设（retired_at 非空）不出现，但 get() 仍可取到。
+
+        `scope=workbench` → 排除大模型专用预设（见 `DAILY_PRESET_TYPE`）：
+        主工作台「应用预设」与设置页「文档预设」都走这一档，两类预设因此不会混淆。
+        """
+        if scope not in SCOPES:
+            raise BadRequestError(
+                f"非法 scope：{scope!r}，可选 {'/'.join(SCOPES)}",
+                details={"scope": scope, "allowed": list(SCOPES)})
         with self.db.session() as s:
-            q = s.query(PresetRow)
+            q = s.query(PresetRow).filter(PresetRow.retired_at.is_(None))
             if target_file_type:
                 q = q.filter(PresetRow.target_file_type == target_file_type)
+            if scope == SCOPE_WORKBENCH:
+                q = q.filter(PresetRow.target_file_type != DAILY_PRESET_TYPE)
             rows = q.order_by(PresetRow.is_system.desc(), PresetRow.name).all()
             return [self._row_to_summary(r) for r in rows]
 
@@ -297,6 +542,57 @@ class PresetService:
             self._save_version(s, row)
             s.commit()
             return self._row_to_detail(row)
+
+    def create_from_document(self, payload: PresetFromDocument) -> Preset:
+        """由当前文档生成预设（编辑栏「设为预设」）。
+
+        以编辑器当前内容作为模板正文；章节清单取自文档中指定层级的标题，
+        `required_sections` 作为其子集过滤（顺序仍按文档出现顺序）。
+        """
+        body = payload.content.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+        size = len(body.encode("utf-8"))
+        if size > MAX_TEMPLATE_BYTES:
+            raise BadRequestError(
+                f"文档 {size // 1024}KB 超过 {MAX_TEMPLATE_BYTES // 1024}KB 上限："
+                "预设模板全文会注入 AI 提示词，请先精简文档再存为预设",
+                details={"size_bytes": size, "limit_bytes": MAX_TEMPLATE_BYTES})
+
+        headings = _scan_headings(body)
+        level = payload.section_heading_level
+        detected: list[str] = []
+        for lv, title in headings:
+            if lv == level and title not in detected:
+                detected.append(title)
+        if not detected:
+            raise BadRequestError(
+                f"文档中未发现 {'#' * level} 级标题，无法据此生成预设章节",
+                details={"section_heading_level": level})
+        if payload.required_sections:
+            wanted = set(payload.required_sections)
+            required = [t for t in detected if t in wanted]
+            if not required:
+                raise BadRequestError(
+                    "所勾选的必填章节在文档中不存在，请重新选择",
+                    details={"required_sections": payload.required_sections})
+        else:
+            required = detected
+
+        template_md = self._compose_template(
+            name=payload.name,
+            target_type=payload.target_file_type,
+            section_titles=required,
+            body=body,
+            section_heading_level=level,
+            section_order=payload.section_order,
+            max_heading_level=max([lv for lv, _ in headings] + [level]),
+            frontmatter_required=payload.require_frontmatter,
+        )
+        return self.create(PresetCreate(
+            name=payload.name,
+            target_file_type=payload.target_file_type,
+            description=payload.description,
+            template_md=template_md,
+        ))
 
     def update(self, preset_id: str, payload: PresetUpdate) -> Preset:
         """更新预设，version 自增 +1（所有预设均可修改全部字段）。"""
@@ -407,8 +703,12 @@ class PresetService:
             parts.append("")
         return "\n".join(parts)
 
-    def _rules_for(self, preset: Preset) -> TemplateRules:
-        """解析预设的模板规则；无模板文档时由 sections 兜底构造。"""
+    def rules_for(self, preset: Preset) -> TemplateRules:
+        """解析预设的模板规则；无模板文档时由 sections 兜底构造。
+
+        公开方法：AI 整理（M13）与工作日志归并（M15）都要用同一口径解析预设规则，
+        避免各服务各写一份副本。
+        """
         if preset.template_md:
             return parse_template(preset.template_md)
         return TemplateRules(
@@ -430,7 +730,7 @@ class PresetService:
         """
         self._cleanup_expired()
         preset = self.get(preset_id)
-        rules = self._rules_for(preset)
+        rules = self.rules_for(preset)
         current = self.file_manager.read_text(agent_id, file_path)
         filled = self._fill_missing_sections(current, preset, heading_level=rules.section_heading_level)
         proposed, format_report = FormatValidator().validate_and_fix(filled, rules)

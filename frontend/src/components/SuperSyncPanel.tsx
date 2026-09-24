@@ -448,9 +448,14 @@ export function SuperSyncPanel({ agents }: SuperSyncPanelProps) {
                 </div>
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'flex-end' }}>
                   {dirty && <span className="muted" style={{ fontSize: 12 }}>有未保存修改</span>}
-                  <button className="btn btn-primary" disabled={!dirty || saving} onClick={() => void saveConfig()}>
+                  <button
+                    className="btn btn-primary"
+                    disabled={!dirty || saving}
+                    onClick={() => void saveConfig()}
+                    title="保存同步范围（参与同步的 Agent 与保留天数）"
+                  >
                     {saving && <span className="spinner" />}
-                    保存同步范围
+                    保存范围
                   </button>
                 </div>
               </div>

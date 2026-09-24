@@ -11,9 +11,11 @@ import time
 from dataclasses import dataclass, field
 
 import httpx
+from loguru import logger
 from sqlalchemy import inspect, text
 
 from app.core.errors import (
+    LLMOutputTruncatedError,
     LLMRequestError,
     ProviderConflictError,
     ProviderNotFoundError,
@@ -49,6 +51,23 @@ class LLMResponse:
     content: str
     usage: LLMTokenUsage = field(default_factory=LLMTokenUsage)
     cost_estimate_usd: float = 0.0
+    # 服务商给的结束原因（OpenAI: finish_reason / Anthropic: stop_reason）。
+    # 意义：`length` / `max_tokens` 表示**输出被 max_tokens 截断**——文档不可能写完，
+    # 与「模型写错了」是两回事，必须分开报错（见 LLMOutputTruncatedError）。
+    finish_reason: str | None = None
+
+    @property
+    def truncated(self) -> bool:
+        """输出是否因 max_tokens 用尽被截断。"""
+        return (self.finish_reason or "").lower() in _TRUNCATED_REASONS
+
+
+# 各协议的「截断」结束原因（OpenAI: length；Anthropic: max_tokens）
+_TRUNCATED_REASONS = frozenset({"length", "max_tokens"})
+
+# 输出被截断后的自动重试：预算在本次生效值上翻倍（封顶），且只重试一次。
+# 再截断就如实抛 LLMOutputTruncatedError —— 说明 provider 配置的上限本身不够大。
+_TRUNCATION_RETRY_CEILING = 32768
 
 
 # 成本估算（粗粒度）：prompt $0.01/M token、completion $0.03/M token，量级参考 GPT-4o
@@ -68,6 +87,42 @@ class LLMClient:
 
     async def chat(self, messages: list[dict], max_tokens: int | None = None,
                    temperature: float | None = None) -> LLMResponse:
+        """调用模型；输出被 max_tokens 截断时以翻倍预算自动重试一次，仍截断则抛错。
+
+        为什么必须把「截断」单独识别：`finish_reason = length / max_tokens` 说明文档根本
+        没写完，若照旧交给强规则校验，只会得到「章节缺失」这类误导性结论（见 UI-SPECS
+        「不得谎报失败原因」）。
+        """
+        budget = max_tokens or self.provider.max_tokens
+        resp = await self._complete(messages, budget, temperature)
+        if not resp.truncated:
+            return resp
+
+        retry_budget = min(budget * 2, _TRUNCATION_RETRY_CEILING)
+        if retry_budget > budget:
+            logger.warning(f"provider {self.provider.id} 输出被 max_tokens={budget} 截断，"
+                           f"以 {retry_budget} 自动重试一次")
+            try:
+                resp = await self._complete(messages, retry_budget, temperature)
+            except LLMRequestError as e:
+                # 重试预算超出模型上限被上游拒绝 → 仍按「截断」上报，不掩盖原始原因
+                logger.warning(f"截断重试（max_tokens={retry_budget}）被上游拒绝：{e}")
+            else:
+                if not resp.truncated:
+                    return resp
+                budget = retry_budget
+
+        raise LLMOutputTruncatedError(
+            f"模型输出被 max_tokens={budget} 截断（finish_reason={resp.finish_reason}），文档没有写完。"
+            f"请到「设置 → LLM Provider」把该 provider 的 max_tokens 调大后重跑。",
+            details={"provider": self.provider.id, "max_tokens": budget,
+                     "finish_reason": resp.finish_reason,
+                     "completion_tokens": resp.usage.completion_tokens},
+        )
+
+    async def _complete(self, messages: list[dict], max_tokens: int,
+                        temperature: float | None) -> LLMResponse:
+        """按 protocol 分发到对应适配器。"""
         if self.provider.protocol == "openai-completions":
             return await self._openai_completions(messages, max_tokens, temperature)
         if self.provider.protocol == "anthropic-messages":
@@ -85,14 +140,16 @@ class LLMClient:
         }
         headers = {"Authorization": f"Bearer {self.provider.api_key}", "Content-Type": "application/json"}
         data = await self._post(url, headers, payload)
-        content = data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        content = choice["message"]["content"]
         u = data.get("usage", {})
         usage = LLMTokenUsage(
             prompt_tokens=u.get("prompt_tokens", 0),
             completion_tokens=u.get("completion_tokens", 0),
             total_tokens=u.get("total_tokens", 0),
         )
-        return LLMResponse(content=content, usage=usage, cost_estimate_usd=_estimate_cost(usage))
+        return LLMResponse(content=content, usage=usage, cost_estimate_usd=_estimate_cost(usage),
+                           finish_reason=choice.get("finish_reason"))
 
     async def _anthropic_messages(self, messages: list[dict], max_tokens: int | None,
                                   temperature: float | None) -> LLMResponse:
@@ -119,7 +176,8 @@ class LLMClient:
         prompt = u.get("input_tokens", 0)
         completion = u.get("output_tokens", 0)
         usage = LLMTokenUsage(prompt_tokens=prompt, completion_tokens=completion, total_tokens=prompt + completion)
-        return LLMResponse(content=content, usage=usage, cost_estimate_usd=_estimate_cost(usage))
+        return LLMResponse(content=content, usage=usage, cost_estimate_usd=_estimate_cost(usage),
+                           finish_reason=data.get("stop_reason"))
 
     async def _post(self, url: str, headers: dict, payload: dict) -> dict:
         try:

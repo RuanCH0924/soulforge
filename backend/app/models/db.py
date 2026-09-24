@@ -104,6 +104,9 @@ class PresetRow(Base):
     style_rules: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_system: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 1=系统预设不可删
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # PUT 后自增
+    # 非空 = 该预设已退役（内置预设随版本下线）：不再出现在列表里，但行保留，
+    # 以免历史上引用它的批次 / AI 任务读取时报 404。见 preset_service.BUILTIN_PRESETS_RETIRED
+    retired_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False, default=_now)
     updated_at: Mapped[int] = mapped_column(Integer, nullable=False, default=_now, onupdate=_now)
 
@@ -111,7 +114,7 @@ class PresetRow(Base):
 class PresetVersionRow(Base):
     """预设版本历史（每次 create/update 保存一份快照，支持回溯）。
 
-    schema 见 docs/DATA-MODEL.md 2.5「version 自增，保留历史」。
+    schema 见 docs/DATA-MODEL.md 2.5 / 2.6「version 自增，保留历史」。
     """
 
     __tablename__ = "preset_versions"
@@ -126,7 +129,7 @@ class PresetVersionRow(Base):
 
 
 class LLMProviderRow(Base):
-    """LLM Provider 配置（Phase 2.5 · M12）。schema 见 docs/DATA-MODEL.md 2.6。
+    """LLM Provider 配置（Phase 2.5 · M12）。schema 见 docs/DATA-MODEL.md 2.7。
 
     API key 以 Fernet 密文存储（api_key_encrypted），任何响应都不回显明文。
     """
@@ -148,7 +151,7 @@ class LLMProviderRow(Base):
 
 
 class AIJobRow(Base):
-    """AI 整理任务（Phase 2.5 · M13）。schema 见 docs/DATA-MODEL.md 2.7。
+    """AI 整理任务（Phase 2.5 · M13）。schema 见 docs/DATA-MODEL.md 2.8。
 
     状态机：pending→running→awaiting_confirm→(applied|rejected|superseded)；失败→failed。
     """
@@ -181,6 +184,85 @@ class AIJobRow(Base):
     finished_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class DailyRunRow(Base):
+    """工作日志标准化批次（M15 · P2）。schema 见 docs/DATA-MODEL.md 2.9。
+
+    状态机：`planned`（已创建，正在逐日生成）→ `awaiting_confirm`（计划已出，等确认）
+    → `applied` / `partially_applied` / `needs_review`；另有 `rejected`（用户拒绝，未写入）、
+    `failed`（生成阶段整体失败：LLM 报错 / 超 token 预算）、`empty`（该范围没有可整理的日子）。
+
+    批次**不复用 `ai_jobs`**：后者是单文件语义，混用会污染既有状态机。
+    """
+
+    __tablename__ = "daily_runs"
+    __table_args__ = (
+        Index("idx_daily_runs_agent", "agent_id"),
+        Index("idx_daily_runs_status", "status"),
+        Index("idx_daily_runs_key", "idempotency_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # run-<uuid hex>
+    agent_id: Mapped[str] = mapped_column(String, nullable=False)
+    date_from: Mapped[str] = mapped_column(String, nullable=False)  # YYYY-MM-DD
+    date_to: Mapped[str] = mapped_column(String, nullable=False)
+    preset_id: Mapped[str] = mapped_column(String, nullable=False)
+    preset_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # 批次绑定的预设版本（可回溯）
+    provider_id: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String, nullable=False)  # 同键重复提交 → 复用既有批次
+    extra_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    days_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_budget: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0 = 不限
+    tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_estimate_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False, default=_now)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False, default=_now, onupdate=_now)
+    finished_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class DailyRunItemRow(Base):
+    """批次的逐日条目（M15 · P2）。schema 见 docs/DATA-MODEL.md 2.9。
+
+    一天一条：来源清单 + 归并内容 + diff + 拟删碎片 + 强规则报告 + 该日 token 成本。
+    `item_status`：`planned`（已生成计划）/ `failed`（生成失败）/ `blocked`（写前验收不过，未写入）
+    / `applied`（已写入且碎片已清理）/ `partially_applied`（日文件已写，碎片删失败）/ `skipped`（人工跳过）。
+    """
+
+    __tablename__ = "daily_run_items"
+    __table_args__ = (
+        Index("idx_daily_run_items_run", "run_id"),
+        UniqueConstraint("run_id", "date", name="uq_daily_run_items_run_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String, nullable=False)
+    date: Mapped[str] = mapped_column(String, nullable=False)
+    target_path: Mapped[str] = mapped_column(String, nullable=False)  # memory/YYYY-MM-DD.md
+    source_hashes_json: Mapped[str] = mapped_column(Text, nullable=False)  # {path: sha256}，乐观锁用
+    sources_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # 各来源的体积/剥壳事实
+    fragments_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # 拟删碎片路径清单
+    output_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    unified_diff: Mapped[str | None] = mapped_column(Text, nullable=True)
+    format_report_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lint_warnings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 非空 = 模型判定「本日无可归档内容」（值为一句话理由）：该日不产出日文件，
+    # 只清理 B/C 碎片；A 类主文件 memory/YYYY-MM-DD.md 保持不动
+    empty_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decision: Mapped[str] = mapped_column(String, nullable=False, default="pending")  # pending | applied | skipped
+    item_status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    applied_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    backup_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_estimate_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False, default=_now)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False, default=_now, onupdate=_now)
+
+
 class Database:
     """单进程单连接 SQLite，WAL 模式。"""
 
@@ -207,7 +289,8 @@ class Database:
     def _migrate(self) -> None:
         """轻量迁移：为已存在的旧表补齐新增列（create_all 不会改动已存在的表）。"""
         columns = {
-            "presets": [("template_md", "TEXT")],
+            "presets": [("template_md", "TEXT"), ("retired_at", "INTEGER")],
+            "daily_run_items": [("empty_reason", "TEXT")],
         }
         with self.engine.connect() as conn:
             for table, adds in columns.items():

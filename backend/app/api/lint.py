@@ -21,6 +21,16 @@ def lint_all(reg: Registry = Depends(get_registry)):
     return ok({"results": results, "agents": len(results)})
 
 
+@router.get("/rules")
+def lint_rules(reg: Registry = Depends(get_registry)):
+    """列出全部 lint 规则（供 UI 展示「在检查什么」）。
+
+    注意：必须声明在 `/{agent_id}` 之前，否则会被当成 agent_id 吃掉。
+    """
+    rules = reg.lint.rule_catalog()
+    return ok({"rules": [r.model_dump() for r in rules], "count": len(rules)})
+
+
 @router.get("/{agent_id}")
 def lint_agent(agent_id: str, reg: Registry = Depends(get_registry)):
     """对单个 Agent 跑 lint。"""

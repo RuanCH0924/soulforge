@@ -26,7 +26,8 @@ export function ApplyPresetModal({ agentId, filePath, onClose, onDone }: ApplyPr
 
   useEffect(() => {
     api
-      .listPresets()
+      // scope=workbench：日志标准化预设专供大模型归并工作日志，不在本处列出
+      .listPresets(undefined, 'workbench')
       .then((list) => {
         setPresets(list);
         if (list.length > 0) setSelected(list[0].id);
@@ -101,6 +102,11 @@ export function ApplyPresetModal({ agentId, filePath, onClose, onDone }: ApplyPr
             <div className="state-block">
               <div className="spinner-lg" />
               <div>正在加载预设...</div>
+            </div>
+          ) : presets.length === 0 ? (
+            <div className="hint">
+              没有可用于主工作台的预设。工作日志（WORKLOG）类预设专供大模型归并日志，
+              请在「业务工具 → 日志标准化」界面使用。
             </div>
           ) : (
             <div className="checkbox-grid" style={{ maxHeight: 260 }}>

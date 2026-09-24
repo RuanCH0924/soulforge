@@ -7,8 +7,8 @@ import { useSettings } from '../hooks/useSettings';
 import { useToast } from '../hooks/useToast';
 import type { FileContent, LintWarning } from '../types';
 import { formatClock } from '../utils/format';
+import { scanHeadings } from '../utils/markdown';
 import '../monaco'; // 本地化加载 monaco（不依赖 CDN，避免加载转圈）
-import { Dropdown } from './Dropdown';
 import { MarkdownPreview } from './MarkdownPreview';
 
 type MonacoEditor = Parameters<OnMount>[0];
@@ -46,6 +46,10 @@ interface EditorPaneProps {
   onExport: () => void;
   onApplyPreset: () => void;
   onApplyAI: () => void;
+  /** 把当前文档存为文档预设（「设为预设」） */
+  onSaveAsPreset: () => void;
+  /** 跳转到 lint 规则清单（数据中心 → 检查报告） */
+  onOpenLintRules: () => void;
   onLintDone: (count: number) => void;
 }
 
@@ -62,29 +66,6 @@ function loadViewMode(): EditorMode {
 function estimateTokens(text: string): number {
   const cjk = (text.match(/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uAC00-\uD7AF]/g) ?? []).length;
   return Math.round(cjk + (text.length - cjk) / 4);
-}
-
-interface OutlineItem {
-  level: number;
-  text: string;
-  line: number;
-}
-
-/** 解析 Markdown 标题大纲（跳过围栏代码块内的 `#`） */
-function parseOutline(md: string): OutlineItem[] {
-  const out: OutlineItem[] = [];
-  let inFence = false;
-  md.split('\n').forEach((raw, i) => {
-    const line = raw.trimEnd();
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence;
-      return;
-    }
-    if (inFence) return;
-    const m = /^(#{1,6})\s+(.+)$/.exec(line);
-    if (m) out.push({ level: m[1].length, text: m[2].replace(/\s*#+\s*$/, '').trim(), line: i + 1 });
-  });
-  return out;
 }
 
 /** 用标记包裹/取消包裹选区（加粗、斜体） */
@@ -127,6 +108,8 @@ export function EditorPane({
   onExport,
   onApplyPreset,
   onApplyAI,
+  onSaveAsPreset,
+  onOpenLintRules,
   onLintDone,
 }: EditorPaneProps) {
   const { resolvedTheme } = useSettings();
@@ -150,7 +133,7 @@ export function EditorPane({
   /** 预览模式 DOM 宿主（供大纲在预览中滚动定位） */
   const previewHostRef = useRef<HTMLDivElement | null>(null);
 
-  const outline = useMemo(() => parseOutline(content), [content]);
+  const outline = useMemo(() => scanHeadings(content), [content]);
   const tokens = useMemo(() => estimateTokens(content), [content]);
 
   function switchMode(next: EditorMode) {
@@ -360,14 +343,30 @@ export function EditorPane({
           {linting && <span className="spinner" />}
           检查
         </button>
-        <Dropdown
-          trigger={<button className="btn" type="button">整理 ▾</button>}
-          items={[
-            { label: '应用预设', hint: '补齐缺失章节', onSelect: onApplyPreset },
-            { label: 'AI 整理', hint: 'LLM 重写后 diff 确认', onSelect: onApplyAI },
-            { label: '导出当前文件', onSelect: onExport },
-          ]}
-        />
+        <button
+          className="btn"
+          onClick={onSaveAsPreset}
+          title="把当前文档存为文档预设（结构模板），可在「系统配置 → 文档预设」中查看与管理"
+        >
+          设为预设
+        </button>
+        <button
+          className="btn"
+          onClick={onApplyPreset}
+          title="按文档预设补齐缺失章节（plan → diff 预览 → 确认后写入）"
+        >
+          应用预设
+        </button>
+        <button
+          className="btn"
+          onClick={onApplyAI}
+          title="AI 整理：调用 LLM 按预设重写文档（plan → diff 预览 → 确认后写入）"
+        >
+          AI 整理
+        </button>
+        <button className="btn" onClick={onExport} title="导出当前文件">
+          导出文件
+        </button>
         <button
           className="btn"
           onClick={() => setOutlineOpen((v) => !v)}
@@ -407,7 +406,7 @@ export function EditorPane({
               预览保存会规范化 Markdown 格式
             </span>
           ) : (
-            <span className="muted" style={{ fontSize: 11 }}>
+            <span className="muted kbd-hint" style={{ fontSize: 11 }}>
               Ctrl+B 加粗 · Ctrl+I 斜体 · Ctrl+S 保存
             </span>
           )}
@@ -472,9 +471,18 @@ export function EditorPane({
           <div className="lint-panel">
             <div className="lint-panel-header">
               <span>Lint 检查{warnings.length > 0 ? `（${warnings.length} 条警告）` : ''}</span>
-              <button className="btn btn-ghost btn-sm" onClick={() => setLintOpen(false)}>
-                收起
-              </button>
+              <span style={{ display: 'flex', gap: 6, flex: 'none' }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={onOpenLintRules}
+                  title="查看内置 lint 规则清单（数据中心 → 检查报告）"
+                >
+                  查看规则
+                </button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setLintOpen(false)}>
+                  收起
+                </button>
+              </span>
             </div>
             <div className="lint-panel-body">
               {linting ? (

@@ -102,8 +102,12 @@ export function HistoryModal({ agentId, path, onClose, onRolledBack }: HistoryMo
                 </div>
                 <div className="item-sub">{b.reason || 'auto-write'}</div>
               </div>
-              <button className="btn btn-danger btn-sm" onClick={() => void openRollback(b)}>
-                回滚到此版本
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={() => void openRollback(b)}
+                title="回滚到此版本（整篇覆盖当前文件）"
+              >
+                回滚版本
               </button>
             </div>
           ))}

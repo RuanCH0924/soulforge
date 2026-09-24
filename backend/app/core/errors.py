@@ -134,3 +134,40 @@ class FormatViolationError(SoulforgeError):
 
     http_status = 422
     code = "FORMAT_VIOLATION"
+
+
+class DailySourceTooLargeError(SoulforgeError):
+    """工作日志来源过大（分块摘要后仍超上限）→ 该日转人工复核，不做无上限的 token 消耗。"""
+
+    http_status = 422
+    code = "DAILY_SOURCE_TOO_LARGE"
+
+
+class LLMOutputTruncatedError(SoulforgeError):
+    """模型输出被 max_tokens 截断（响应 finish_reason = length / max_tokens）→ 文档不可能写完。
+
+    与「强规则校验未通过」是两回事：前者是配额不够，后者是内容不合规。
+    分开报错是为了让用户知道该去调 provider 的 `max_tokens`，而不是反复重跑。
+    """
+
+    http_status = 422
+    code = "LLM_OUTPUT_TRUNCATED"
+
+
+class DailyRunNotFoundError(SoulforgeError):
+    http_status = 404
+    code = "DAILY_RUN_NOT_FOUND"
+
+
+class DailyRunStatusError(SoulforgeError):
+    """批次状态机非法流转（如对非 awaiting_confirm 的批次执行 apply）。"""
+
+    http_status = 409
+    code = "DAILY_RUN_STATUS"
+
+
+class DailyRunDisabledError(SoulforgeError):
+    """执行被全局开关关闭（config.toml 的 daily_standardizer.dry_run_only=true）→ 只允许出计划。"""
+
+    http_status = 403
+    code = "DAILY_RUN_DISABLED"

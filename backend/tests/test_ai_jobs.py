@@ -56,6 +56,16 @@ FIXABLE_BAD_OUTPUT = (
     "## 核心边界\n\n隐私。\n"
 )
 
+# 病灶复现：正文合规，但前面多了一段模型「思考过程 / 规则复述」
+PREAMBLE_OUTPUT = (
+    "让我仔细分析这个任务：\n"
+    "格式化规则要求：\n"
+    "文件类型：SOUL\n"
+    "章节标题层级：##（二级标题）\n"
+    "章节顺序：核心行为准则 → 工作态度和原则 → 学习与连续性 → 核心边界\n\n"
+    + GOOD_OUTPUT
+)
+
 
 def _setup(client):
     client.post("/api/llm/providers", json=PROVIDER)
@@ -104,6 +114,27 @@ async def _fake_chat_fixable_bad(self, messages, max_tokens=None, temperature=No
         content=FIXABLE_BAD_OUTPUT,
         usage=LLMTokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
         cost_estimate_usd=0.0001,
+    )
+
+
+async def _fake_chat_preamble(self, messages, max_tokens=None, temperature=None):
+    return LLMResponse(
+        content=PREAMBLE_OUTPUT,
+        usage=LLMTokenUsage(prompt_tokens=120, completion_tokens=60, total_tokens=180),
+        cost_estimate_usd=0.003,
+    )
+
+
+CAPTURED_PROMPTS: list[list[dict]] = []
+
+
+async def _fake_chat_capture(self, messages, max_tokens=None, temperature=None):
+    """截获发给 LLM 的 messages（用于断言 prompt 组装），返回合规输出。"""
+    CAPTURED_PROMPTS.append(messages)
+    return LLMResponse(
+        content=GOOD_OUTPUT,
+        usage=LLMTokenUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150),
+        cost_estimate_usd=0.0025,
     )
 
 
@@ -237,6 +268,29 @@ def test_auto_fix_produces_compliant_output(client, monkeypatch):
     assert "## 核心行为准则" in content
 
 
+def test_preamble_stripped_from_output(client, monkeypatch):
+    """模型在正文前输出「思考过程 / 规则复述」时，必须在进入预览前被剥离。"""
+    _setup(client)
+    monkeypatch.setattr("app.services.llm_registry.LLMClient.chat", _fake_chat_preamble)
+    job_id = _create_job(client)
+    job = _wait_job(client, job_id)
+
+    assert job["status"] == "awaiting_confirm"
+    output = job["output_content"]
+    assert output == GOOD_OUTPUT.strip()          # 与纯正文输出完全一致
+    assert "让我仔细分析" not in output
+    assert "格式化规则要求" not in output
+    assert "文件类型：SOUL" not in output
+    assert output.startswith("# 整理后")           # 第一行直接进入正文
+    assert job["diff_plan_json"]["format_report"]["ok"] is True
+
+    res = client.post(f"/api/ai/jobs/{job_id}/apply")
+    assert res.status_code == 200
+    content = client.get("/api/agents/alpha/files/SOUL.md").json()["data"]["content"]
+    assert "让我仔细分析" not in content
+    assert content.startswith("# 整理后")
+
+
 def test_large_file_rejected(client):
     _setup(client)
     big = "# 大文件\n\n" + "x" * (31 * 1024)
@@ -310,3 +364,30 @@ def test_get_job_not_found(client):
     res = client.get("/api/ai/jobs/ghost")
     assert res.status_code == 404
     assert res.json()["error"]["code"] == "AI_JOB_NOT_FOUND"
+
+
+# ---------- prompt 组装 ----------
+
+def test_style_rules_injected_into_prompt(client, monkeypatch):
+    """预设的「风格与内容规则」（style_rules）必须进入 prompt。
+
+    回归：此前 _build_prompt 只注入 template_md，style_rules 只存库未使用，
+    与 docs/DEVELOPMENT.md 模块 M13 的声明不符。
+    """
+    _setup(client)
+    CAPTURED_PROMPTS.clear()
+    monkeypatch.setattr("app.services.llm_registry.LLMClient.chat", _fake_chat_capture)
+    job_id = _create_job(client)  # 使用内置 preset-soul-std（style_rules 非空）
+    _wait_job(client, job_id)
+
+    assert CAPTURED_PROMPTS, "未截获到 LLM 调用"
+    system_prompt = CAPTURED_PROMPTS[-1][0]["content"]
+    user_prompt = CAPTURED_PROMPTS[-1][-1]["content"]
+    assert "整理助手" in system_prompt
+
+    assert "【风格与内容规则（来自预设，必须逐条遵守）】" in user_prompt
+    assert "1. emoji-in-section-title=false" in user_prompt
+    assert "3. 必须带应用范例" in user_prompt
+    # 格式化规则段仍在（两段并存，不是替换）
+    assert "【格式化规则（来自模板文档，必须逐条遵守）】" in user_prompt
+    assert "【模板文档全文（含章节骨架示例，重排时按此结构组织）】" in user_prompt

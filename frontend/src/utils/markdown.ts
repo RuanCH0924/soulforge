@@ -100,3 +100,30 @@ export function markdownFromHtml(html: string): string {
   if (!html || !html.trim()) return '';
   return turndown.turndown(html);
 }
+
+export interface MarkdownHeading {
+  level: number;
+  text: string;
+  /** 1-based 行号 */
+  line: number;
+}
+
+/**
+ * 扫描 Markdown 标题（跳过围栏代码块内的 `#`），保持文档顺序。
+ * 供编辑器大纲与「设为预设」的章节清单共用。
+ */
+export function scanHeadings(markdown: string): MarkdownHeading[] {
+  const out: MarkdownHeading[] = [];
+  let inFence = false;
+  markdown.split('\n').forEach((raw, i) => {
+    const line = raw.trimEnd();
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      return;
+    }
+    if (inFence) return;
+    const m = /^(#{1,6})\s+(.+)$/.exec(line);
+    if (m) out.push({ level: m[1].length, text: m[2].replace(/\s*#+\s*$/, '').trim(), line: i + 1 });
+  });
+  return out;
+}

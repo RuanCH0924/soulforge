@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useToast } from '../hooks/useToast';
 import { Modal } from './Modal';
-import type { LintWarning } from '../types';
+import type { LintRuleInfo, LintWarning } from '../types';
 
 interface GlobalLintModalProps {
   onClose: () => void;
@@ -16,6 +16,10 @@ export function GlobalLintModal({ onClose, onOpenResult, embedded }: GlobalLintM
   const [warnings, setWarnings] = useState<LintWarning[]>([]);
   const [checkedFiles, setCheckedFiles] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [rules, setRules] = useState<LintRuleInfo[]>([]);
+  // null = 未手动干预：无警告时自动展开（「什么都没查到」时最需要知道查了什么）
+  const [rulesOpen, setRulesOpen] = useState<boolean | null>(null);
+  const showRules = rulesOpen ?? (warnings.length === 0);
 
   async function load() {
     setLoading(true);
@@ -36,8 +40,19 @@ export function GlobalLintModal({ onClose, onOpenResult, embedded }: GlobalLintM
     }
   }
 
+  /** 规则文案由后端下发，前端不写死 */
+  async function loadRules() {
+    try {
+      setRules((await api.lintRules()).rules);
+    } catch {
+      // 规则清单拉取失败不影响检查结果展示
+      setRules([]);
+    }
+  }
+
   useEffect(() => {
     load();
+    void loadRules();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -55,6 +70,55 @@ export function GlobalLintModal({ onClose, onOpenResult, embedded }: GlobalLintM
         </button>
       }
     >
+      {rules.length > 0 && (
+        <div className="lint-rules">
+          <button
+            type="button"
+            className="lint-rules-head"
+            aria-expanded={showRules}
+            onClick={() => setRulesOpen(!showRules)}
+          >
+            <span className="lint-rules-caret">{showRules ? '▾' : '▸'}</span>
+            <span>检查规则（{rules.length} 条）</span>
+            <span className="muted" style={{ marginLeft: 'auto', fontWeight: 400 }}>
+              {showRules ? '收起' : '展开'}
+            </span>
+          </button>
+          {showRules && (
+            <div className="lint-rules-body">
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ width: 190 }}>规则</th>
+                    <th style={{ width: 56 }}>级别</th>
+                    <th style={{ width: 72 }}>作用域</th>
+                    <th>检查内容</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rules.map((r) => (
+                    <tr key={r.rule_id}>
+                      <td>
+                        <div>{r.rule_name}</div>
+                        <div className="mono muted" style={{ fontSize: 11 }}>{r.rule_id}</div>
+                      </td>
+                      <td style={{ color: r.severity === 'error' ? 'var(--danger)' : 'var(--warning)' }}>
+                        {r.severity === 'error' ? '错误' : '警告'}
+                      </td>
+                      <td className="muted">{r.scope === 'agent' ? '整个 Agent' : '单个文件'}</td>
+                      <td>{r.description}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="hint" style={{ marginTop: 8 }}>
+                默认只警告、不改动文件；打开「严格模式」（系统配置 → 常规设置）后违规会阻止保存。
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div className="state-block">
           <div className="spinner-lg" />

@@ -1,6 +1,6 @@
 # Soulforge — REST API 定义
 
-> 配套主文档 [DEVELOPMENT.md](../DEVELOPMENT.md) 的 API 章节。
+> 配套主文档 [DEVELOPMENT.md](DEVELOPMENT.md) 的 API 章节。
 > 框架：FastAPI（自动 OpenAPI 文档，访问 `http://127.0.0.1:8848/docs`）。
 
 ---
@@ -23,9 +23,12 @@
 ```json
 {
   "data": { ... },
-  "meta": { "timestamp": 1754478710, "version": "0.1.0" }
+  "meta": { "timestamp": 1754478710, "version": "0.5.0" }
 }
 ```
+
+> `meta.version` 取自 `backend/app/__init__.py` 的 `__version__`（版本号唯一事实源）。
+> 错误响应（2.2）不带 `meta`。
 
 ### 2.2 错误响应
 
@@ -49,6 +52,7 @@
 | 404 | `AGENT_NOT_FOUND` | Agent 不存在 |
 | 404 | `FILE_NOT_FOUND` | 文件不存在 |
 | 409 | `CONFLICT` | 冲突（如 lint 严格模式违规） |
+| 422 | `LLM_OUTPUT_TRUNCATED` | 模型输出被 `max_tokens` 截断（`finish_reason` = `length` / `max_tokens`），自动重试 1 次（预算翻倍）后仍未写完 → 请调大该 provider 的 `max_tokens` |
 | 500 | `BACKUP_FAILED` | 备份失败 |
 | 500 | `INTERNAL_ERROR` | 服务器内部错误 |
 
@@ -215,6 +219,50 @@
 ```
 
 **如果 `expected_sha256` 不匹配** → 返回 409 Conflict，提示文件已被外部修改。
+
+#### `DELETE /api/agents/{id}/files/{path:path}`
+
+删除文件。走系统回收站（`send2trash`），可从回收站恢复；不产生备份记录。
+
+**响应**：
+
+```json
+{
+  "data": { "agent_id": "main", "path": "SOUL.md", "deleted": true }
+}
+```
+
+#### `POST /api/agents/files/cross-write`
+
+跨 Agent 编辑：把同一份内容写入多个 Agent 的同名（或指定）文件，**每个 Agent 独立备份**。
+
+**请求**：
+
+```json
+{
+  "files": [
+    { "agent_id": "main", "path": "SOUL.md" },
+    { "agent_id": "xiaowei-ops", "path": "SOUL.md" }
+  ],
+  "content": "# SOUL.md\n统一后的内容..."
+}
+```
+
+**响应**：
+
+```json
+{
+  "data": {
+    "results": [
+      { "agent_id": "main", "path": "SOUL.md", "backup_id": 145 },
+      { "agent_id": "xiaowei-ops", "path": "SOUL.md", "backup_id": 146 }
+    ],
+    "agents": 2
+  }
+}
+```
+
+> 护栏：前端必须先弹确认对话框展示受影响 Agent 列表，确认后才调用本接口。
 
 #### `GET /api/agents/{id}/files/{path:path}/history`
 
@@ -496,6 +544,34 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 
 ### 3.8 Lint
 
+#### `GET /api/lint/rules`
+
+列出全部 lint 规则（供 UI 展示「在检查什么」）。
+
+规则文案的唯一事实源是 `backend/app/services/lint_service.py` 的规则类
+（`rule_id` / `rule_name` / `scope` / `severity` / `description`），本接口由 `LintService.rule_catalog()` 下发。
+
+**响应**：
+
+```json
+{
+  "data": {
+    "rules": [
+      {
+        "rule_id": "L4-TIMESTAMP",
+        "rule_name": "L4 反模式 — 时间戳",
+        "scope": "file",
+        "severity": "warning",
+        "description": "正文出现时效性标记（最后修订 / 最后更新 / ## 更新记录 / ## Changelog）——CORE 文档只保留最终规则，不记录时间"
+      }
+    ],
+    "count": 8
+  }
+}
+```
+
+> `scope`：`file` = 逐文件即可判定；`agent` = 需要 Agent 全貌（跨文件 / 跨 Agent，如 `CORE-MISSING`、`CROSS-AGENT-DRIFT`）。
+
 #### `GET /api/lint/{agent_id}`
 
 对整个 Agent 跑 lint。
@@ -540,7 +616,12 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 
 #### `GET /api/stats`
 
-首页仪表盘数据。
+数据中心「统计面板」的索引类指标（agents / files / backups / disk）。
+
+> **不含 lint 警告数**：该指标必须实时跑 lint 才能得到。此前用索引列 `files.lint_warnings` 求和，
+> 但该列从不被扫描填充（`FileInfo.lint_warnings` 恒为默认 0），返回的一直是**假数据**。
+> UI 的 lint 计数统一取自 `GET /api/lint/all`（与「检查报告」同源同口径），
+> 见「统计面板」的 lint 卡片与底部状态栏。
 
 **响应**：
 
@@ -553,7 +634,6 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
     "memory_files": 45,
     "backup_total": 234,
     "backup_size_bytes": 5242880,
-    "lint_warnings_total": 5,
     "last_scan_at": 1754478700,
     "disk_usage_bytes": 12345678
   }
@@ -568,9 +648,19 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 
 #### `GET /api/presets`
 
-列出全部预设（系统预设 + 用户自定义）。
+列出预设（系统预设 + 用户自定义）。已退役的内置预设（`retired_at` 非空）不返回。
 
-**Query**：`?target_file_type=SOUL`（可选，过滤）
+**Query**：
+
+| 参数 | 说明 |
+|---|---|
+| `target_file_type` | 可选，按适用文件类型过滤（`SOUL` / `AGENTS` / `MEMORY` / `USER` / `IDENTITY` / `TOOLS` / `WORKLOG` / `ANY`） |
+| `scope` | 可选，`all`（缺省）或 `workbench`。`workbench` = **主工作台 / 设置页用**：排除「专供大模型处理工作日志」的预设（即 `target_file_type=WORKLOG`），只留下供主工作台加载的预设。非法值 → `400 BAD_REQUEST` |
+
+> 两类预设的边界（UI-SPECS §5.7）：`target_file_type=WORKLOG` 的预设是 M15 日志标准化的规则载体，
+> 只在「业务工具 → 日志标准化」界面（及其 API）可见、可编辑；设置页「文档预设」与主工作台
+> 「应用预设 / AI 整理」都传 `scope=workbench`，因此不会出现它们。日志标准化界面按
+> `?target_file_type=WORKLOG` 取（不传 `scope`）。
 
 ```json
 {
@@ -579,23 +669,28 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
       "id": "preset-soul-std",
       "name": "SOUL.md 标准结构",
       "target_file_type": "SOUL",
-      "is_system": true,
+      "is_system": false,
+      "is_builtin": true,
       "version": 1,
       "description": "核心行为准则 + 工作态度 + 学习连续性 + 核心边界",
       "created_at": 1754478700,
       "updated_at": 1754478700
     },
     {
-      "id": "preset-mem-wlog",
-      "name": "工作日志汇总",
+      "id": "preset-wlog-daily-std",
+      "name": "工作日志日标准化",
       "target_file_type": "WORKLOG",
-      "is_system": true,
+      "is_system": false,
+      "is_builtin": true,
       "version": 2,
-      "description": "按时间倒序归档 memory/YYYY-MM-DD.md，提取关键决策"
+      "description": "把同一天的多份来源归并成 1 份标准工作日志并清理碎片；也可整理单份日文件"
     }
   ]
 }
 ```
+
+> `is_builtin`：是否内置预设（随版本分发，升级时可能被刷新）；`false` = 用户自建。
+> UI 用它展示「预设来源」（M15 预设信息栏）。注意与历史字段 `is_system`（恒为 `false`）的区别。
 
 #### `POST /api/presets`
 
@@ -617,6 +712,47 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 ```
 
 **响应**：`201 Created` + 新预设详情（含 id、version=1、is_system=false）。
+
+#### `POST /api/presets/from-document`
+
+由当前文档生成预设（编辑栏「设为预设」按钮）。以编辑器当前内容作为**模板正文**，
+配合用户填写的规则参数生成带 YAML 规则 frontmatter 的模板文档，等价于一次
+「从现有文档反推结构」的预设创建。
+
+```json
+{
+  "name": "我的 SOUL 结构",
+  "target_file_type": "SOUL",
+  "content": "# SOUL.md\n\n## 核心行为准则\n\n- 简洁优先\n…",
+  "description": "由 main/SOUL.md 提取",
+  "section_heading_level": 2,
+  "required_sections": ["核心行为准则", "核心边界"],
+  "section_order": "strict",
+  "require_frontmatter": false
+}
+```
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `name` | 是 | 预设名称（写入模板 frontmatter） |
+| `target_file_type` | 是 | 适用文件类型 |
+| `content` | 是 | 作为模板正文的文档内容；UTF-8 体积 ≤ 30KB |
+| `description` | 否 | 用途说明 |
+| `section_heading_level` | 否 | 章节标题层级（1–6，默认 2）：该层级的标题构成章节清单 |
+| `required_sections` | 否 | 必填章节（须为文档中该层级的标题）；留空 = 该层级全部标题；顺序始终按文档出现顺序 |
+| `section_order` | 否 | `strict`（默认）/ `loose` |
+| `require_frontmatter` | 否 | 是否要求目标文档带 YAML frontmatter（默认 `false`） |
+
+**响应**：`201 Created` + 新预设详情（`sections_json` 由模板 frontmatter 派生）。
+
+**错误**：
+
+| HTTP | code | 场景 |
+|---|---|---|
+| 400 | `BAD_REQUEST` | 文档超过 30KB；文档中未发现该层级的标题；`required_sections` 在文档中均不存在 |
+
+> 说明：`max_heading_level` 由文档实际标题层级推断，无需用户填写；
+> 标题扫描会跳过围栏代码块内的 `#`（与编辑器大纲口径一致）。
 
 #### `GET /api/presets/{id}`
 
@@ -808,6 +944,9 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 ### 3.12 AI 自动整理（Phase 2.5 · Step 3）
 
 > 数据模型见 `DATA-MODEL.md` 的 `ai_jobs` 表。
+> `output_content` 是**已净化**的文档正文：模型写在正文前的思考过程 / 规则复述
+> （如「让我仔细分析这个任务：…」）与整篇文档的外层代码围栏会在入库前剥离，
+> 并在其后执行模板格式校验（`diff_plan.format_report`）。
 
 #### `POST /api/ai/jobs`
 
@@ -1006,6 +1145,269 @@ python super_sync.py --once        # 只执行一轮（自检）
 两种启动方式共用同一份 `config.json` 与 `status.json`，因此 UI 能正确识别命令行启动的进程。
 
 ---
+
+### 3.14 系统接口（健康检查 / 审计 / 配置）
+
+#### `GET /api/health`
+
+健康检查。不发任何外部请求；前端启动时调用以获取后端版本号（状态栏展示）。
+
+**响应**：
+
+```json
+{
+  "data": { "status": "ok", "version": "0.5.0" }
+}
+```
+
+> `version` 与 `meta.version` 同源，均取自 `backend/app/__init__.py` 的 `__version__`。
+
+#### `GET /api/audit`
+
+查询审计日志（按时间倒序）。
+
+**查询参数**：
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `limit` | int | `100` | 返回条数（1–500） |
+| `offset` | int | `0` | 偏移量 |
+| `agent_id` | string | — | 按 Agent 过滤 |
+| `action` | string | — | 按操作类型过滤（`write` / `delete` / `rollback` / `sync` / `export` / `preset_apply` / `ai_apply` 等） |
+
+**响应**：
+
+```json
+{
+  "data": [
+    {
+      "id": 512,
+      "timestamp": 1754478710,
+      "action": "write",
+      "agent_id": "main",
+      "target_path": "SOUL.md",
+      "details_json": "{\"size_before\": 4321, \"backup_id\": 145}",
+      "user": "local",
+      "result": "ok"
+    }
+  ]
+}
+```
+
+#### `GET /api/config` / `PUT /api/config`
+
+读取 / 局部更新 `config.toml`（未传字段保持不变）。
+
+**PUT 请求**（各段均可选）：
+
+```json
+{
+  "server":    { "host": "127.0.0.1", "port": 8848 },
+  "backup":    { "retention_days": 30, "auto_backup_on_write": true },
+  "lint":      { "enabled": true, "strict_mode": false },
+  "ui":        { "default_theme": "auto", "default_view": "tree" },
+  "advanced":  { "show_skills": false, "show_meta": false, "show_memory": false, "show_other": false },
+  "openclaw":  { "dir": "" },
+  "daily_standardizer": {
+    "max_days_per_run": 31,
+    "token_budget": 200000,
+    "provider_id": "",
+    "dry_run_only": false
+  }
+}
+```
+
+**生效时机**：`backup` / `lint` / `ui` / `advanced` / `openclaw` / `daily_standardizer` 立即生效；
+`server.host` / `server.port` 需重启服务。
+
+---
+
+### 3.15 工作日志标准化（M15 · P2）
+
+把某个 Agent `memory/` 下指定日期范围内的工作日志归并为**每天恰好 1 个 `YYYY-MM-DD.md`**。
+核心约束与 AI 整理一致：**计划与写入分离**——先出计划（只读、不落盘），人逐个 diff 确认后才写入，
+碎片删除走系统回收站。批次状态机与逐日状态见
+[MEMORY-DAILY-STANDARDIZER-PLAN.md](MEMORY-DAILY-STANDARDIZER-PLAN.md) 附录 D。
+
+#### `POST /api/daily-runs`
+
+创建批次。**异步**：立即返回 `202`，后台逐日生成计划（`planned` → `awaiting_confirm`）。
+命中幂等键（同 Agent / 范围 / 预设 / provider / 来源内容）时直接复用既有批次，不产生第二次 LLM 调用。
+
+**请求**：
+
+```json
+{
+  "agent_id": "main",
+  "date_from": "2026-08-01",
+  "date_to": "2026-08-31",
+  "preset_id": "preset-wlog-daily-std",
+  "provider_id": "openai-main",
+  "extra_instructions": "把「端口巡检」相关条目合并到一节"
+}
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `agent_id` | ✅ | Agent id |
+| `date_from` / `date_to` | ✅ | `YYYY-MM-DD`；只处理「需要整理」的日子（同日多来源，或唯一来源质量差） |
+| `preset_id` | — | 默认 `preset-wlog-daily-std`（内置「工作日志日标准化」） |
+| `provider_id` | ✅ | 必须存在且启用 |
+| `extra_instructions` | — | 附加指令 |
+
+**响应**（`202`）：
+
+```json
+{
+  "data": {
+    "run_id": "run-3f6b1c0d9a2e4b7f8c1d5e6a7b8c9d0e",
+    "status": "planned",
+    "days_total": 11,
+    "reused": false,
+    "created_at": 1758700000
+  }
+}
+```
+
+**错误**：
+
+| 场景 | HTTP | code |
+|---|---|---|
+| `date_from` / `date_to` 含 `/`、`\`、`..` | `403` | `UNSAFE_PATH` |
+| 日期不是合法 `YYYY-MM-DD` 或 `date_from > date_to` | `400` | `BAD_REQUEST` |
+| 需要整理的天数 > `max_days_per_run` | `400` | `BAD_REQUEST` |
+| `preset_id` / `provider_id` 不存在或未启用 | `404` | `NOT_FOUND` |
+
+> 该范围没有任何需要整理的日子时，批次直接落 `empty`（`days_total=0`），不发起 LLM 调用。
+
+#### `GET /api/daily-runs`
+
+批次列表（按创建时间倒序）。
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `agent_id` | string | — | 按 Agent 过滤 |
+| `status` | string | — | 按状态过滤 |
+| `limit` | int | `50` | 1–200 |
+
+#### `GET /api/daily-runs/{run_id}`
+
+批次详情：批次摘要 + `items[]`（逐日条目）。每个条目含来源清单（`sources[]`：路径 / A·B·C 类别 /
+剥壳前后体积）、`fragments_to_delete[]`、`output_content`、`unified_diff` / `html_diff`、
+`format_report`、`lint_warnings`、`notes`、`empty_reason`、`status`、逐日 token 与成本。
+
+`status` 取值：`pending` / `planned` / `failed` / `blocked` / `applied` / `partially_applied` /
+`empty`（判定本日无可归档内容：不产出日文件，`empty_reason` 为一句话理由，只清 B/C 碎片）/ `skipped`。
+
+#### `POST /api/daily-runs/{run_id}/apply`
+
+应用选中日期。**两步预检 + 三步执行**：
+
+1. 批次级预检：对**全部目标日**跑写前验收（强规则 + 12 类残留壳检测）与乐观锁比对
+   - 任一目标文件当前 SHA-256 ≠ 计划时 → 抛 `409`，**整批不写**
+   - 任一日验收不过 → 该日标 `blocked`，不写入（其余继续）
+   - 「无可归档内容」的日期不写文件，改按**逐个碎片**的 SHA-256 比对（碎片被改动同样抛 `409`）
+2. 逐个写入日文件（`FileManager.write`：自动备份 + 审计），随后删除该日碎片（`send2trash`）；
+   「无可归档内容」的日期**跳过写入**，只清碎片（A 类主文件 `YYYY-MM-DD.md` 不动），审计动作 `daily_empty_content`
+3. 写批次状态并跑验收报告；报告不通过 → 批次标 `needs_review`（已写入的日文件**不回滚**）
+
+**请求**（`dates` 与 `apply_all` 二者其一）：
+
+```json
+{ "dates": ["2026-08-03", "2026-08-05"], "apply_all": false }
+```
+
+**响应**：
+
+```json
+{
+  "data": {
+    "run_id": "run-3f6b...",
+    "status": "applied",
+    "applied": ["2026-08-03"],
+    "partial": ["2026-08-05"],
+    "blocked": [],
+    "failed": [],
+    "no_content": ["2026-08-04"],
+    "skipped": []
+  }
+}
+```
+
+| 字段 | 含义 |
+|---|---|
+| `applied` | 已写入日文件且碎片已清理 |
+| `partial` | 日文件已写，碎片删失败 |
+| `blocked` | 写前验收不过，未写入 |
+| `no_content` | 判定「无可归档内容」：未产出日文件，仅清理碎片 |
+| `failed` | 写入失败 |
+
+**错误**：
+
+| 场景 | HTTP | code |
+|---|---|---|
+| `config.daily_standardizer.dry_run_only = true` | `403` | `DAILY_RUN_DISABLED` |
+| 批次不是 `awaiting_confirm` | `409` | `DAILY_RUN_STATUS` |
+| 目标文件或碎片被外部改动（乐观锁冲突） | `409` | `CONFLICT`（`details.conflicts[]` 列出日期与原因） |
+| 没有可应用的日子 | `400` | `BAD_REQUEST` |
+
+#### `POST /api/daily-runs/{run_id}/reject`
+
+拒绝整批（不写入任何文件）。已是 `applied` / `partially_applied` / `rejected` 时 `409 DAILY_RUN_STATUS`。
+
+#### `POST /api/daily-runs/{run_id}/skip`
+
+跳过若干日（人工决策，不改写这些天）。请求 `{"dates": ["2026-08-04"]}`；
+所选日期没有可跳过的条目 → `400 BAD_REQUEST`。
+
+#### `GET /api/daily-runs/{run_id}/report`
+
+验收报告。**只读**（不改批次状态），随时可重复跑；对磁盘上的**真实文件**核对 5 项。
+判定「无可归档内容」的日期 `empty=true`、`delivered=false`，只核对 `fragments_gone`（其余四项标注为不适用）。
+
+```json
+{
+  "data": {
+    "run_id": "run-3f6b...",
+    "agent_id": "main",
+    "status": "applied",
+    "passed": true,
+    "items": [
+      {
+        "date": "2026-08-03",
+        "target_path": "memory/2026-08-03.md",
+        "status": "applied",
+        "empty": false,
+        "delivered": true,
+        "single_file": true,
+        "naming_ok": true,
+        "sections_ok": true,
+        "no_residue": true,
+        "fragments_gone": true,
+        "details": []
+      },
+      {
+        "date": "2026-08-04",
+        "target_path": "memory/2026-08-04.md",
+        "status": "empty",
+        "empty": true,
+        "delivered": false,
+        "single_file": true,
+        "naming_ok": true,
+        "sections_ok": true,
+        "no_residue": true,
+        "fragments_gone": true,
+        "details": ["判定无可归档内容：全天只有心跳与状态轮询"]
+      }
+    ],
+    "days_delivered": 1,
+    "days_total": 2,
+    "tokens_used": 4120,
+    "cost_estimate_usd": 0.0103,
+    "generated_at": 1758700300
+  }
+}
+```
 
 ---
 

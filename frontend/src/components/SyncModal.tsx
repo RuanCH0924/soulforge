@@ -129,15 +129,21 @@ export function SyncModal({ agents, onClose, onDone, embedded }: SyncModalProps)
               className="btn btn-primary"
               disabled={checked.size === 0 || executing}
               onClick={() => setConfirmExec(true)}
+              title={`执行同步（已勾选 ${checked.size} 个文件）`}
             >
               {executing && <span className="spinner" />}
-              执行同步（{checked.size} 个文件）
+              执行同步
             </button>
           </div>
         ) : (
-          <button className="btn btn-primary" onClick={generatePlan} disabled={planning}>
+          <button
+            className="btn btn-primary"
+            onClick={generatePlan}
+            disabled={planning}
+            title="生成同步计划（逐文件差异预览后再确认写入）"
+          >
             {planning && <span className="spinner" />}
-            生成同步计划
+            生成计划
           </button>
         )
       }

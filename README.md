@@ -5,6 +5,7 @@
 **A cross-Agent system-prompt file manager for OpenClaw with a Web GUI**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.5.0-blue)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](backend/pyproject.toml)
 [![Backend](https://img.shields.io/badge/Backend-FastAPI-009688.svg)](backend)
 [![Frontend](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-61DAFB.svg)](frontend)
@@ -43,6 +44,7 @@ OpenClaw is a multi-Agent system in which every Agent owns a `workspace/` contai
 | **Document presets** *(Phase 2.5)*     | Save reusable structure templates for `SOUL.md`, `AGENTS.md`, `MEMORY.md`, work logs, and more; apply them via plan + confirm. |
 | **LLM providers** *(Phase 2.5)*        | Plug in any OpenAI-compatible LLM (OpenAI / Anthropic / DeepSeek / Ollama) with encrypted API keys and hot reload.                                                |
 | **AI organise** *(Phase 2.5)*          | Run an Agent on a chosen file against a preset, review the diff, then write — keeps every soul file consistently structured.                                       |
+| **Work-log standardiser** *(M15)*      | Merges all records of one day under `memory/` (daily file / session exports / topic fragments) into **exactly one `YYYY-MM-DD.md` per day**: deterministic shell-stripping (zero tokens) → LLM merge → per-day diff confirm → write and clean up fragments (via recycle bin). When a day genuinely has nothing worth keeping, the model returns a "nothing to archive" verdict instead of padding one out. |
 
 ## Roadmap
 
@@ -50,12 +52,14 @@ Soulforge ships in phases:
 
 | Phase | Scope | Status |
 |---|---|---|
-| **Phase 1 · MVP** | Browse + edit + backup + lint + sync + export + dashboard | ✅ Shipped (v0.1 → v1.0) |
-| **Phase 2 · UI polish** | Layout refinements, theming, keyboard shortcuts, real-time status bar | 🚧 In progress |
-| **Phase 2.5 · AI Editor** | Document presets → LLM provider plug-in → AI-powered document organising (3-step plan) | 🚧 In progress |
+| **Phase 1 · MVP** | Browse + edit + backup + lint + sync + export + dashboard | ✅ Shipped |
+| **Phase 2 · UI polish** | Layout refinements, theming, keyboard shortcuts, real-time status bar | ✅ Shipped |
+| **Phase 2.5 · AI Editor** | Document presets → LLM provider plug-in → AI-powered document organising (3-step plan) | ✅ Shipped |
 | **Super Sync** | Second-level (near real-time) sync of same-named core documents across Agents (standalone daemon + UI matrix scope / status / logs) | ✅ Shipped |
+| **M15 · Work-log standardiser** | `memory/` daily-file merge (exactly one `YYYY-MM-DD.md` per day + metadata shell-stripping + fragment cleanup), manual batches + per-day confirm | ✅ Shipped |
 | **Phase 3 · Far future** | Team collaboration / cloud sync / third-party plugins | 📋 Planned |
 
+The unified version baseline starts at **v0.5.0** — see [CHANGELOG.md](CHANGELOG.md).
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the full plan.
 
 ## Tech Stack
@@ -158,6 +162,8 @@ Base URL: `http://127.0.0.1:8848/api` · Interactive OpenAPI docs: <http://127.0
 | `GET`         | `/api/agents/{id}/files`                                          | List an Agent's prompt-pack files           |
 | `GET`         | `/api/agents/{id}/files/{path}`                                   | Read a file                                 |
 | `PUT`         | `/api/agents/{id}/files/{path}`                                   | Write a file (auto-backup, optimistic lock) |
+| `DELETE`      | `/api/agents/{id}/files/{path}`                                   | Delete a file (moved to trash)              |
+| `POST`        | `/api/agents/files/cross-write`                                   | Write one content to many Agents at once    |
 | `GET`         | `/api/agents/{id}/files/{path}/history`                           | File backup history                         |
 | `POST`        | `/api/search`                                                     | Cross-Agent full-text search                |
 | `GET`         | `/api/diff`                                                       | Diff the same file across two Agents        |
@@ -174,8 +180,14 @@ Base URL: `http://127.0.0.1:8848/api` · Interactive OpenAPI docs: <http://127.0
 | `GET`         | `/api/stats`                                                      | Dashboard statistics                        |
 | `GET`         | `/api/audit`                                                      | Audit log                                   |
 | `GET` / `PUT` | `/api/config`                                                     | Read / update configuration                 |
+| `GET` / `POST` / `PUT` / `DELETE` | `/api/presets[/{id}]` · `/api/presets/{id}/versions[/{vid}/restore]` | Document presets CRUD + version history |
+| `POST`        | `/api/presets/{id}/apply` · `/api/presets/{id}/apply/execute`     | Apply a preset (plan + confirm)             |
+| `GET` / `POST` / `PUT` / `DELETE` | `/api/llm/providers[/{id}]` · `/api/llm/providers/{id}/test` · `/api/llm/chat` | LLM providers + connectivity test |
+| `GET` / `POST` | `/api/ai/jobs[/{id}]` · `/api/ai/jobs/{id}/apply` · `/reject` · `/regenerate` | AI organise jobs (plan → diff → apply) |
+| `GET` / `POST` | `/api/daily-runs[/{id}]` · `/api/daily-runs/{id}/apply` · `/reject` · `/skip` · `/report` | Work-log standardiser batches (plan → per-day confirm → write + fragment cleanup → acceptance report) |
 
 All responses follow the envelope `{"data": ...}`; errors return `{"error": {"code", "message", "details"}}`.
+`GET /api/health` returns the runtime version (`data.version`) — the same value as `backend/app/__init__.py`.
 See [docs/API.md](docs/API.md) for the complete specification.
 
 ## Project Structure
@@ -200,6 +212,7 @@ soulforge/
 ├── start.bat / start.sh      # One-click launcher (Windows / Linux·macOS)
 ├── .github/                  # Issue & PR templates
 ├── README.md                 # This file
+├── CHANGELOG.md              # Version history & release process
 └── LICENSE                   # MIT license
 ```
 
@@ -207,13 +220,14 @@ soulforge/
 
 | Document                                     | Content                                                               |
 | -------------------------------------------- | --------------------------------------------------------------------- |
-| [DEVELOPMENT.md](DEVELOPMENT.md)             | Main development guide (goals / architecture / features / data model) |
+| [CHANGELOG.md](CHANGELOG.md)                 | Version history, version source of truth & release process             |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)   | Main development guide (goals / architecture / features / data model) |
 | [docs/API.md](docs/API.md)                   | Complete REST API specification                                       |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture                                                   |
 | [docs/DATA-MODEL.md](docs/DATA-MODEL.md)     | Data model (SQLite schema, file metadata)                             |
 | [docs/SECURITY.md](docs/SECURITY.md)         | Security guardrails                                                   |
-| [docs/ROADMAP.md](docs/ROADMAP.md)           | Roadmap (MVP / v1.0 / v1.x)                                           |
-| [UI-SPECS.md](UI-SPECS.md)                   | UI design specification                                               |
+| [docs/ROADMAP.md](docs/ROADMAP.md)           | Roadmap (phases & acceptance criteria)                                |
+| [docs/UI-SPECS.md](docs/UI-SPECS.md)         | UI design specification                                               |
 
 ## Contributing
 
@@ -221,7 +235,7 @@ Contributions are welcome! Please follow the workflow below:
 
 1. **Fork** the repository and create a feature branch: `git checkout -b feat/my-feature`
 2. **Write code** — keep changes focused and consistent with the existing style:
-   - Backend: follow [DEVELOPMENT.md](DEVELOPMENT.md), run `ruff check` and add/extend tests with `pytest` (run from `backend/`).
+   - Backend: follow [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), run `ruff check` and add/extend tests with `pytest` (run from `backend/`).
    - Frontend: run `npm run build` (includes `tsc --noEmit`) before submitting.
 3. **Commit** with a clear message describing *why* the change is needed.
 4. **Open a pull request** — use the [PR template](.github/PULL_REQUEST_TEMPLATE.md) and make sure all CI checks pass.

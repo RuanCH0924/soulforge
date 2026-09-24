@@ -65,6 +65,22 @@ class OpenClawConfig:
 
 
 @dataclass
+class DailyStandardizerConfig:
+    """工作日志标准化（M15）护栏。触发方式是手动批次，**不含任何定时字段**。
+
+    - `max_days_per_run`：单批天数上限（防失控）
+    - `token_budget`：单批 token 预算，0 = 不限；越限即中止该批次且不写入任何文件
+    - `provider_id`：默认 LLM provider（UI 可覆盖）
+    - `dry_run_only`：全局「关闭执行（只出计划）」开关，异常时一键降级为 dry-run
+    """
+
+    max_days_per_run: int = 31
+    token_budget: int = 200_000
+    provider_id: str = ""
+    dry_run_only: bool = False
+
+
+@dataclass
 class Config:
     data_dir: Path
     openclaw_dir: Path
@@ -74,6 +90,7 @@ class Config:
     ui: UIConfig = field(default_factory=UIConfig)
     advanced: AdvancedConfig = field(default_factory=AdvancedConfig)
     openclaw: OpenClawConfig = field(default_factory=OpenClawConfig)
+    daily_standardizer: DailyStandardizerConfig = field(default_factory=DailyStandardizerConfig)
 
     # ---- 派生路径 ----
     @property
@@ -116,6 +133,7 @@ def load_config() -> Config:
     ui_raw = section("ui")
     advanced_raw = section("advanced")
     openclaw_raw = section("openclaw")
+    daily_raw = section("daily_standardizer")
 
     openclaw_dir = Path(openclaw_raw.get("dir", "")).expanduser() if openclaw_raw.get("dir") else openclaw_dir
 
@@ -145,4 +163,10 @@ def load_config() -> Config:
             show_other=bool(advanced_raw.get("show_other", False)),
         ),
         openclaw=OpenClawConfig(dir=str(openclaw_dir)),
+        daily_standardizer=DailyStandardizerConfig(
+            max_days_per_run=int(daily_raw.get("max_days_per_run", 31)),
+            token_budget=int(daily_raw.get("token_budget", 200_000)),
+            provider_id=str(daily_raw.get("provider_id", "")),
+            dry_run_only=bool(daily_raw.get("dry_run_only", False)),
+        ),
     )

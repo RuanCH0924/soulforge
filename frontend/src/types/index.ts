@@ -1,5 +1,11 @@
 /** Soulforge 前端类型定义（与后端 Pydantic schema 一一对应，见 docs/API.md） */
 
+/** GET /api/health：后端版本号（全项目版本事实源 app/__init__.py） */
+export interface HealthResult {
+  status: string;
+  version: string;
+}
+
 export interface AgentInfo {
   id: string;
   workspace: string;
@@ -145,6 +151,22 @@ export interface LintFileResult {
   warnings: LintWarning[];
 }
 
+/** lint 规则目录项（文案事实源在后端 LintService，经 /api/lint/rules 下发） */
+export interface LintRuleInfo {
+  rule_id: string;
+  rule_name: string;
+  /** 作用域：file = 逐文件检查；agent = 需要 Agent 全貌（跨文件 / 跨 Agent） */
+  scope: 'file' | 'agent';
+  severity: 'warning' | 'error';
+  /** 规则在检查什么 */
+  description: string;
+}
+
+export interface LintRulesResult {
+  rules: LintRuleInfo[];
+  count: number;
+}
+
 export interface StatsResult {
   agents_total: number;
   files_total: number;
@@ -152,7 +174,6 @@ export interface StatsResult {
   memory_files: number;
   backup_total: number;
   backup_size_bytes: number;
-  lint_warnings_total: number;
   last_scan_at?: number | null;
   disk_usage_bytes: number;
 }
@@ -235,6 +256,8 @@ export interface PresetSummary {
   target_file_type: PresetTargetType;
   description?: string | null;
   is_system: boolean;
+  /** 内置预设（随版本分发，下次升级可能被刷新）——展示「预设来源」用 */
+  is_builtin: boolean;
   version: number;
   created_at: number;
   updated_at: number;
@@ -356,6 +379,147 @@ export interface AIJobApplyResult {
   status: AIJobStatus;
   backup_id?: number | null;
   file_size: number;
+}
+
+// ---- Phase 2.6 · M15 工作日志标准化（批次） ----
+export type DailyRunStatus =
+  | 'planned'
+  | 'awaiting_confirm'
+  | 'applied'
+  | 'partially_applied'
+  | 'needs_review'
+  | 'rejected'
+  | 'failed'
+  | 'empty';
+
+export type DailyRunItemStatus =
+  | 'pending'
+  | 'planned'
+  | 'failed'
+  | 'blocked'
+  | 'applied'
+  | 'partially_applied'
+  | 'skipped'
+  /** 判定「本日无可归档内容」：不产出日文件，只清理 B/C 碎片（主文件不动） */
+  | 'empty';
+
+/** 来源分类：A = 当日主文件（YYYY-MM-DD.md）；B = 带时刻的会话导出；C = 主题命名碎片 */
+export type DailySourceKind = 'A' | 'B' | 'C';
+
+export interface DailySourceInfo {
+  path: string;
+  kind: DailySourceKind;
+  raw_bytes: number;
+  clean_bytes: number;
+  /** 预处理阶段剥掉的低价值元数据行数 */
+  removed_total: number;
+  /** 是否经「分块摘要」压缩（超大来源） */
+  summarized: boolean;
+  chunks: number;
+}
+
+export interface DailyRunItem {
+  date: string;
+  /** 归并目标：恒为 memory/YYYY-MM-DD.md */
+  target_path: string;
+  /** 该日原本是否已有合规主文件 */
+  has_standard: boolean;
+  sources: DailySourceInfo[];
+  /** 归并后拟删除的碎片（走系统回收站，可恢复） */
+  fragments_to_delete: string[];
+  output_content?: string | null;
+  unified_diff?: string | null;
+  html_diff?: string | null;
+  format_report: FormatReport;
+  lint_warnings: LintWarning[];
+  notes: string[];
+  /** 非空 = 模型判定「本日无可归档内容」（值为一句话理由）：不产出日文件，只清理碎片 */
+  empty_reason?: string | null;
+  decision: 'pending' | 'applied' | 'skipped';
+  status: DailyRunItemStatus;
+  error?: string | null;
+  backup_id?: number | null;
+  applied_at?: number | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_estimate_usd: number;
+}
+
+export interface DailyRunSummary {
+  id: string;
+  agent_id: string;
+  date_from: string;
+  date_to: string;
+  preset_id: string;
+  preset_version: number;
+  provider_id: string;
+  status: DailyRunStatus;
+  days_total: number;
+  token_budget: number;
+  tokens_used: number;
+  cost_estimate_usd: number;
+  error?: string | null;
+  created_at: number;
+  updated_at: number;
+  finished_at?: number | null;
+}
+
+export interface DailyRun extends DailyRunSummary {
+  extra_instructions?: string | null;
+  items: DailyRunItem[];
+}
+
+export interface DailyRunCreateResult {
+  run_id: string;
+  status: DailyRunStatus;
+  days_total: number;
+  /** 命中幂等键 → 复用既有批次，未产生新的 LLM 调用 */
+  reused: boolean;
+  created_at: number;
+}
+
+export interface DailyRunApplyResult {
+  run_id: string;
+  status: DailyRunStatus;
+  applied: string[];
+  /** 日文件已写、碎片删失败 */
+  partial: string[];
+  /** 写前验收不过，未写入 */
+  blocked: string[];
+  failed: string[];
+  /** 判定无可归档内容：未产出日文件，仅清理碎片 */
+  no_content: string[];
+  skipped: string[];
+}
+
+export interface DailyRunReportItem {
+  date: string;
+  target_path: string;
+  status: DailyRunItemStatus;
+  /** 该日判定「无可归档内容」：不产出日文件，只核对碎片是否已清 */
+  empty: boolean;
+  /** 该日是否已交付（applied / partially_applied） */
+  delivered: boolean;
+  single_file: boolean;
+  naming_ok: boolean;
+  sections_ok: boolean;
+  no_residue: boolean;
+  fragments_gone: boolean;
+  details: string[];
+}
+
+export interface DailyRunReport {
+  run_id: string;
+  agent_id: string;
+  status: DailyRunStatus;
+  passed: boolean;
+  items: DailyRunReportItem[];
+  days_delivered: number;
+  days_total: number;
+  tokens_used: number;
+  cost_estimate_usd: number;
+  generated_at: number;
 }
 
 // ---- 超级同步（独立守护脚本） ----

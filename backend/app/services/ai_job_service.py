@@ -18,6 +18,8 @@ import time
 import uuid
 from pathlib import Path
 
+from loguru import logger
+
 from app.core.errors import (
     AIFileTooLargeError,
     AIJobNotFoundError,
@@ -40,7 +42,7 @@ from app.services.audit_service import AuditService
 from app.services.backup_service import BackupService
 from app.services.diff_service import unified_diff
 from app.services.file_manager import FileManager
-from app.services.format_validator import FormatValidator, FormatReport
+from app.services.format_validator import FormatValidator
 from app.services.lint_service import LintService
 from app.services.llm_registry import LLMRegistry
 from app.services.preset_service import PresetService
@@ -52,6 +54,8 @@ SYSTEM_PROMPT = (
     "你是 Soulforge 的 AI 文档整理助手。"
     "严格遵守用户给出的「格式化规则」重新整理目标文档：保留原意、不丢失信息、不新增事实。"
     "输出必须 100% 符合规则，正文只输出 Markdown 内容。"
+    "不要输出任何思考过程、任务分析、规则复述或对话性文字（如「让我…」「以下是…」），"
+    "第一行就要直接进入文档正文。"
 )
 
 
@@ -177,14 +181,25 @@ class AIJobService:
         rules = AIJobService._rules_for(preset)
         summary = template_rule_summary(rules)
         skeleton = preset.template_md or "（该预设未提供模板文档，以上规则即全部要求）"
-        return f"""【任务】按下方「格式化规则」对目标文档做结构化重排与格式校验，严格遵循：
-第一步：读取并解析格式化规则；
+        # 预设的「风格与内容规则」（style_rules）：与格式化规则同为前置约束。
+        # 注：此前只存库、未注入 prompt，与 docs/DEVELOPMENT.md 模块 M13 的声明不符，已在此修正。
+        style_block = (
+            "\n".join(f"{i}. {line}" for i, line in enumerate(preset.style_rules, start=1))
+            if preset.style_rules
+            else "（无）"
+        )
+        return f"""【任务】按下方「格式化规则」与「风格与内容规则」对目标文档做结构化重排与格式校验，严格遵循：
+第一步：读取并解析格式化规则、风格与内容规则；
 第二步：加载目标文档；
-第三步：按照全部格式化规则对目标文档进行结构化重新整理（保留原意，不丢失、不新增信息）；
+第三步：按照全部规则对目标文档进行结构化重新整理（保留原意，不丢失、不新增信息）——
+        「风格与内容规则」里要求保留的必须保留、要求删除的必须删除；
 第四步：自查输出，确保 100% 符合规则后再交付。
 
 【格式化规则（来自模板文档，必须逐条遵守）】
 {summary}
+
+【风格与内容规则（来自预设，必须逐条遵守）】
+{style_block}
 
 【模板文档全文（含章节骨架示例，重排时按此结构组织）】
 ```markdown
@@ -199,7 +214,11 @@ class AIJobService:
 {content}
 ```
 
-【输出】只输出整理后的 Markdown 内容，不要解释，不要任何前缀。"""
+【输出】只输出整理后的 Markdown 文档正文本身，严格遵守：
+1. 第一行必须是文档标题（ATX 标题，如 `# SOUL.md`）；模板要求 frontmatter 时，第一行必须是 `---`；
+2. 禁止输出思考过程、任务分析、步骤说明、格式化规则复述、前言/结语、致谢等任何对话性文字；
+3. 禁止用 ``` 代码围栏包裹整篇文档（文档内部的代码块不受此限）；
+4. 不要写「让我」「以下是」「以上是」「如需调整」之类的话，直接从正文开始、到正文结束。"""
 
     async def execute(self, job_id: str) -> None:
         """后台异步执行四步流程：
@@ -224,8 +243,13 @@ class AIJobService:
                 {"role": "user", "content": prompt},
             ])
             raw_output = resp.content.strip()
+            # 前置净化：剥离模型的思考过程/前言，以及整篇文档的围栏包裹
+            validator = FormatValidator()
+            sanitized, preamble = validator.sanitize(raw_output)
+            if preamble:
+                logger.warning(f"AI 输出含前言，已在写入前剥离（job={job_id}）：{preamble[:120]!r}")
             # 第四步：按模板规则做格式校验 + 机械性自动修正，产出最终输出
-            output, format_report = FormatValidator().validate_and_fix(raw_output, rules)
+            output, format_report = validator.validate_and_fix(sanitized, rules)
             diff = unified_diff(content, output, fromfile=f"{agent_id}/{file_path}", tofile="AI 整理后")
             warnings = self.lint.lint_file(agent_id, file_path, output)
             diff_plan = AIJobDiffPlan(

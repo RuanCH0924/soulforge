@@ -37,6 +37,21 @@ def test_stats(client):
     assert data["backup_total"] == 0
 
 
+def test_stats_does_not_report_lint_count(client):
+    """统计接口不得返回 lint 警告数（防止再出现「面板恒为 0、检查报告几百条」的口径冲突）。
+
+    该指标只能实时跑 lint 得到（`files.lint_warnings` 从不被扫描填充），
+    UI 统一取自 `GET /api/lint/all`——与「检查报告」同源同口径。
+    """
+    stats = client.get("/api/stats").json()["data"]
+    assert "lint_warnings_total" not in stats
+
+    # 同一时刻两个来源给出同一个数：/api/lint/all 的逐条之和
+    results = client.get("/api/lint/all").json()["data"]["results"]
+    total = sum(len(r["warnings"]) for r in results)
+    assert total == sum(r["stats"]["warnings"] + r["stats"]["errors"] for r in results)
+
+
 # ---------- Lint API ----------
 
 def test_lint_agent_api(client):
@@ -61,6 +76,35 @@ def test_lint_all(client):
     assert res.status_code == 200
     data = res.json()["data"]
     assert data["agents"] == 2
+
+
+def test_lint_rules_catalog(client):
+    """规则目录：8 条规则齐备，且每项都带展示所需的说明与作用域。"""
+    res = client.get("/api/lint/rules")
+    assert res.status_code == 200
+    data = res.json()["data"]
+    rules = data["rules"]
+    assert data["count"] == len(rules) == 8
+    assert {r["rule_id"] for r in rules} == {
+        "L4-TIMESTAMP", "L4-VERSION", "L4-NARRATIVE", "BOUNDARY-VIOLATE",
+        "EMPTY-FILE", "LARGE-FILE", "CORE-MISSING", "CROSS-AGENT-DRIFT",
+    }
+    for r in rules:
+        assert r["description"], f"{r['rule_id']} 缺少规则说明"
+        assert r["scope"] in {"file", "agent"}
+        assert r["severity"] in {"warning", "error"}
+    # 作用域归类：两条 Agent 级规则需读 Agent 全貌
+    by_scope = {r["rule_id"]: r["scope"] for r in rules}
+    assert by_scope["CORE-MISSING"] == "agent"
+    assert by_scope["CROSS-AGENT-DRIFT"] == "agent"
+    assert by_scope["L4-TIMESTAMP"] == "file"
+
+
+def test_lint_rules_catalog_matches_executed_rules(client, registry):
+    """目录与真正执行的规则集合一致（防止新增规则只加检查、忘了登记）。"""
+    executed = {r.rule_id for r in [*registry.lint.file_rules, *registry.lint.agent_rules]}
+    cataloged = {r.rule_id for r in registry.lint.rule_catalog()}
+    assert cataloged == executed
 
 
 def test_lint_strict_mode_blocks_save(client, registry):

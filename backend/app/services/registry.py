@@ -12,6 +12,9 @@ from app.services.agent_discovery import AgentDiscovery
 from app.services.ai_job_service import AIJobService
 from app.services.audit_service import AuditService
 from app.services.backup_service import BackupService
+from app.services.daily_merge_service import DailyMergeService
+from app.services.daily_run_service import DailyRunService
+from app.services.daily_source_scanner import DailySourceScanner
 from app.services.diff_service import DiffService
 from app.services.file_manager import FileManager
 from app.services.import_export import ImportExportService
@@ -47,6 +50,13 @@ class Registry:
         self.key_vault = KeyVault(config.data_dir)
         self.llm = LLMRegistry(self.db, self.key_vault)
         self.ai_jobs = AIJobService(self.db, self.file_manager, self.backup, self.lint, self.audit, self.presets, self.llm)
+        # M15 工作日志标准化（P1 单日归并；P2 批次编排 + 确认执行 + 验收报告）
+        self.daily_scanner = DailySourceScanner(self.file_manager)
+        self.daily_merge = DailyMergeService(
+            self.file_manager, self.presets, self.llm, self.lint, self.daily_scanner)
+        self.daily_runs = DailyRunService(
+            self.db, config, self.file_manager, self.presets, self.llm, self.audit,
+            self.daily_merge, self.daily_scanner)
 
     def startup(self) -> None:
         """启动流程：清理过期备份 + 播种内置预设 + 重建索引。"""
@@ -62,7 +72,7 @@ class Registry:
             removed, scan.agents_scanned, scan.files_indexed, (time.time() - t0) * 1000,
         )
 
-    # ---------- 配置中心（config.toml 可视化，v1.0 项） ----------
+    # ---------- 配置中心（config.toml 可视化） ----------
 
     def get_config_dict(self) -> dict:
         """返回当前生效配置（供前端展示）。"""
@@ -82,6 +92,12 @@ class Registry:
                 "show_other": c.advanced.show_other,
             },
             "openclaw": {"dir": str(c.openclaw_dir)},
+            "daily_standardizer": {
+                "max_days_per_run": c.daily_standardizer.max_days_per_run,
+                "token_budget": c.daily_standardizer.token_budget,
+                "provider_id": c.daily_standardizer.provider_id,
+                "dry_run_only": c.daily_standardizer.dry_run_only,
+            },
         }
 
     def update_config(self, patch: dict) -> dict:
@@ -119,6 +135,10 @@ class Registry:
                 c.advanced.show_memory = patch["advanced"]["show_memory"]
             if "show_other" in patch["advanced"]:
                 c.advanced.show_other = patch["advanced"]["show_other"]
+        if "daily_standardizer" in patch:
+            for key in ("max_days_per_run", "token_budget", "provider_id", "dry_run_only"):
+                if key in patch["daily_standardizer"]:
+                    setattr(c.daily_standardizer, key, patch["daily_standardizer"][key])
 
         self._persist_config(patch)
         logger.info("配置已更新：{}", patch)
@@ -139,7 +159,7 @@ class Registry:
             raw.setdefault(section, {}).update(values)
 
         lines: list[str] = []
-        for section in ("server", "backup", "lint", "ui", "advanced", "openclaw"):
+        for section in ("server", "backup", "lint", "ui", "advanced", "openclaw", "daily_standardizer"):
             values = raw.get(section)
             if not values:
                 continue

@@ -32,5 +32,6 @@ Closes #<issue-number> (if applicable)
 - [ ] No metadata written into Agent workspaces (data stays in `.soulforge/`)
 - [ ] All write operations go through the backup + audit pipeline
 - [ ] Documentation / comments updated if behavior changed
+- [ ] If this changes a release version: bumped `backend/app/__init__.py`, synced `frontend/package.json`, and added a `CHANGELOG.md` entry
 
 ## Screenshots (if applicable)

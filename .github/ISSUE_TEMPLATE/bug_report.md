@@ -31,7 +31,7 @@ What actually happened. If applicable, add screenshots to help explain the probl
 - OS: [e.g. Windows 11 / macOS / Linux]
 - Python version: [e.g. 3.10, 3.12]
 - Node.js version (if the frontend is involved): [e.g. 18, 20, 22]
-- Soulforge version: [e.g. 0.1.0 — see the Status bar or `GET /api/health`]
+- Soulforge version: [e.g. 0.5.0 — see the bottom-right of the Status bar, or `GET /api/health`]
 
 ## Logs
 

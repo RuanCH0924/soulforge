@@ -1,4 +1,4 @@
-"""路由：审计日志（v1.0：审计 UI 的后端接口）。"""
+"""路由：审计日志（数据中心「审计日志」视图的后端接口）。"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query

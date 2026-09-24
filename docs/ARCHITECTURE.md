@@ -1,6 +1,6 @@
 # Soulforge — 系统架构详解
 
-> 配套主文档 [DEVELOPMENT.md](../DEVELOPMENT.md) 的架构章节。
+> 配套主文档 [DEVELOPMENT.md](DEVELOPMENT.md) 的架构章节。
 
 ---
 
@@ -18,8 +18,7 @@
 │                                                              │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │  Router 层  (/api/*)                                │    │
-│  │  ├── /agents       Agent 管理路由                    │    │
-│  │  ├── /files        文件路由                         │    │
+│  │  ├── /agents       Agent 管理 + 文件读写/删除        │    │
 │  │  ├── /search       搜索路由                          │    │
 │  │  ├── /diff         diff 路由                         │    │
 │  │  ├── /sync         跨 Agent 同步路由                 │    │
@@ -27,7 +26,13 @@
 │  │  ├── /export       导出路由                          │    │
 │  │  ├── /backups      备份路由                          │    │
 │  │  ├── /lint         lint 路由                         │    │
-│  │  └── /stats        统计路由                          │    │
+│  │  ├── /stats        统计路由                          │    │
+│  │  ├── /audit        审计日志路由                      │    │
+│  │  ├── /config       配置中心路由                      │    │
+│  │  ├── /presets      文档预设路由（M11）              │    │
+│  │  ├── /llm          LLM Provider 路由（M12）         │    │
+│  │  ├── /ai           AI 整理任务路由（M13）           │    │
+│  │  └── /daily-runs   日志标准化批次路由（M15）        │    │
 │  └─────────────────────────────────────────────────────┘    │
 │                                                              │
 │  ┌─────────────────────────────────────────────────────┐    │
@@ -37,16 +42,29 @@
 │  │  ├── BackupService      自动备份 / 历史 / 回滚        │    │
 │  │  ├── SearchService      ripgrep 包装                  │    │
 │  │  ├── LintService        8 条规则执行                  │    │
-│  │  ├── DiffService        unified diff → HTML          │    │
+│  │  ├── DiffService        归一化 + unified diff        │    │
 │  │  ├── SyncService        跨 Agent 选择性合并           │    │
 │  │  ├── SuperSyncService   超级同步：启停 / 状态 / 日志 │    │
-│  │  └── ImportExport       Prompt Pack 导出             │    │
+│  │  ├── ImportExport       Prompt Pack 导出             │    │
+│  │  ├── PresetService      文档预设 CRUD + 应用（两类预设 │    │
+│  │  │                     的 scope 边界见 3.8）         │    │
+│  │  ├── TemplateRuleParser 模板规则解析 / 格式校验       │    │
+│  │  ├── LLMRegistry        多协议 LLM 注册表（热加载 +   │    │
+│  │  │                     截断识别/重试）                │    │
+│  │  ├── AIJobService       AI 整理任务生命周期          │    │
+│  │  ├── DailySourceScanner memory/ 日文件 A/B/C 分类     │    │
+│  │  ├── DailyMergeService  单日多来源 → 1 文件（M15）    │    │
+│  │  ├── DailyRunService    日志标准化批次编排（M15）     │    │
+│  │  ├── AuditService       审计日志                      │    │
+│  │  └── StatsService       统计聚合                      │    │
 │  └─────────────────────────────────────────────────────┘    │
 │                                                              │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │  Storage 层                                          │    │
 │  │  ├── SQLite (<data_dir>/index.db)                    │    │
 │  │  │     └── agents / files / backups / audit_log       │    │
+│  │  │         presets / preset_versions                 │    │
+│  │  │         llm_providers / ai_jobs                   │    │
 │  │  └── 文件系统（workspace / <data_dir>、super_sync/） │    │
 │  └─────────────────────────────────────────────────────┘    │
 │                                                              │
@@ -75,7 +93,9 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-app = FastAPI(title="Soulforge", version="0.1.0")
+from app import __version__   # 版本号唯一事实源（backend/app/__init__.py）
+
+app = FastAPI(title="Soulforge", version=__version__)
 
 # API 路由
 app.include_router(agents_router, prefix="/api/agents")
@@ -184,7 +204,7 @@ class FileManager:
 
 ```python
 class BackupService:
-    BACKUP_ROOT = Path("~/.soulforge/backups").expanduser()
+    BACKUP_ROOT = config.backups_dir   # <data_dir>/backups（默认 <项目根>/.soulforge/backups）
     RETENTION_DAYS = 30
 
     def backup(self, agent_id: str, file_path: str):
@@ -363,7 +383,7 @@ class ImportExportService:
 
         # 生成 manifest（SHA-256 校验信息）
         manifest = Manifest(
-            soulforge_version="0.1.0",
+            soulforge_version=__version__,   # 唯一事实源：backend/app/__init__.py
             export_time=datetime.now().isoformat(),
             agent_id=agent_id,
             files=[
@@ -399,8 +419,11 @@ class ImportExportService:
 class PresetService:
     """管理文档预设的 CRUD + 应用"""
 
-    def list(self, target_file_type: str | None = None) -> list[Preset]:
-        """列出预设（系统 + 用户）"""
+    def list(self, target_file_type: str | None = None,
+             scope: str = "all") -> list[Preset]:
+        """列出预设（已退役的内置预设不返回）
+        scope=workbench → 排除「专供大模型处理工作日志」的 WORKLOG 类预设
+        （设置页「文档预设」与主工作台「应用预设 / AI 整理」用它）"""
 
     def get(self, preset_id: str) -> Preset: ...
 
@@ -408,11 +431,11 @@ class PresetService:
         """创建用户预设，is_system=False"""
 
     def update(self, preset_id: str, payload: PresetUpdate) -> Preset:
-        """更新预设，系统预设仅允许改 description + style_rules
-        版本号 version 自增 +1，保留历史"""
+        """更新预设（所有预设均可改全部字段——内置预设播种即 is_system=0）
+        版本号 version 自增 +1，并写版本快照"""
 
     def delete(self, preset_id: str) -> None:
-        """删除用户预设，系统预设 → 403"""
+        """删除预设（内置预设也可删；删后重启不会重建）"""
 
     def apply_plan(
         self,
@@ -436,7 +459,12 @@ class PresetService:
 **关键设计**：
 - 预设与应用计划**解耦**：`apply_plan` 只读不写，生成纯计算结果
 - `apply_execute` 是唯一会写文件的入口，复用 `BackupService` 链路
-- 预设版本化：每次 `update` 自增 `version`，供老板迭代升级
+- 预设版本化：每次 `update` 自增 `version`，并写版本快照（可查看历史与回溯）
+- **两类预设的边界**（2026-09-24 收口）：`target_file_type = WORKLOG` 即「专供大模型处理工作日志」
+  （常量 `DAILY_PRESET_TYPE`），只在「业务工具 → 日志标准化」界面可见可编辑；
+  其余类型供主工作台加载。两侧过滤都在后端：`SCOPE_WORKBENCH` 排除 WORKLOG 类
+- `is_builtin`（是否随版本分发的内置预设）用于 UI 展示「预设来源」；
+  历史字段 `is_system` 恒为 `false`（内置预设与用户预设同等可编辑、可删除）
 
 ---
 
@@ -577,8 +605,8 @@ class AIJobService:
 **异步队列选型**：
 
 ```
-v1.0: asyncio.create_task()  ──── 单进程够用
-v1.x: ARQ / Celery / RQ       ──── 多 worker 时换
+当前：asyncio.create_task()   ──── 单进程够用
+将来：ARQ / Celery / RQ      ──── 多 worker 时换（Phase 3 再评估）
 ```
 
 当前 MVP 阶段用 `asyncio.create_task()`，单进程足够。
@@ -640,6 +668,54 @@ UI 每 2.5s 轮询一次（满足 ≤ 3s 延迟）并支持手动刷新。
 
 ---
 
+### 3.12 DailySourceScanner + DailyPreprocessor + DailyMergeService + DailyRunService（M15 · 工作日志标准化）
+
+> 目标：把某 Agent `memory/` 下一天的**多份**记录归并成**恰好 1 个** `YYYY-MM-DD.md`，
+> 剥掉元数据壳与对话腔、清理碎片。完整方案见
+> [MEMORY-DAILY-STANDARDIZER-PLAN.md](MEMORY-DAILY-STANDARDIZER-PLAN.md)。
+
+**四个服务（单日归并 → 批次编排）**：
+
+| 服务 | 文件 | 职责 |
+|---|---|---|
+| `DailySourceScanner` | `app/services/daily_source_scanner.py` | 只扫 `memory/` **顶层**，按文件名分 A（`YYYY-MM-DD.md`，系统自动生成的日文件）/ B（`YYYY-MM-DD-HHMM.md`，含 `-HHMM-2`）/ C（`YYYY-MM-DD-<topic>.md`）三类，按日分组、排出碎片、标出「单来源但质量差」 |
+| （预处理器） | `app/services/daily_preprocessor.py` | 12 条**确定性**规则（零 token）：真壳 M01~M10（会话键 / untrusted metadata / 引用壳 / 排队消息 / dreaming 统计壳 / 纯 `HEARTBEAT_OK` / 过程过渡语）+ 归一 M11/M12（BOM·换行·空白）。`SHELL_RULES` / `detect_residual_shells()` 只查真壳（归一不算残留） |
+| `DailyMergeService` | `app/services/daily_merge_service.py` | 单日多来源 → 1 文件：组装 prompt（模板规则 + `style_rules` + 骨架 + 带优先级来源）→ LLM → `sanitize()` → `FormatValidator` 强规则校验/机械修正；只出 `DailyMergePlan`，**不写盘、不删碎片** |
+| `DailyRunService` | `app/services/daily_run_service.py` | 批次编排：创建（幂等键 / 天数与 token 上限 / 后台逐日生成）→ 确认执行（批次级写前预检 + 乐观锁 → 写入 + 备份 + 审计 → 碎片 `send2trash`）→ 验收报告（对磁盘真实文件核对 5 项） |
+
+**规则分层（强 / 弱）**：
+
+- **强规则**（机械可判定，不过就拦）：`preset.template_md` 的 YAML frontmatter → `TemplateRules`
+  （必填章节 / 顺序 / 禁止 emoji / 禁止原始 HTML …）→ `FormatValidator.validate_and_fix()`；
+  写前验收还要求真壳残留 = 0（`detect_residual_shells()`）
+- **弱规则**（语义，交给模型）：`preset.style_rules` + 模板正文，注入 prompt；
+  形态默认 `system_embedded`（规则全文进 system prompt，P3 实测最优）
+
+**关键设计**：
+
+- **零污染写入**：`apply()` 是唯一写盘入口且只接受 `awaiting_confirm`；先对全部目标日做批次级预检
+  （SHA-256 乐观锁 + 写前验收），**任一日不过就整批不写**；碎片删除走 `send2trash` 可恢复
+- **「本日无可归档内容」出口**：模型可只回一行哨兵（`无可归档内容：<理由>`），命中则该日不产出日文件
+  （逐日状态 `empty` + `empty_reason`），只清 B/C 碎片、A 类主文件保持不动；识别从严
+  （`parse_empty_verdict()`：>3 行 / 含结构 / 首行非哨兵 → 当普通输出）
+- **失败归因如实**：`LLMClient.chat()` 读 `finish_reason`（Anthropic 为 `stop_reason`），
+  输出被 `max_tokens` 截断 → 自动以翻倍预算重试一次，仍截断则抛 `LLMOutputTruncatedError`
+  （`422` / `LLM_OUTPUT_TRUNCATED`），不报成「强规则未通过」
+- **状态机**：批次 `planned → awaiting_confirm → applied / partially_applied / needs_review /
+  rejected / failed / empty`；逐日 `pending / planned / blocked / applied / partially_applied /
+  skipped / empty / failed`（见 [DATA-MODEL.md](DATA-MODEL.md) 2.9）
+- **与 M13 隔离**：不复用 `ai_jobs`（保持单文件语义），批次独立两表 `daily_runs` / `daily_run_items`
+
+**规则载体（预设）**：`preset-wlog-daily-std`「工作日志日标准化」（`target_file_type=WORKLOG`），
+属于「大模型专用」预设——只在日志标准化界面可见可编辑（预设信息栏 + 页内编辑器，
+可改用途说明 / 模板文档 / `style_rules`），文档预设页与主工作台按 `scope=workbench` 排除（见 3.8）。
+
+**API**：`/api/daily-runs` 6 个端点（创建 / 列表 / 详情 / 应用 / 拒绝 / 跳过 / 报告，见 [API.md](API.md) 3.15）；
+错误码 `DAILY_RUN_NOT_FOUND`（404）/ `DAILY_RUN_STATUS`（409）/ `DAILY_RUN_DISABLED`（403）/
+`DAILY_SOURCE_TOO_LARGE`（422）/ `LLM_OUTPUT_TRUNCATED`（422）。
+
+---
+
 ## 四、错误处理
 
 ### 4.1 后端
@@ -678,9 +754,9 @@ async def handle_soulforge_error(request, exc):
 
 ### 4.2 前端
 
-- 用 `react-error-boundary` 包裹关键区域
-- API 错误用 TanStack Query 自动重试 + 错误提示
-- 关键操作失败 → Toast 显示错误信息 + 「重试」按钮
+- 用自研 `components/ErrorBoundary.tsx` 包裹关键区域
+- API 错误统一由 `api/client.ts` 抛出 `ApiError {code, message, details}`，调用处用 Toast 提示
+- 关键操作失败 → Toast 显示错误信息（不引入状态管理 / 请求缓存库）
 
 ---
 
@@ -702,7 +778,7 @@ async def handle_soulforge_error(request, exc):
 
 ## 六、技术债与未来扩展
 
-- **配置中心化**：lint 规则、备份保留策略走 `~/.soulforge/config.toml`，不硬编码
-- **插件机制**：让 lint 规则、模板可由第三方贡献（v2.0+ 考虑）
-- **WebSocket**：实时同步多端（暂不需要）
-- **审计日志界面**：前端展示 audit_log 表（v1.0）
+- **配置中心化**：lint 规则、备份保留策略走 `<data_dir>/config.toml`（默认 `<项目根>/.soulforge/config.toml`），不硬编码
+- **插件机制**：让 lint 规则、文档预设可由第三方贡献（Phase 3 考虑）
+- **WebSocket**：实时同步多端（暂不需要，超级同步已用独立进程 + 轮询覆盖）
+- **AI 自动修复 lint 违规**：当前 AI 整理仅按预设重排全文，尚未做行级定向修复

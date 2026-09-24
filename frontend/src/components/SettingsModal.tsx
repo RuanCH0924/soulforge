@@ -153,8 +153,13 @@ export function SettingsModal({ onClose, embedded }: SettingsModalProps) {
       <div className="section-title" style={{ marginTop: 20 }}>
         服务端配置（写入 config.toml，全端生效）
       </div>
-      <button className="btn" style={{ marginBottom: 12 }} onClick={() => setShowLLM(true)}>
-        管理 LLM Provider（AI 模型接入）
+      <button
+        className="btn"
+        style={{ marginBottom: 12 }}
+        onClick={() => setShowLLM(true)}
+        title="管理 LLM Provider（AI 模型接入）"
+      >
+        管理模型
       </button>
       {loadError ? (
         <div className="hint" style={{ color: 'var(--danger, #d9534f)' }}>
@@ -201,6 +206,9 @@ export function SettingsModal({ onClose, embedded }: SettingsModalProps) {
             />
             严格模式（Lint 违规阻止保存）
           </label>
+          <div className="hint" style={{ marginBottom: 8 }}>
+            检查哪些内容：见「数据中心 → 检查报告」顶部的规则清单。
+          </div>
           <div className="field">
             <label>默认文件视图</label>
             <select

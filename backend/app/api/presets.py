@@ -13,9 +13,11 @@ from app.models.schemas import (
     PresetApplyExecuteRequest,
     PresetApplyRequest,
     PresetCreate,
-    PresetUpdate,
+    PresetFromDocument,
     PresetTargetType,
+    PresetUpdate,
 )
+from app.services.preset_service import SCOPE_ALL
 from app.services.registry import Registry
 
 router = APIRouter(prefix="/api/presets", tags=["presets"])
@@ -24,18 +26,31 @@ VALID_TARGET_TYPES = set(PresetTargetType.__args__)
 
 
 @router.get("")
-def list_presets(target_file_type: str | None = Query(None), reg: Registry = Depends(get_registry)):
-    """列出全部预设（系统 + 用户），可按适用文件类型过滤。"""
+def list_presets(target_file_type: str | None = Query(None),
+                 scope: str = Query(SCOPE_ALL),
+                 reg: Registry = Depends(get_registry)):
+    """列出预设（系统 + 用户），可按适用文件类型过滤。
+
+    `scope=workbench` → 排除「专供大模型处理工作日志」的预设（`target_file_type=WORKLOG`）：
+    设置页「文档预设」与主工作台「应用预设」用它，只展示主工作台加载用的预设。
+    """
     if target_file_type is not None and target_file_type not in VALID_TARGET_TYPES:
         raise BadRequestError(
             f"非法 target_file_type：{target_file_type}，可选 {sorted(VALID_TARGET_TYPES)}")
-    return ok([p.model_dump() for p in reg.presets.list(target_file_type)])
+    # scope 合法性由服务层校验（唯一校验点，错误信息含可选值）
+    return ok([p.model_dump() for p in reg.presets.list(target_file_type, scope)])
 
 
 @router.post("", status_code=201)
 def create_preset(body: PresetCreate, reg: Registry = Depends(get_registry)):
     """创建用户预设（is_system=false，version=1）。"""
     return ok(reg.presets.create(body).model_dump())
+
+
+@router.post("/from-document", status_code=201)
+def create_preset_from_document(body: PresetFromDocument, reg: Registry = Depends(get_registry)):
+    """由当前文档生成预设（编辑栏「设为预设」）：内容作模板正文 + 用户填写规则参数。"""
+    return ok(reg.presets.create_from_document(body).model_dump())
 
 
 @router.get("/{preset_id}")
@@ -46,13 +61,13 @@ def get_preset(preset_id: str, reg: Registry = Depends(get_registry)):
 
 @router.put("/{preset_id}")
 def update_preset(preset_id: str, body: PresetUpdate, reg: Registry = Depends(get_registry)):
-    """编辑预设（version 自增 +1）。系统预设仅允许改 description + style_rules。"""
+    """编辑预设（version 自增 +1，并写版本快照；所有预设均可改全部字段）。"""
     return ok(reg.presets.update(preset_id, body).model_dump())
 
 
 @router.delete("/{preset_id}")
 def delete_preset(preset_id: str, reg: Registry = Depends(get_registry)):
-    """删除用户预设；系统预设 → 403。"""
+    """删除预设（内置预设也可删；删后不会在下次启动被重建）。"""
     reg.presets.delete(preset_id)
     return ok({"id": preset_id, "deleted": True})
 

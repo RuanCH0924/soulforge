@@ -1,4 +1,4 @@
-"""路由：配置中心（v1.0 项）—— 可视化读写 config.toml。
+"""路由：配置中心 —— 可视化读写 config.toml。
 
 注：lint 严格模式 / 备份保留天数等改动立即生效；server.host/port 需重启服务。
 """
@@ -47,6 +47,13 @@ class OpenClawCfg(BaseModel):
     dir: str | None = None
 
 
+class DailyStandardizerCfg(BaseModel):
+    max_days_per_run: int | None = Field(None, ge=1, le=366, description="单批天数上限")
+    token_budget: int | None = Field(None, ge=0, description="单批 token 预算，0 = 不限")
+    provider_id: str | None = Field(None, description="默认 LLM provider")
+    dry_run_only: bool | None = Field(None, description="关闭执行（只出计划）开关")
+
+
 class ConfigUpdate(BaseModel):
     server: ServerCfg | None = None
     backup: BackupCfg | None = None
@@ -54,6 +61,7 @@ class ConfigUpdate(BaseModel):
     ui: UICfg | None = None
     advanced: AdvancedCfg | None = None
     openclaw: OpenClawCfg | None = None
+    daily_standardizer: DailyStandardizerCfg | None = None
 
 
 @router.get("")

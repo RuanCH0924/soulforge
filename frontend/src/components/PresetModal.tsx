@@ -13,8 +13,13 @@ interface PresetModalProps {
   embedded?: boolean;
 }
 
+/**
+ * 可在本页新建 / 编辑的适用类型：**不含 WORKLOG**。
+ * WORKLOG 类预设专供大模型处理工作日志（M15 日志标准化），只在
+ * 业务工具 → 日志标准化 界面里可见与编辑；本页列表也会排除它们（见 load()）。
+ */
 const TARGET_TYPES: PresetTargetType[] = [
-  'SOUL', 'AGENTS', 'MEMORY', 'USER', 'IDENTITY', 'TOOLS', 'WORKLOG', 'ANY',
+  'SOUL', 'AGENTS', 'MEMORY', 'USER', 'IDENTITY', 'TOOLS', 'ANY',
 ];
 
 /** 默认模板文档（新建预设时使用） */
@@ -155,7 +160,8 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
   const load = () => {
     setLoading(true);
     api
-      .listPresets()
+      // scope=workbench：排除「专供大模型处理工作日志」的预设（WORKLOG 类）
+      .listPresets(undefined, 'workbench')
       .then(setPresets)
       .catch((e) => toast(`加载预设失败：${(e as Error).message}`, 'error'))
       .finally(() => setLoading(false));
@@ -370,6 +376,10 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
                 </option>
               ))}
             </select>
+            <div className="hint" style={{ marginTop: 4 }}>
+              工作日志（WORKLOG）类预设专供大模型归并日志使用，在「业务工具 → 日志标准化」界面里查看与编辑，
+              本页不展示。
+            </div>
           </div>
           <div className="field">
             <label>用途说明</label>
@@ -438,8 +448,12 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
                     {v.description ? ` · ${v.description}` : ''}
                   </div>
                 </div>
-                <button className="btn btn-ghost btn-sm" onClick={() => setConfirmRestore(v)}>
-                  回溯到此版本
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setConfirmRestore(v)}
+                  title="回溯到此版本（恢复为该版本的完整内容）"
+                >
+                  回溯版本
                 </button>
               </div>
             ))}
