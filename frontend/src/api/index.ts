@@ -41,6 +41,12 @@ import type {
   ScanResult,
   SearchResult,
   StatsResult,
+  SummaryRun,
+  SummaryRunCleanupResult,
+  SummaryRunCreateResult,
+  SummaryRunReport,
+  SummaryRunStatus,
+  SummaryRunSummary,
   SuperSyncConfig,
   SuperSyncLogResult,
   SuperSyncStatus,
@@ -278,6 +284,37 @@ export const api = {
   /** 验收报告（对磁盘真实文件核对，只读可重复跑） */
   dailyRunReport: (runId: string) =>
     request<DailyRunReport>('GET', `/api/daily-runs/${encodeURIComponent(runId)}/report`),
+
+  // ---- M16 工作日志总结（记忆归纳，Phase 2.6） ----
+  /** 创建归纳批次（异步生成计划，立即返回 planned） */
+  createSummaryRun: (body: {
+    agent_id: string;
+    date_from: string;
+    date_to: string;
+    preset_id?: string;
+    provider_id: string;
+    extra_instructions?: string;
+  }) => request<SummaryRunCreateResult>('POST', '/api/summary-runs', { json: body }),
+  listSummaryRuns: (params?: { agent_id?: string; status?: SummaryRunStatus; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.agent_id) q.set('agent_id', params.agent_id);
+    if (params?.status) q.set('status', params.status);
+    if (params?.limit !== undefined) q.set('limit', String(params.limit));
+    return request<SummaryRunSummary[]>('GET', `/api/summary-runs?${q.toString()}`);
+  },
+  getSummaryRun: (runId: string) =>
+    request<SummaryRun>('GET', `/api/summary-runs/${encodeURIComponent(runId)}`),
+  /** 确认写入汇总文件（写前验收 + 乐观锁）；源文件默认不动 */
+  applySummaryRun: (runId: string) =>
+    request<SummaryRun>('POST', `/api/summary-runs/${encodeURIComponent(runId)}/apply`),
+  rejectSummaryRun: (runId: string) =>
+    request<SummaryRun>('POST', `/api/summary-runs/${encodeURIComponent(runId)}/reject`),
+  /** 可选动作：清理该范围内的源文件（移入系统回收站），仅在汇总已写入后可用 */
+  cleanupSummarySources: (runId: string) =>
+    request<SummaryRunCleanupResult>('POST', `/api/summary-runs/${encodeURIComponent(runId)}/cleanup-sources`),
+  /** 验收报告（对磁盘真实文件核对，只读可重复跑） */
+  summaryRunReport: (runId: string) =>
+    request<SummaryRunReport>('GET', `/api/summary-runs/${encodeURIComponent(runId)}/report`),
 
   // ---- 超级同步（独立守护脚本） ----
   superSyncConfig: () => request<SuperSyncConfig>('GET', '/api/super-sync/config'),

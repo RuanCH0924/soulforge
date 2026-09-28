@@ -30,6 +30,7 @@ from app.api import (
     presets,
     search,
     stats,
+    summary,
     super_sync,
     sync,
 )
@@ -99,6 +100,7 @@ def create_app(registry: Registry | None = None) -> FastAPI:
     app.include_router(llm.router)
     app.include_router(ai.router)
     app.include_router(daily.router)
+    app.include_router(summary.router)
 
     # 健康检查（不发外部请求）；响应与全站一致，走统一 {data, meta} 包装
     @app.get("/api/health")

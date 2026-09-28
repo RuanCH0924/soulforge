@@ -171,3 +171,29 @@ class DailyRunDisabledError(SoulforgeError):
 
     http_status = 403
     code = "DAILY_RUN_DISABLED"
+
+
+class SummaryRunNotFoundError(SoulforgeError):
+    http_status = 404
+    code = "SUMMARY_RUN_NOT_FOUND"
+
+
+class SummaryRunStatusError(SoulforgeError):
+    """归纳批次状态机非法流转（如对非 awaiting_confirm 的批次确认写入）。"""
+
+    http_status = 409
+    code = "SUMMARY_RUN_STATUS"
+
+
+class SummaryRunDisabledError(SoulforgeError):
+    """执行被全局开关关闭（config.toml 的 summarizer.dry_run_only=true）→ 只允许出计划。"""
+
+    http_status = 403
+    code = "SUMMARY_RUN_DISABLED"
+
+
+class SummarySourceTooLargeError(SoulforgeError):
+    """归纳来源过大（分块摘要后仍超上限）→ 本次转人工复核，不做无上限的 token 消耗。"""
+
+    http_status = 422
+    code = "SUMMARY_SOURCE_TOO_LARGE"

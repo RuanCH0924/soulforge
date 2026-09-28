@@ -422,7 +422,7 @@ class PresetService:
     def list(self, target_file_type: str | None = None,
              scope: str = "all") -> list[Preset]:
         """列出预设（已退役的内置预设不返回）
-        scope=workbench → 排除「专供大模型处理工作日志」的 WORKLOG 类预设
+        scope=workbench → 排除大模型专用预设（WORKLOG / SUMMARY 类）
         （设置页「文档预设」与主工作台「应用预设 / AI 整理」用它）"""
 
     def get(self, preset_id: str) -> Preset: ...
@@ -460,9 +460,11 @@ class PresetService:
 - 预设与应用计划**解耦**：`apply_plan` 只读不写，生成纯计算结果
 - `apply_execute` 是唯一会写文件的入口，复用 `BackupService` 链路
 - 预设版本化：每次 `update` 自增 `version`，并写版本快照（可查看历史与回溯）
-- **两类预设的边界**（2026-09-24 收口）：`target_file_type = WORKLOG` 即「专供大模型处理工作日志」
-  （常量 `DAILY_PRESET_TYPE`），只在「业务工具 → 日志标准化」界面可见可编辑；
-  其余类型供主工作台加载。两侧过滤都在后端：`SCOPE_WORKBENCH` 排除 WORKLOG 类
+- **两类预设的边界**（2026-09-24 收口，2026-09-26 扩展 SUMMARY）：`target_file_type = WORKLOG`
+  即「专供大模型处理工作日志」（常量 `DAILY_PRESET_TYPE`），`target_file_type = SUMMARY` 即
+  「专供大模型做记忆归纳」（常量 `SUMMARY_PRESET_TYPE`）；二者只在「业务工具 → 日志标准化 /
+  日志总结」界面可见可编辑，其余类型供主工作台加载。两侧过滤都在后端：
+  `SCOPE_WORKBENCH` 排除 `LLM_ONLY_PRESET_TYPES`（= WORKLOG + SUMMARY）
 - `is_builtin`（是否随版本分发的内置预设）用于 UI 展示「预设来源」；
   历史字段 `is_system` 恒为 `false`（内置预设与用户预设同等可编辑、可删除）
 
@@ -713,6 +715,51 @@ UI 每 2.5s 轮询一次（满足 ≤ 3s 延迟）并支持手动刷新。
 **API**：`/api/daily-runs` 6 个端点（创建 / 列表 / 详情 / 应用 / 拒绝 / 跳过 / 报告，见 [API.md](API.md) 3.15）；
 错误码 `DAILY_RUN_NOT_FOUND`（404）/ `DAILY_RUN_STATUS`（409）/ `DAILY_RUN_DISABLED`（403）/
 `DAILY_SOURCE_TOO_LARGE`（422）/ `LLM_OUTPUT_TRUNCATED`（422）。
+
+---
+
+### 3.13 SummaryService（M16 · 工作日志总结 / 记忆归纳）
+
+> 目标：把某 Agent `memory/` 下**一段日期范围**的分散记录归纳成**1 份**综述
+> （完成的工作 / 经验教训 / 重要决定 / 重要信息 / 待办事项 + 可选附录溯源表）。
+> 规则契约来自外部 skill `memory-summarize`（模式 A：月度 / 主题归纳）。
+
+**与 M15 的关系（刻意的边界，为什么另起一个服务）**：
+
+| 维度 | M15 日志标准化 | M16 记忆归纳 |
+|---|---|---|
+| 粒度 | 同一天多来源 → 1 个日文件（**逐日**） | 一段时间的全部来源 → **1 份**产物 |
+| 表 | `daily_runs` + `daily_run_items`（两表） | `summary_runs`（单表，无逐日条目） |
+| 产物命名 | 恒为 `memory/YYYY-MM-DD.md` | 整月 → `memory/YYYY-MM.md`；否则 `memory/<起>_<止>.md`（后缀 `-记忆归纳`） |
+| 源文件 | 归并后清理 B/C 碎片（`send2trash`） | **默认不动**；`cleanup-sources` 是写入确认后单独触发的可选动作 |
+| 规则载体 | `preset-wlog-daily-std`（`target_file_type=WORKLOG`） | `preset-mem-summarize`（`target_file_type=SUMMARY`） |
+
+**复用与新增**：
+
+- 复用 M15 的 `DailySourceScanner`（按范围收集 A/B/C 类来源）、`DailyPreprocessor`
+  （零 token 剥壳）、`FormatValidator`（强规则校验 / 机械修正 / `sanitize`）、
+  `DiffService.unified_diff`、`FileManager`（读写与回收站删除）、`AuditService`
+- 新增 `app/services/summary_service.py`：单次归纳编排 ——
+  扫描 → 预处理（超限来源分块摘要）→ 组装 prompt（模板规则 + `style_rules` + 骨架 + 带日期来源）
+  → LLM → 强规则校验 → 落库（`planned` → `awaiting_confirm`）
+- 产物命名由 `output_path_for()` 唯一决定（`_is_full_month()` 判整月），前后端同一口径
+
+**关键设计**：
+
+- **零污染写入**：`apply()` 是唯一写盘入口且只接受 `awaiting_confirm`；写前做目标文件 SHA-256
+  乐观锁（`source_hashes_json` 同时含全部来源与目标文件）+ 写前验收（强规则 ok + 真壳残留 = 0），
+  不过则不写任何文件（落 `needs_review`）；目标被外部改动 → `409 CONFLICT`
+- **只读归纳**：默认不删除任何源文件；`cleanup_sources()` 额外校验「产物已写入」「未清理过」，
+  且永不删除产物自身
+- **合规出口**：模型判定某来源无价值时靠 prompt 弱规则去重/丢弃，不做「整批放弃」的哨兵
+  （空范围由扫描结果确定性地落 `empty`，不调 LLM）
+- **护栏**：日期跨度上限 `summarizer.max_days_per_run`、来源数上限 180、prompt 体积上限 200KB、
+  单来源分块上限 6；全局「只出计划」开关 `summarizer.dry_run_only`
+- **与 M13 / M15 隔离**：不复用 `ai_jobs` 与 `daily_runs`，各自独立状态机
+
+**API**：`/api/summary-runs` 6 个端点（创建 / 列表 / 详情 / 写入 / 拒绝 / 清理源文件 / 报告，
+见 [API.md](API.md) 3.16）；错误码 `SUMMARY_RUN_NOT_FOUND`（404）/ `SUMMARY_RUN_STATUS`（409）/
+`SUMMARY_RUN_DISABLED`（403）/ `SUMMARY_SOURCE_TOO_LARGE`（422）/ `CONFLICT`（409）。
 
 ---
 

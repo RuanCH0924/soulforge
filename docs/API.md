@@ -23,7 +23,7 @@
 ```json
 {
   "data": { ... },
-  "meta": { "timestamp": 1754478710, "version": "0.5.0" }
+  "meta": { "timestamp": 1754478710, "version": "0.5.2" }
 }
 ```
 
@@ -654,13 +654,14 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 
 | 参数 | 说明 |
 |---|---|
-| `target_file_type` | 可选，按适用文件类型过滤（`SOUL` / `AGENTS` / `MEMORY` / `USER` / `IDENTITY` / `TOOLS` / `WORKLOG` / `ANY`） |
-| `scope` | 可选，`all`（缺省）或 `workbench`。`workbench` = **主工作台 / 设置页用**：排除「专供大模型处理工作日志」的预设（即 `target_file_type=WORKLOG`），只留下供主工作台加载的预设。非法值 → `400 BAD_REQUEST` |
+| `target_file_type` | 可选，按适用文件类型过滤（`SOUL` / `AGENTS` / `MEMORY` / `USER` / `IDENTITY` / `TOOLS` / `WORKLOG` / `SUMMARY` / `ANY`） |
+| `scope` | 可选，`all`（缺省）或 `workbench`。`workbench` = **主工作台 / 设置页用**：排除「专供大模型处理工作日志」的预设（即 `target_file_type` ∈ `WORKLOG` / `SUMMARY`），只留下供主工作台加载的预设。非法值 → `400 BAD_REQUEST` |
 
 > 两类预设的边界（UI-SPECS §5.7）：`target_file_type=WORKLOG` 的预设是 M15 日志标准化的规则载体，
-> 只在「业务工具 → 日志标准化」界面（及其 API）可见、可编辑；设置页「文档预设」与主工作台
-> 「应用预设 / AI 整理」都传 `scope=workbench`，因此不会出现它们。日志标准化界面按
-> `?target_file_type=WORKLOG` 取（不传 `scope`）。
+> `target_file_type=SUMMARY` 的是 M16 记忆归纳的规则载体，二者都只在「业务工具 → 日志标准化 /
+> 日志总结」界面（及其 API）可见、可编辑；设置页「文档预设」与主工作台
+> 「应用预设 / AI 整理」都传 `scope=workbench`，因此不会出现它们。对应界面按
+> `?target_file_type=WORKLOG`（或 `SUMMARY`）取（不传 `scope`）。
 
 ```json
 {
@@ -1156,7 +1157,7 @@ python super_sync.py --once        # 只执行一轮（自检）
 
 ```json
 {
-  "data": { "status": "ok", "version": "0.5.0" }
+  "data": { "status": "ok", "version": "0.5.2" }
 }
 ```
 
@@ -1408,6 +1409,144 @@ python super_sync.py --once        # 只执行一轮（自检）
   }
 }
 ```
+
+---
+
+### 3.16 工作日志总结（M16）
+
+把某个 Agent `memory/` 下指定日期范围的分散记录（每日文件 / 会话导出 / 主题碎片）归纳为
+**1 份综述文档**（完成的工作 / 经验教训 / 重要决定 / 重要信息 / 待办事项 + 可选附录溯源表）。
+规则契约来自外部 skill `memory-summarize`（模式 A）。与 M15 同构：**计划与写入分离**——
+先出计划（只读、不落盘），人看完 diff 确认后才写入；**源文件默认不动**，清理是写入后单独触发的可选动作。
+
+产物命名：范围为**整月** → `memory/YYYY-MM-记忆归纳.md`；否则 → `memory/<起>_<止>-记忆归纳.md`。
+
+#### `POST /api/summary-runs`
+
+创建归纳批次。**异步**：立即返回 `202`，后台生成计划（`planned` → `awaiting_confirm`）。
+命中幂等键（同 Agent / 范围 / 预设版本 / provider / 来源与目标内容）时直接复用既有批次，
+不产生第二次 LLM 调用。
+
+**请求**：
+
+```json
+{
+  "agent_id": "main",
+  "date_from": "2026-08-01",
+  "date_to": "2026-08-31",
+  "preset_id": "preset-mem-summarize",
+  "provider_id": "openai-main",
+  "extra_instructions": "「完成的工作」按项目分类"
+}
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `agent_id` | ✅ | Agent id |
+| `date_from` / `date_to` | ✅ | `YYYY-MM-DD`；范围内 `memory/` 顶层的 A/B/C 类日文件都会被归纳 |
+| `preset_id` | — | 默认 `preset-mem-summarize`（内置「工作日志总结（记忆归纳）」） |
+| `provider_id` | ✅ | 必须存在且启用 |
+| `extra_instructions` | — | 附加指令 |
+
+**响应**（`202`）：
+
+```json
+{
+  "data": {
+    "run_id": "run-3f6b1c0d9a2e4b7f8c1d5e6a7b8c9d0e",
+    "status": "planned",
+    "source_count": 34,
+    "reused": false,
+    "created_at": 1758700000
+  }
+}
+```
+
+**错误**：
+
+| 场景 | HTTP | code |
+|---|---|---|
+| `date_from` / `date_to` 含 `/`、`\`、`..` | `403` | `UNSAFE_PATH` |
+| 日期不是合法 `YYYY-MM-DD` 或 `date_from > date_to` | `400` | `BAD_REQUEST` |
+| 日期跨度 > `summarizer.max_days_per_run` | `400` | `BAD_REQUEST` |
+| 来源数 > 180 | `400` | `BAD_REQUEST` |
+| `preset_id` / `provider_id` 不存在或未启用 | `404` | `NOT_FOUND` |
+
+> 该范围没有任何可归纳的来源时，批次直接落 `empty`（`source_count=0`），不发起 LLM 调用。
+
+#### `GET /api/summary-runs`
+
+批次列表（按创建时间倒序）。
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `agent_id` | string | — | 按 Agent 过滤 |
+| `status` | string | — | 按状态过滤 |
+| `limit` | int | `50` | 1–200 |
+
+#### `GET /api/summary-runs/{run_id}`
+
+批次详情：来源清单（`path` / `date` / `kind` / 体积 / 剥壳行数 / 是否分块摘要）、产物正文
+`output_content`、`unified_diff` / `html_diff`、强规则报告 `format_report`、`notes`、
+以及清理结果 `deleted_sources` / `failed_sources`。
+
+#### `POST /api/summary-runs/{run_id}/apply`
+
+确认写入汇总文件。写前按批次的源文件哈希做**乐观锁**，再跑写前验收（强规则 ok 且低价值元数据壳残留 = 0），
+通过后写入（自动备份同名产物 + 审计），随后返回更新后的批次。
+
+| 场景 | HTTP | code |
+|---|---|---|
+| 非 `awaiting_confirm` 状态 | `409` | `SUMMARY_RUN_STATUS` |
+| 全局开关 `summarizer.dry_run_only=true` | `403` | `SUMMARY_RUN_DISABLED` |
+| 目标文件已被外部改动 | `409` | `CONFLICT`（`details.output_path` / `details.reason`） |
+| 写前验收不过 | `200` | —（落 `needs_review` + `error`，**不写入任何文件**） |
+
+#### `POST /api/summary-runs/{run_id}/reject`
+
+拒绝批次（**不写入任何文件**）。仅 `planned` / `awaiting_confirm` 可拒绝，其余 → `409 SUMMARY_RUN_STATUS`。
+
+#### `POST /api/summary-runs/{run_id}/cleanup-sources`
+
+**可选动作**：把该批次范围内的**源文件**移入系统回收站（可恢复）。仅在汇总文件**已写入**后可调用，
+且不可重复执行（→ `409`）。产物自身永不删除。
+
+```json
+{
+  "data": {
+    "run_id": "run-3f6b1c0d9a2e4b7f8c1d5e6a7b8c9d0e",
+    "deleted": ["memory/2026-08-01.md", "memory/2026-08-01-1415.md"],
+    "failed": []
+  }
+}
+```
+
+#### `GET /api/summary-runs/{run_id}/report`
+
+验收报告（对磁盘上的真实文件核对，只读、可重复跑）：
+
+```json
+{
+  "data": {
+    "run_id": "run-3f6b1c0d9a2e4b7f8c1d5e6a7b8c9d0e",
+    "agent_id": "main",
+    "status": "applied",
+    "passed": true,
+    "output_path": "memory/2026-08-记忆归纳.md",
+    "delivered": true,
+    "naming_ok": true,
+    "sections_ok": true,
+    "no_residue": true,
+    "sources_ok": true,
+    "tokens_used": 24680,
+    "cost_estimate_usd": 0.0617,
+    "generated_at": 1758700300,
+    "details": []
+  }
+}
+```
+
+> `sources_ok` 的口径：未清理时要求源文件都还在；已清理（`cleanup_at` 非空）时要求列表里的源文件都已不在磁盘上。
 
 ---
 

@@ -81,6 +81,22 @@ class DailyStandardizerConfig:
 
 
 @dataclass
+class SummarizerConfig:
+    """工作日志总结（记忆归纳，M16）护栏。触发方式同样是手动批次，**不含任何定时字段**。
+
+    - `max_days_per_run`：单次归纳的日期跨度上限（天）
+    - `token_budget`：单次 token 预算，0 = 不限
+    - `provider_id`：默认 LLM provider（UI 可覆盖）
+    - `dry_run_only`：全局「关闭执行（只出计划）」开关
+    """
+
+    max_days_per_run: int = 62
+    token_budget: int = 300_000
+    provider_id: str = ""
+    dry_run_only: bool = False
+
+
+@dataclass
 class Config:
     data_dir: Path
     openclaw_dir: Path
@@ -91,6 +107,7 @@ class Config:
     advanced: AdvancedConfig = field(default_factory=AdvancedConfig)
     openclaw: OpenClawConfig = field(default_factory=OpenClawConfig)
     daily_standardizer: DailyStandardizerConfig = field(default_factory=DailyStandardizerConfig)
+    summarizer: SummarizerConfig = field(default_factory=SummarizerConfig)
 
     # ---- 派生路径 ----
     @property
@@ -134,6 +151,7 @@ def load_config() -> Config:
     advanced_raw = section("advanced")
     openclaw_raw = section("openclaw")
     daily_raw = section("daily_standardizer")
+    summary_raw = section("summarizer")
 
     openclaw_dir = Path(openclaw_raw.get("dir", "")).expanduser() if openclaw_raw.get("dir") else openclaw_dir
 
@@ -168,5 +186,11 @@ def load_config() -> Config:
             token_budget=int(daily_raw.get("token_budget", 200_000)),
             provider_id=str(daily_raw.get("provider_id", "")),
             dry_run_only=bool(daily_raw.get("dry_run_only", False)),
+        ),
+        summarizer=SummarizerConfig(
+            max_days_per_run=int(summary_raw.get("max_days_per_run", 62)),
+            token_budget=int(summary_raw.get("token_budget", 300_000)),
+            provider_id=str(summary_raw.get("provider_id", "")),
+            dry_run_only=bool(summary_raw.get("dry_run_only", False)),
         ),
     )

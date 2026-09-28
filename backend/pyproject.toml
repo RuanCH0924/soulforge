@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "soulforge"
 # 版本号唯一事实源：backend/app/__init__.py 的 __version__
 # 本行必须与其保持一致，由 tests/test_version.py 自动校验（防漂移）
-version = "0.5.0"
+version = "0.5.2"
 description = "Soulforge — OpenClaw 跨 Agent system-prompt 文件管理器"
 requires-python = ">=3.10"
 dependencies = [

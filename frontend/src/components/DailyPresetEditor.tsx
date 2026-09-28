@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { api } from '../api';
 import type { Preset } from '../types';
 import { Modal } from './Modal';
@@ -8,7 +9,18 @@ interface DailyPresetEditorProps {
   /** 保存成功回调：父组件负责刷新列表、提示生效时机 */
   onSaved: (saved: Preset) => void;
   onClose: () => void;
+  /** 弹窗标题前缀（默认「编辑工作日志预设」）；日志总结界面会换成自己的口径 */
+  titlePrefix?: string;
+  /** 顶部说明（默认面向 M15 日志标准化；日志总结界面传入自己的说明） */
+  notice?: ReactNode;
 }
+
+const DEFAULT_NOTICE = (
+  <>
+    本预设<b>专供大模型归并工作日志</b>使用（不出现在主工作台与文档预设页）。
+    保存后 <b>version +1</b> 并写入版本历史；<b>重新生成批次即生效</b>，已生成的计划不会重算。
+  </>
+);
 
 /**
  * 工作日志标准化预设编辑器（M15 页内）。
@@ -20,7 +32,7 @@ interface DailyPresetEditorProps {
  * 保存走 `PUT /api/presets/{id}`：version +1 并留版本快照；改 `template_md` 时后端会
  * 重新派生 `sections_json`，所以章节列表不需要（也不应该）在这里单独编辑。
  */
-export function DailyPresetEditor({ presetId, onSaved, onClose }: DailyPresetEditorProps) {
+export function DailyPresetEditor({ presetId, onSaved, onClose, titlePrefix, notice }: DailyPresetEditorProps) {
   const [preset, setPreset] = useState<Preset | null>(null);
   const [description, setDescription] = useState('');
   const [templateMd, setTemplateMd] = useState('');
@@ -69,7 +81,7 @@ export function DailyPresetEditor({ presetId, onSaved, onClose }: DailyPresetEdi
 
   return (
     <Modal
-      title={`编辑工作日志预设 — ${preset?.name ?? presetId}`}
+      title={`${titlePrefix ?? '编辑工作日志预设'} — ${preset?.name ?? presetId}`}
       onClose={onClose}
       width={900}
       footer={
@@ -85,8 +97,7 @@ export function DailyPresetEditor({ presetId, onSaved, onClose }: DailyPresetEdi
       }
     >
       <div className="alert-banner info">
-        本预设<b>专供大模型归并工作日志</b>使用（不出现在主工作台与文档预设页）。
-        保存后 <b>version +1</b> 并写入版本历史；<b>重新生成批次即生效</b>，已生成的计划不会重算。
+        {notice ?? DEFAULT_NOTICE}
       </div>
 
       {error && (

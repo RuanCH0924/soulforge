@@ -236,9 +236,85 @@ modules:
 - ...
 """
 
+# 「工作日志总结（记忆归纳）」（M16 的规则载体）：把一段时间的分散记录归纳成**单份**综述，
+# 契约来自外部 skill `memory-summarize`（模式 A：月度/主题归纳）。注意：
+# 1) 章节标题含序号（一、二、三、四、五），因为 FormatValidator 对章节标题做精确匹配；
+# 2) 经验教训 / 重要决定 用表格，FormatValidator 已按块级元素处理表格行；
+# 3) 附录「溯源对照表」是**可选**章节 —— 只出现在正文骨架里，不进 required_sections，
+#    否则「没有来源可溯源」时会被强规则拦死；
+# 4) 不含 HTML 注释提示：模板全文会进入 prompt，模型若照抄注释会触发 forbid_raw_html。
+SUMMARY_TEMPLATE = """---
+schema: soulforge.template/v1
+name: "工作日志总结（记忆归纳）"
+target_file_type: SUMMARY
+structure:
+  section_heading_level: 2
+  required_sections:
+    - title: 一、完成的工作
+    - title: 二、经验教训
+    - title: 三、重要决定
+    - title: 四、重要信息
+    - title: 五、待办事项
+  section_order: strict
+elements:
+  heading_style: atx
+  list_style: "-"
+  code_fence: "```"
+  blockquote_prefix: "> "
+  heading_blank_line: true
+  paragraph_blank_line: true
+typography:
+  max_heading_level: 3
+  allow_bold: true
+  allow_italic: true
+  forbid_emoji: true
+  forbid_raw_html: true
+modules:
+  frontmatter: optional
+---
+
+# 工作日志总结模板
+
+> 把一段时间（如某个月）的分散记录归纳成一份单一综述：按五大主章节归类，
+> 丢弃每天重复的流水账与调试中间态，只保留有长期检索价值的内容。
+> 产出文档第一行固定为 `# <时间段> 记忆归纳`（如 `# 2026-08 记忆归纳`）；
+> 所有标题使用中文；末尾可附「附录：溯源对照表」。
+
+## 一、完成的工作
+
+- 按主题分类列举完成的任务、产出物与变更项，优先列出有长期价值的内容
+
+## 二、经验教训
+
+| 日期 | 教训 |
+|------|------|
+| ... | ... |
+
+## 三、重要决定
+
+| 日期 | 决定 |
+|------|------|
+| ... | ... |
+
+## 四、重要信息
+
+- 身份档案 / 联系人 / 关键配置 / 账号 / 服务器 / 工具脚本
+
+## 五、待办事项
+
+- [ ] ...
+
+## 附录：溯源对照表
+
+| 内容 | 来源日期文件 |
+|------|-------------|
+| ... | ... |
+"""
+
 BUILTIN_TEMPLATES: dict[str, str] = {
     "preset-soul-std": SOUL_TEMPLATE,
     "preset-agents-std": AGENTS_TEMPLATE,
     "preset-mem-std": MEMORY_TEMPLATE,
     "preset-wlog-daily-std": WLOG_DAILY_TEMPLATE,
+    "preset-mem-summarize": SUMMARY_TEMPLATE,
 }

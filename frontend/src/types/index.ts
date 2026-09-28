@@ -225,11 +225,25 @@ export interface ConfigSnapshot {
     show_other: boolean;
   };
   openclaw: { dir: string };
+  /** M15 日志标准化护栏（配置中心下发的只读快照） */
+  daily_standardizer?: {
+    max_days_per_run: number;
+    token_budget: number;
+    provider_id: string;
+    dry_run_only: boolean;
+  };
+  /** M16 记忆归纳护栏（配置中心下发的只读快照） */
+  summarizer?: {
+    max_days_per_run: number;
+    token_budget: number;
+    provider_id: string;
+    dry_run_only: boolean;
+  };
 }
 
 // ---- Phase 2.5 · M11 文档预设 ----
 export type PresetTargetType =
-  | 'SOUL' | 'AGENTS' | 'MEMORY' | 'USER' | 'IDENTITY' | 'TOOLS' | 'WORKLOG' | 'ANY';
+  | 'SOUL' | 'AGENTS' | 'MEMORY' | 'USER' | 'IDENTITY' | 'TOOLS' | 'WORKLOG' | 'SUMMARY' | 'ANY';
 
 export interface PresetSection {
   title: string;
@@ -520,6 +534,100 @@ export interface DailyRunReport {
   tokens_used: number;
   cost_estimate_usd: number;
   generated_at: number;
+}
+
+// ---- Phase 2.6 · M16 工作日志总结（记忆归纳） ----
+export type SummaryRunStatus =
+  | 'planned'
+  | 'awaiting_confirm'
+  | 'applied'
+  | 'needs_review'
+  | 'rejected'
+  | 'failed'
+  | 'empty';
+
+export interface SummarySourceInfo {
+  path: string;
+  /** 该来源所属日期 */
+  date: string;
+  kind: DailySourceKind;
+  raw_bytes: number;
+  clean_bytes: number;
+  removed_total: number;
+  summarized: boolean;
+  chunks: number;
+}
+
+export interface SummaryRunSummary {
+  id: string;
+  agent_id: string;
+  date_from: string;
+  date_to: string;
+  preset_id: string;
+  preset_version: number;
+  provider_id: string;
+  status: SummaryRunStatus;
+  /** 产物路径：整月 → memory/YYYY-MM-记忆归纳.md；否则 memory/<起>_<止>-记忆归纳.md */
+  output_path: string;
+  source_count: number;
+  token_budget: number;
+  tokens_used: number;
+  cost_estimate_usd: number;
+  error?: string | null;
+  /** 非空 = 源文件已清理（移入回收站） */
+  cleanup_at?: number | null;
+  created_at: number;
+  updated_at: number;
+  finished_at?: number | null;
+}
+
+export interface SummaryRun extends SummaryRunSummary {
+  extra_instructions?: string | null;
+  sources: SummarySourceInfo[];
+  output_content?: string | null;
+  unified_diff?: string | null;
+  html_diff?: string | null;
+  format_report: FormatReport;
+  lint_warnings: LintWarning[];
+  notes: string[];
+  backup_id?: number | null;
+  applied_at?: number | null;
+  /** 已清理的源文件（走系统回收站，可恢复） */
+  deleted_sources: string[];
+  failed_sources: string[];
+}
+
+export interface SummaryRunCreateResult {
+  run_id: string;
+  status: SummaryRunStatus;
+  source_count: number;
+  /** 命中幂等键 → 复用既有批次，未产生新的 LLM 调用 */
+  reused: boolean;
+  created_at: number;
+}
+
+export interface SummaryRunReport {
+  run_id: string;
+  agent_id: string;
+  status: SummaryRunStatus;
+  passed: boolean;
+  output_path: string;
+  delivered: boolean;
+  naming_ok: boolean;
+  sections_ok: boolean;
+  no_residue: boolean;
+  /** 源文件状态自洽（未清理时都在 / 已清理时都不在） */
+  sources_ok: boolean;
+  tokens_used: number;
+  cost_estimate_usd: number;
+  generated_at: number;
+  details: string[];
+}
+
+export interface SummaryRunCleanupResult {
+  run_id: string;
+  deleted: string[];
+  failed: string[];
 }
 
 // ---- 超级同步（独立守护脚本） ----

@@ -263,6 +263,58 @@ class DailyRunItemRow(Base):
     updated_at: Mapped[int] = mapped_column(Integer, nullable=False, default=_now, onupdate=_now)
 
 
+class SummaryRunRow(Base):
+    """工作日志总结（记忆归纳，M16）批次。一次归纳只产出**一份**汇总文件。
+
+    状态机：`planned`（已创建，正在归纳）→ `awaiting_confirm`（计划已出，等确认）
+    → `applied` / `needs_review`；另有 `rejected`（用户拒绝，未写入）、
+    `failed`（生成失败：LLM 报错 / 强规则不过 / 来源超限）、`empty`（范围内没有可归纳的来源）。
+
+    与 M15 的区别：M15 是「同一天多来源 → 1 个日文件」的逐日归并（两表）；
+    M16 是「一段时间的全部来源 → 1 份综述」的单份产物，因此只有批次表。
+    源文件**默认不动**（只读归纳）；`cleanup_*` 记录确认后可选的「清理源文件」动作。
+    """
+
+    __tablename__ = "summary_runs"
+    __table_args__ = (
+        Index("idx_summary_runs_agent", "agent_id"),
+        Index("idx_summary_runs_status", "status"),
+        Index("idx_summary_runs_key", "idempotency_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # run-<uuid hex>
+    agent_id: Mapped[str] = mapped_column(String, nullable=False)
+    date_from: Mapped[str] = mapped_column(String, nullable=False)  # YYYY-MM-DD
+    date_to: Mapped[str] = mapped_column(String, nullable=False)
+    preset_id: Mapped[str] = mapped_column(String, nullable=False)
+    preset_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    provider_id: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String, nullable=False)  # 同键重复提交 → 复用
+    extra_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_path: Mapped[str] = mapped_column(String, nullable=False)  # memory/<span>-记忆归纳.md
+    source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_hashes_json: Mapped[str] = mapped_column(Text, nullable=False)  # {path: sha256}，乐观锁
+    sources_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # 各来源的体积/剥壳事实
+    output_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    unified_diff: Mapped[str | None] = mapped_column(Text, nullable=True)
+    format_report_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lint_warnings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_budget: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0 = 不限
+    tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_estimate_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    applied_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    backup_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 可选动作：汇总确认写入后，把范围内的源文件移入回收站（默认不清理）
+    cleanup_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cleanup_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # {deleted: [...], failed: [...]}
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False, default=_now)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False, default=_now, onupdate=_now)
+    finished_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class Database:
     """单进程单连接 SQLite，WAL 模式。"""
 

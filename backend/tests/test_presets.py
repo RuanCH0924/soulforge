@@ -13,17 +13,20 @@ from app.services.preset_service import (
 
 BUILTIN_IDS = {
     "preset-soul-std", "preset-agents-std", "preset-mem-std",
-    "preset-wlog-daily-std",
+    "preset-wlog-daily-std", "preset-mem-summarize",
 }
+
+# 大模型专用预设（不出现在主工作台 / 设置页）：见 preset_service.LLM_ONLY_PRESET_TYPES
+LLM_ONLY_IDS = {"preset-wlog-daily-std", "preset-mem-summarize"}
 
 
 # ---------- 列表 / 过滤 ----------
 
-def test_list_presets_has_4_builtins(client):
+def test_list_presets_has_all_builtins(client):
     res = client.get("/api/presets")
     assert res.status_code == 200
     presets = res.json()["data"]
-    assert len(presets) == 4
+    assert len(presets) == 5
     assert {p["id"] for p in presets} == BUILTIN_IDS
     assert all(p["version"] == 1 for p in presets)
 
@@ -45,18 +48,22 @@ def test_list_presets_invalid_target_type(client):
 # ---------- 两类预设的边界（大模型专用 vs 主工作台用） ----------
 
 def test_workbench_scope_excludes_daily_only_preset(client):
-    """scope=workbench（文档预设页 / 主工作台应用预设）不返回大模型专用的 WORKLOG 预设。"""
+    """scope=workbench（文档预设页 / 主工作台应用预设）不返回大模型专用预设（WORKLOG / SUMMARY）。"""
     all_ids = {p["id"] for p in client.get("/api/presets").json()["data"]}
     assert "preset-wlog-daily-std" in all_ids  # 缺省仍返回全部：既有调用不受影响
 
     res = client.get("/api/presets", params={"scope": "workbench"})
     assert res.status_code == 200
     ids = {p["id"] for p in res.json()["data"]}
-    assert ids == BUILTIN_IDS - {"preset-wlog-daily-std"}
+    assert ids == BUILTIN_IDS - LLM_ONLY_IDS
 
     # 反向：日志标准化界面按类型取，仍只看得到日志预设
     daily = client.get("/api/presets", params={"target_file_type": "WORKLOG"}).json()["data"]
     assert [p["id"] for p in daily] == ["preset-wlog-daily-std"]
+
+    # 反向：日志总结界面按类型取，只看得到归纳预设
+    summary = client.get("/api/presets", params={"target_file_type": "SUMMARY"}).json()["data"]
+    assert [p["id"] for p in summary] == ["preset-mem-summarize"]
 
 
 def test_workbench_scope_hides_user_created_worklog_preset(client):
@@ -67,8 +74,8 @@ def test_workbench_scope_hides_user_created_worklog_preset(client):
         "sections_json": [{"title": "一、概览", "required": True, "order": 1}],
     })
     workbench = client.get("/api/presets", params={"scope": "workbench"}).json()["data"]
-    assert len(workbench) == 3   # 4 个内置预设里排除了 WORKLOG 那个
-    assert all(p["target_file_type"] != "WORKLOG" for p in workbench)
+    assert len(workbench) == 3   # 5 个内置预设里排除了 WORKLOG / SUMMARY 两个大模型专用预设
+    assert all(p["target_file_type"] not in ("WORKLOG", "SUMMARY") for p in workbench)
 
 
 def test_list_presets_invalid_scope(client):
@@ -111,9 +118,9 @@ def test_create_user_preset(client):
     assert data["version"] == 1
     assert len(data["sections_json"]) == 2
 
-    # 出现在列表中（4 内置 + 1 用户）
+    # 出现在列表中（5 内置 + 1 用户）
     listing = client.get("/api/presets").json()["data"]
-    assert len(listing) == 5
+    assert len(listing) == 6
 
 
 def test_get_preset_detail(client):
@@ -159,6 +166,27 @@ def test_wlog_daily_std_preset_contract(client):
     assert "未决问题与待办" in rules                # 高价值保留清单
     assert "对话腔" in rules                       # 客观改写要求
     assert "按时间倒序归档" in rules                # 原「工作日志汇总」的归档口径
+
+
+def test_summarize_preset_contract(client):
+    """「工作日志总结（记忆归纳）」预设的契约来自 skill `memory-summarize`（模式 A）。"""
+    res = client.get("/api/presets/preset-mem-summarize")
+    assert res.status_code == 200
+    data = res.json()["data"]
+    assert data["target_file_type"] == "SUMMARY"
+    assert [s["title"] for s in data["sections_json"]] == [
+        "一、完成的工作", "二、经验教训", "三、重要决定", "四、重要信息", "五、待办事项"]
+    assert all(s["required"] is True for s in data["sections_json"])
+    assert data["template_md"] and "section_order: strict" in data["template_md"]
+    assert "- title: 五、待办事项" in data["template_md"]
+    # 附录「溯源对照表」是**可选**章节：只出现在正文骨架里，不进必填章节
+    assert "附录：溯源对照表" in data["template_md"]
+    assert "- title: 附录：溯源对照表" not in data["template_md"]
+
+    rules = " ".join(data["style_rules"])
+    assert "经验教训是长期价值最高" in rules      # 教训优先
+    assert "默认不做敏感信息脱敏" in rules          # skill 的默认原则
+    assert "去重原则" in rules                      # 去重口径
 
 
 def test_builtin_templates_match_sections_json():
@@ -565,10 +593,10 @@ def test_create_from_document_happy_path(client):
     assert "frontmatter: optional" in template
     assert "# SOUL.md" in template and "## 核心行为准则" in template
 
-    # 出现在预设列表中（4 内置 + 1 新建）
+    # 出现在预设列表中（5 内置 + 1 新建）
     listing = client.get("/api/presets").json()["data"]
     assert data["id"] in {p["id"] for p in listing}
-    assert len(listing) == 5
+    assert len(listing) == 6
 
 
 def test_create_from_document_required_sections_subset(client):

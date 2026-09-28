@@ -126,9 +126,10 @@ CREATE INDEX idx_audit_action ON audit_log(action);
 
 ---
 
-## 二点五、Schema（Phase 2.5 新增 4 张表）
+## 二点五、Schema（Phase 2.5 新增 4 张表 + M15 / M16 批次表）
 
-> 与二、节并列，为 Phase 2.5 AI Editor 引入。
+> 与二、节并列，为 Phase 2.5 AI Editor 引入；2.9 / 2.10 分别是 M15 日志标准化与
+> M16 记忆归纳的批次表。
 
 ### 2.5 `presets` —— 文档预设
 
@@ -138,7 +139,7 @@ CREATE INDEX idx_audit_action ON audit_log(action);
 CREATE TABLE presets (
     id                  TEXT PRIMARY KEY,          -- UUID
     name                TEXT NOT NULL,             -- 预设名
-    target_file_type    TEXT NOT NULL,             -- 适用文件类型：SOUL/AGENTS/MEMORY/USER/IDENTITY/TOOLS/WORKLOG/ANY
+    target_file_type    TEXT NOT NULL,             -- 适用文件类型：SOUL/AGENTS/MEMORY/USER/IDENTITY/TOOLS/WORKLOG/SUMMARY/ANY
     description         TEXT,                      -- 用途说明
     template_md         TEXT,                      -- 标准 Markdown 模板文档（YAML 规则 + 章节骨架），校验唯一标准
     sections_json       TEXT NOT NULL,             -- 章节列表 JSON（由 template_md 派生）：[{title, required, order, hint}]
@@ -190,13 +191,15 @@ CREATE INDEX idx_presets_system ON presets(is_system);
 - `version` 在 PUT 后自增，并写 `preset_versions` 快照（保留历史，可回溯）
 - **`is_builtin` 是派生字段，不在表里**：由「id 是否属于内置预设清单（`BUILTIN_PRESET_IDS`）」算出，
   仅用于 API 响应与 UI 展示「预设来源」（内置预设 = 随版本分发，升级时可能被刷新）
-- **两类预设的边界（2026-09-24 收口）**：`target_file_type = WORKLOG` = 专供大模型处理工作日志
-  （M15 的规则载体），只在「业务工具 → 日志标准化」界面可见可编辑；其余类型供主工作台加载。
-  `list(scope='workbench')` 排除 WORKLOG 类（设置页「文档预设」与主工作台用它）；
-  `list(target_file_type='WORKLOG')` 取日志预设
+- **两类预设的边界（2026-09-24 收口，2026-09-26 扩展 SUMMARY）**：`target_file_type = WORKLOG`
+  = 专供大模型处理工作日志（M15 的规则载体），`target_file_type = SUMMARY` = 专供大模型做记忆归纳
+  （M16 的规则载体）；二者只在「业务工具 → 日志标准化 / 日志总结」界面可见可编辑，其余类型供主工作台加载。
+  `list(scope='workbench')` 排除这两个类型（设置页「文档预设」与主工作台用它，见
+  `preset_service.LLM_ONLY_PRESET_TYPES`）；`list(target_file_type='WORKLOG' | 'SUMMARY')` 取对应预设
 - `retired_at` 非空 = 已退役（当前为 `preset-wlog-summary`「工作日志汇总」，已并入 `preset-wlog-daily-std`）：
   `list()` 不再返回它，但行保留、`get()` 仍可取，避免历史批次 / AI 任务按 id 读取时报 404
-- 内置预设 id 前缀 `preset-`（如 `preset-soul-std`、`preset-agents-std`、`preset-mem-std`、`preset-wlog-daily-std`）；
+- 内置预设 id 前缀 `preset-`（如 `preset-soul-std`、`preset-agents-std`、`preset-mem-std`、
+  `preset-wlog-daily-std`、`preset-mem-summarize`）；
   播种规则：首次启动（表为空）全量播种；存量安装另外做三件事，且都只作用于**内容仍与内置定义一致**
   （用户没改过）的预设：
   ① 补种 `BUILTIN_PRESETS_ADDED`（append-only 白名单）中的新增项，同时写 `preset_versions` v1 快照
@@ -410,6 +413,64 @@ CREATE INDEX idx_daily_run_items_run ON daily_run_items(run_id);
 - 幂等：同 `idempotency_key` 且非终态（`failed` / `rejected`）→ 直接复用既有批次（`reused=true`）
 
 **状态机与端点**见 [MEMORY-DAILY-STANDARDIZER-PLAN.md](MEMORY-DAILY-STANDARDIZER-PLAN.md) 附录 D。
+
+---
+
+### 2.10 `summary_runs` —— 工作日志总结（记忆归纳）批次（M16）
+
+记录「把一段时间的分散记录归纳成 1 份综述」的批次。**只有批次表、没有逐日条目表**——
+一次归纳只产出**一份**产物（`memory/<范围>-记忆归纳.md`）；「一段时间的全部来源 → 1 份产物」
+与 M15 的「同一天多来源 → 1 个日文件」是两种粒度，混用同一张表会污染状态机。
+
+```sql
+CREATE TABLE summary_runs (
+    id                  TEXT PRIMARY KEY,          -- run-<uuid hex>
+    agent_id            TEXT NOT NULL,
+    date_from           TEXT NOT NULL,             -- YYYY-MM-DD
+    date_to             TEXT NOT NULL,
+    preset_id           TEXT NOT NULL,
+    preset_version      INTEGER NOT NULL DEFAULT 1, -- 批次绑定预设版本，规则迭代后可追溯
+    provider_id         TEXT NOT NULL,
+    status              TEXT NOT NULL,             -- planned|awaiting_confirm|applied|
+                                                   -- needs_review|rejected|failed|empty
+    idempotency_key     TEXT NOT NULL,             -- 与来源 + 目标内容绑定，命中即复用（不再调 LLM）
+    extra_instructions  TEXT,
+    output_path         TEXT NOT NULL,             -- 整月 → memory/YYYY-MM-记忆归纳.md；否则 memory/<起>_<止>-记忆归纳.md
+    source_count        INTEGER NOT NULL DEFAULT 0,
+    source_hashes_json  TEXT NOT NULL,             -- {path: sha256}；乐观锁基准（含目标文件）
+    sources_json        TEXT,                      -- 来源概览：path/date/kind/raw_bytes/clean_bytes/removed_total/
+                                                   -- summarized/chunks
+    output_content      TEXT,                      -- 归纳结果（待确认）
+    unified_diff        TEXT,
+    format_report_json  TEXT,                      -- 强规则校验报告（ok + violations）
+    lint_warnings_json  TEXT,
+    notes_json          TEXT,
+    token_budget        INTEGER NOT NULL DEFAULT 0,-- 0 = 不限
+    tokens_used         INTEGER NOT NULL DEFAULT 0,
+    cost_estimate_usd   REAL NOT NULL DEFAULT 0,
+    error               TEXT,
+    applied_at          INTEGER,
+    backup_id           INTEGER,                   -- 覆盖同名产物时写入前自动备份（复用 M7）
+    cleanup_at          INTEGER,                   -- 非空 = 源文件已清理（移入回收站）
+    cleanup_json        TEXT,                      -- {deleted: [...], failed: [...]}
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL,
+    finished_at         INTEGER
+);
+
+CREATE INDEX idx_summary_runs_agent  ON summary_runs(agent_id);
+CREATE INDEX idx_summary_runs_status ON summary_runs(status);
+CREATE INDEX idx_summary_runs_key    ON summary_runs(idempotency_key);
+```
+
+**约束**（护栏，均有测试守着）：
+
+- `apply` 只接受 `status=awaiting_confirm`；`config.summarizer.dry_run_only=true` 时直接 `403`
+- `apply` 前做写前验收（强规则 ok + 低价值元数据壳残留 = 0）与 `source_hashes_json` 乐观锁：
+  目标文件当前 SHA-256 与计划时不一致 → `409`，且**不写任何文件**
+- **源文件默认不动**（只读归纳）；`cleanup-sources` 是汇总写入后单独触发的可选动作，
+  走 `FileManager.delete`（`send2trash`，可恢复），产物自身永不删除，且不可重复执行
+- 幂等：同 `idempotency_key` 且非终态（`failed` / `rejected`）→ 直接复用既有批次（`reused=true`）
 
 ---
 

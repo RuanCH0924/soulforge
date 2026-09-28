@@ -9,7 +9,9 @@ from app import __version__
 
 Role = Literal["CORE", "MEMORY", "SKILL", "META", "OTHER"]
 Severity = Literal["warning", "error"]
-PresetTargetType = Literal["SOUL", "AGENTS", "MEMORY", "USER", "IDENTITY", "TOOLS", "WORKLOG", "ANY"]
+PresetTargetType = Literal[
+    "SOUL", "AGENTS", "MEMORY", "USER", "IDENTITY", "TOOLS", "WORKLOG", "SUMMARY", "ANY"
+]
 
 
 class AgentInfo(BaseModel):
@@ -669,6 +671,106 @@ class DailyRunReport(BaseModel):
     tokens_used: int = 0
     cost_estimate_usd: float = 0.0
     generated_at: int
+
+
+# ---------- M16 · 工作日志总结（记忆归纳） ----------
+
+
+class SummarySourceInfo(BaseModel):
+    """一个被归纳的来源（预处理前后的体积与剥壳事实）。"""
+
+    path: str
+    date: str
+    kind: Literal["A", "B", "C"]
+    raw_bytes: int
+    clean_bytes: int
+    removed_total: int = 0
+    summarized: bool = False   # 是否经「分块摘要」
+    chunks: int = 0
+
+
+class SummaryRunSummary(BaseModel):
+    """归纳批次（不含产物正文，供列表展示）。"""
+
+    id: str
+    agent_id: str
+    date_from: str
+    date_to: str
+    preset_id: str
+    preset_version: int = 1
+    provider_id: str
+    status: str
+    output_path: str
+    source_count: int = 0
+    token_budget: int = 0
+    tokens_used: int = 0
+    cost_estimate_usd: float = 0.0
+    error: str | None = None
+    cleanup_at: int | None = None
+    created_at: int
+    updated_at: int
+    finished_at: int | None = None
+
+
+class SummaryRun(SummaryRunSummary):
+    """归纳批次详情（含来源清单、产物正文与 diff）。"""
+
+    extra_instructions: str | None = None
+    sources: list[SummarySourceInfo] = Field(default_factory=list)
+    output_content: str | None = None
+    unified_diff: str | None = None
+    html_diff: str | None = None
+    format_report: FormatReport = Field(default_factory=lambda: FormatReport(ok=False))
+    lint_warnings: list[LintWarning] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    backup_id: int | None = None
+    applied_at: int | None = None
+    deleted_sources: list[str] = Field(default_factory=list)
+    failed_sources: list[str] = Field(default_factory=list)
+
+
+class SummaryRunCreate(BaseModel):
+    agent_id: str
+    date_from: str = Field(..., description="YYYY-MM-DD")
+    date_to: str = Field(..., description="YYYY-MM-DD")
+    preset_id: str = Field("preset-mem-summarize", description="记忆归纳预设（默认「工作日志总结」）")
+    provider_id: str
+    extra_instructions: str | None = None
+
+
+class SummaryRunCreateResult(BaseModel):
+    run_id: str
+    status: str
+    source_count: int
+    reused: bool = False      # 命中幂等键 → 复用既有批次，未产生新的 LLM 调用
+    created_at: int
+
+
+class SummaryRunReport(BaseModel):
+    """归纳验收结果（对磁盘上的真实文件核对，只读、可重复跑）。"""
+
+    run_id: str
+    agent_id: str
+    status: str
+    passed: bool
+    output_path: str
+    delivered: bool = False          # 汇总文件是否已写入
+    naming_ok: bool = True           # 命名合规（整月 → YYYY-MM，否则 起_止）
+    sections_ok: bool = True         # 必填章节齐全 + 顺序正确
+    no_residue: bool = True          # 低价值元数据壳残留 = 0
+    sources_ok: bool = True          # 源文件状态自洽（未清理时都在 / 已清理时都不在）
+    tokens_used: int = 0
+    cost_estimate_usd: float = 0.0
+    generated_at: int
+    details: list[str] = Field(default_factory=list)
+
+
+class SummaryRunCleanupResult(BaseModel):
+    """清理源文件的结果（把源文件移入系统回收站）。"""
+
+    run_id: str
+    deleted: list[str] = Field(default_factory=list)
+    failed: list[str] = Field(default_factory=list)
 
 
 class Meta(BaseModel):

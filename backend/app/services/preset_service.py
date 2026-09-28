@@ -50,6 +50,14 @@ from app.services.template_rules import RequiredSection, TemplateRules, derive_s
 # 判据就是类型本身，不额外加开关字段：M15 的预设选择器本来就只列 WORKLOG。
 DAILY_PRESET_TYPE = "WORKLOG"
 
+# 「专供大模型做工作日志总结（记忆归纳）」的预设类型 = M16 归纳的规则载体。
+# 与 WORKLOG 同边界：不出现在 系统配置 → 文档预设，也不出现在主工作台「应用预设」；
+# 只在 业务工具 → 日志总结 界面（及其 API）里可见、可编辑。
+SUMMARY_PRESET_TYPE = "SUMMARY"
+
+# 大模型专用预设类型（主工作台 / 设置页一律排除，见 `list(scope=workbench)`）
+LLM_ONLY_PRESET_TYPES: tuple[str, ...] = (DAILY_PRESET_TYPE, SUMMARY_PRESET_TYPE)
+
 # `list()` 的可选范围：workbench = 主工作台 / 设置页（排除大模型专用预设）
 SCOPE_ALL = "all"
 SCOPE_WORKBENCH = "workbench"
@@ -176,13 +184,44 @@ BUILTIN_PRESETS: list[dict] = [
             "按时间倒序归档：同一天内的事项按发生时间倒序排列；只提取关键决策与关键事件，不保留流水账",
         ],
     },
+    {
+        "id": "preset-mem-summarize",
+        "name": "工作日志总结（记忆归纳）",
+        "target_file_type": "SUMMARY",
+        "description": (
+            "把一段时间的每日记录归纳为单份综述：完成的工作 / 经验教训 / 重要决定 / 重要信息 / 待办事项"
+            "（可选附录溯源表）；只读归纳，不动任何源文件"
+        ),
+        "sections": [
+            {"title": "一、完成的工作", "required": True, "order": 1, "hint": "按主题分类列举任务、产出与变更"},
+            {"title": "二、经验教训", "required": True, "order": 2, "hint": "失败案例、调试技巧、踩坑与反思"},
+            {"title": "三、重要决定", "required": True, "order": 3, "hint": "用户明确选择 + 架构/配置/流程决策"},
+            {"title": "四、重要信息", "required": True, "order": 4, "hint": "身份档案、联系人、关键配置、账号、工具脚本"},
+            {"title": "五、待办事项", "required": True, "order": 5, "hint": "未完成、持续跟进、探索方向、暂时搁置"},
+        ],
+        "frontmatter": {"schema": "soulforge.preset/v1", "owner": "user"},
+        "style_rules": [
+            (
+                "丢弃低价值内容：每天重复的反思/流水账模板、临时性小任务（「测试了一下」「回答了一个问题」）、"
+                "调试过程的中间状态、同一时段的多次重复记录——只保留最终结论"
+            ),
+            "经验教训是长期价值最高的部分：铁律级教训必须加粗，每条尽量标注来源日期（如「02-18」）",
+            "重要决定区分「用户决定」与「架构 / 配置 / 流程决策」；同一决定反复出现时只保留最新口径",
+            "重要信息收录：身份档案与建档信息、联系人与关键配置、账号 / 服务器、工具与脚本清单",
+            "待办事项分「持续跟进」「探索方向」「暂时搁置」三档，不要逐日重复同一个待办",
+            "去重原则：同一信息在多日文件中反复出现时只保留最新、最全的一条",
+            "默认不做敏感信息脱敏：仅当用户明确要求过滤敏感信息时，才处理密钥、token、open_id 等",
+            "整理目标是有用而非最短：字数约 3000~5000 字（不超过 8000 字），不为了精简而丢事实",
+            "所有标题使用中文；附录「溯源对照表」覆盖所有有内容贡献的源文件",
+        ],
+    },
 ]
 
 # 随版本新增的内置预设（append-only 白名单）：存量安装（presets 表非空）只补种这些，
 # 不重建上表其余内置预设 —— 用户可能已主动删除它们，升级时塞回来属于数据污染。
 # 维护规则：每次新增内置预设就把 id 追加到末尾；已进入名单的不要移除
 #（否则跨版本升级、跳过中间版本的安装会永久漏掉该预设）。
-BUILTIN_PRESETS_ADDED: tuple[str, ...] = ("preset-wlog-daily-std",)
+BUILTIN_PRESETS_ADDED: tuple[str, ...] = ("preset-wlog-daily-std", "preset-mem-summarize")
 
 # 全部内置预设 id（随版本分发的那些）：`Preset.is_builtin` 用它区分
 # 「内置预设（下次升级可能被刷新）」与「用户自建」——UI 上用于展示预设来源。
@@ -499,7 +538,7 @@ class PresetService:
              scope: str = SCOPE_ALL) -> list[PresetSummary]:
         """列出可选预设。已退役的内置预设（retired_at 非空）不出现，但 get() 仍可取到。
 
-        `scope=workbench` → 排除大模型专用预设（见 `DAILY_PRESET_TYPE`）：
+        `scope=workbench` → 排除大模型专用预设（WORKLOG / SUMMARY，见 `LLM_ONLY_PRESET_TYPES`）：
         主工作台「应用预设」与设置页「文档预设」都走这一档，两类预设因此不会混淆。
         """
         if scope not in SCOPES:
@@ -511,7 +550,7 @@ class PresetService:
             if target_file_type:
                 q = q.filter(PresetRow.target_file_type == target_file_type)
             if scope == SCOPE_WORKBENCH:
-                q = q.filter(PresetRow.target_file_type != DAILY_PRESET_TYPE)
+                q = q.filter(PresetRow.target_file_type.notin_(LLM_ONLY_PRESET_TYPES))
             rows = q.order_by(PresetRow.is_system.desc(), PresetRow.name).all()
             return [self._row_to_summary(r) for r in rows]
 

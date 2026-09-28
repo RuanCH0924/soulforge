@@ -362,11 +362,21 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
   if (stage === 'setup') {
     return (
       <div className="daily-std">
-        <div className="alert-banner warning">
-          按「天」归并：把同一天的多份记录（主文件 / 会话导出 / 主题碎片）合并为唯一一份{' '}
-          <span className="mono">memory/YYYY-MM-DD.md</span>。先生成计划，<b>逐日看完差异再确认写入</b>；
-          确认前不写盘、不删任何文件。若某天全是噪音、没有值得留存的内容，模型会给出
-          <b>「无可归档内容」</b>的判定——那天不产出日文件，也不会硬凑一篇。
+        <div className="alert-banner warning intro">
+          <div className="alert-title">按「天」归并 · 每天只留一份标准日文件</div>
+          <ul className="alert-points">
+            <li>
+              把同一天的多份记录（主文件 / 会话导出 / 主题碎片）合并为唯一一份{' '}
+              <span className="mono">memory/YYYY-MM-DD.md</span>。
+            </li>
+            <li>
+              先生成计划，<b>逐日看完差异再确认写入</b>；确认前不写盘、不删任何文件。
+            </li>
+            <li>
+              若某天全是噪音、没有值得留存的内容，模型会给出<b>「无可归档内容」</b>
+              的判定——那天不产出日文件，也不会硬凑一篇。
+            </li>
+          </ul>
         </div>
 
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>

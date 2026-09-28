@@ -23,6 +23,7 @@ from app.services.llm_registry import LLMRegistry
 from app.services.preset_service import PresetService
 from app.services.search_service import SearchService
 from app.services.stats_service import StatsService
+from app.services.summary_service import SummaryService
 from app.services.super_sync_service import SuperSyncService
 from app.services.sync_service import SyncService
 
@@ -57,6 +58,10 @@ class Registry:
         self.daily_runs = DailyRunService(
             self.db, config, self.file_manager, self.presets, self.llm, self.audit,
             self.daily_merge, self.daily_scanner)
+        # M16 工作日志总结（记忆归纳）：一段范围 → 单份综述，只读归纳、源文件默认不动
+        self.summary = SummaryService(
+            self.db, config, self.file_manager, self.presets, self.llm, self.lint,
+            self.audit, self.daily_scanner)
 
     def startup(self) -> None:
         """启动流程：清理过期备份 + 播种内置预设 + 重建索引。"""
@@ -97,6 +102,12 @@ class Registry:
                 "token_budget": c.daily_standardizer.token_budget,
                 "provider_id": c.daily_standardizer.provider_id,
                 "dry_run_only": c.daily_standardizer.dry_run_only,
+            },
+            "summarizer": {
+                "max_days_per_run": c.summarizer.max_days_per_run,
+                "token_budget": c.summarizer.token_budget,
+                "provider_id": c.summarizer.provider_id,
+                "dry_run_only": c.summarizer.dry_run_only,
             },
         }
 
@@ -139,6 +150,10 @@ class Registry:
             for key in ("max_days_per_run", "token_budget", "provider_id", "dry_run_only"):
                 if key in patch["daily_standardizer"]:
                     setattr(c.daily_standardizer, key, patch["daily_standardizer"][key])
+        if "summarizer" in patch:
+            for key in ("max_days_per_run", "token_budget", "provider_id", "dry_run_only"):
+                if key in patch["summarizer"]:
+                    setattr(c.summarizer, key, patch["summarizer"][key])
 
         self._persist_config(patch)
         logger.info("配置已更新：{}", patch)
@@ -159,7 +174,8 @@ class Registry:
             raw.setdefault(section, {}).update(values)
 
         lines: list[str] = []
-        for section in ("server", "backup", "lint", "ui", "advanced", "openclaw", "daily_standardizer"):
+        for section in ("server", "backup", "lint", "ui", "advanced", "openclaw",
+                        "daily_standardizer", "summarizer"):
             values = raw.get(section)
             if not values:
                 continue

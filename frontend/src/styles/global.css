@@ -1797,6 +1797,30 @@ table.audit-table {
   border: 1px solid rgba(59, 130, 246, 0.3);
 }
 
+/* 多行说明横幅：默认 flex 单行形态不适合整段说明，这里改为「标题 + 要点列表」的块级排版 */
+.alert-banner.intro {
+  display: block;
+  line-height: 1.7;
+  padding: 11px 14px;
+}
+
+.alert-banner.intro .alert-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.alert-banner.intro .alert-points {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.alert-banner.intro .alert-points li::marker {
+  opacity: 0.55;
+}
+
 /* ---------- 加载 / 空状态 ---------- */
 .state-block {
   display: flex;
@@ -2824,6 +2848,12 @@ table.daily-table th {
 
 /* empty（无可整理的日子 / 本日无可归档内容）不是错误，用中性色，别报警 */
 .daily-status.empty {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+/* rejected 是用户主动作废的批次，同样不是错误，用中性色 */
+.daily-status.rejected {
   background: var(--bg-hover);
   color: var(--text-secondary);
 }

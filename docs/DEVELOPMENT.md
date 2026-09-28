@@ -4,7 +4,7 @@
 > 项目拥有者不需要懂代码，把本文档丢给 AI，它就能理解项目全貌并逐步生成代码。
 > 开发方式：Vibe Coding（自然语言描述 → AI 生成代码 → 老板验收）
 >
-> **版本号**：唯一事实源为 `backend/app/__init__.py` 的 `__version__`（当前 `0.5.0`），
+> **版本号**：唯一事实源为 `backend/app/__init__.py` 的 `__version__`（当前 `0.5.2`），
 > 版本历史与发版流程见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ---
@@ -133,6 +133,7 @@ Soulforge 内置一套 lint 检查，发现违规主动提示：
 | **M13** | **AI 自动整理** | **2.5** | **✅** |
 | **M14** | **超级同步（独立守护脚本）** | **2.5** | **✅** |
 | **M15** | **工作日志标准化（memory/ 日文件归并）** | **—** | **✅ P0 / P1 / P2 / P3 已交付 + 预设收口 + 空日决策 + 归因修正 + 预设边界**（P2 = 批次编排 + 确认执行 + 碎片清理 + 验收报告 + Tools 页「日志标准化」tab；P3 = 规则投递形态效率对比 + 运维手册；收口 = WORKLOG 预设合并为一个；空日决策 = 全天无内容时不产出日文件；归因修正 = 残留壳口径收窄到真壳 + 输出截断如实归因与重试；预设边界 = 日志预设只在日志标准化界面可见可编辑，见 [MEMORY-DAILY-STANDARDIZER-PLAN.md](MEMORY-DAILY-STANDARDIZER-PLAN.md)） |
+| **M16** | **工作日志总结（记忆归纳，一段时间 → 1 份综述）** | **—** | **✅ 已交付**（单表 `summary_runs` + `SummaryService` + `/api/summary-runs` 6 端点 + Tools 页「日志总结」tab；规则载体 = 内置预设 `preset-mem-summarize` / `target_file_type=SUMMARY`，契约来自 skill `memory-summarize` 模式 A；只读归纳、源文件默认不动，`cleanup-sources` 为写入后可选动作；见 [ARCHITECTURE.md](ARCHITECTURE.md) 3.13） |
 
 ---
 
@@ -256,9 +257,11 @@ Diff 渲染用后端归一化 + 行级 diff（`diff_service`），前端 `DiffVi
 | 用途 | 判据 | 可见 / 可编辑的地方 |
 |---|---|---|
 | 供**大模型归并工作日志**（M15 的规则载体） | `target_file_type = WORKLOG` | 只在「业务工具 → 日志标准化」界面（预设信息栏 + 页内编辑弹窗）；取用方式 `GET /api/presets?target_file_type=WORKLOG` |
+| 供**大模型做记忆归纳**（M16 的规则载体） | `target_file_type = SUMMARY` | 只在「业务工具 → 日志总结」界面（预设信息栏 + 页内编辑弹窗）；取用方式 `GET /api/presets?target_file_type=SUMMARY` |
 | 供**主工作台加载**（应用预设 / AI 整理 / 设为预设） | 其余类型 | 设置页「文档预设」、编辑器「应用预设 / AI 整理」；取用方式 `GET /api/presets?scope=workbench` |
 
-判据只有类型本身，没有额外的开关字段（常量 `preset_service.DAILY_PRESET_TYPE`）；两侧的过滤都在**后端**完成，
+判据只有类型本身，没有额外的开关字段（常量 `preset_service.DAILY_PRESET_TYPE` / `SUMMARY_PRESET_TYPE`，
+主工作台排除集合 = `LLM_ONLY_PRESET_TYPES`）；两侧的过滤都在**后端**完成，
 前端不自己判断。`Preset.is_builtin`（是否随版本分发的内置预设）用于 UI 展示「预设来源」。
 
 **「设为预设」语义**：以编辑器当前内容作模板正文，按参数生成带 YAML 规则 frontmatter 的模板文档；
