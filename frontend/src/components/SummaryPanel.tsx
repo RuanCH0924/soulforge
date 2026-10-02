@@ -508,8 +508,18 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
             titlePrefix="编辑记忆归纳预设"
             notice={
               <>
-                本预设<b>专供大模型做记忆归纳</b>使用（不出现在主工作台与文档预设页）。
-                保存后 <b>version +1</b> 并写入版本历史；<b>重新生成批次即生效</b>，已生成的计划不会重算。
+                <div className="alert-title">本预设专供大模型做记忆归纳</div>
+                <ul className="alert-points">
+                  <li>
+                    不出现在主工作台与「文档预设」页，只在日志总结界面查看与编辑。
+                  </li>
+                  <li>
+                    保存后 <b>version +1</b> 并写入版本历史，可随时回溯。
+                  </li>
+                  <li>
+                    <b>重新生成批次即生效</b>；已生成的计划不会重算。
+                  </li>
+                </ul>
               </>
             }
             onClose={() => setEditPresetId(null)}

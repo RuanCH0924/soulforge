@@ -9,6 +9,31 @@
 > `backend/pyproject.toml` 与 `frontend/package.json` 为静态字段，需手工同步，
 > 由 [backend/tests/test_version.py](backend/tests/test_version.py) 自动校验防漂移。
 
+## [0.5.3] - 2026-10-02
+
+### 变更
+- **删除「章节」配置**：彻底移除「章节（n）· 顺序即产出文档的章节顺序」——解析层 / 校验层 / 数据字段
+  （`section_order`、`optional_sections`）与前端「章节清单」面板、「章节顺序」开关一并下线；
+  `FormatValidator` 不再做章节缺失 / 顺序校验（移除 `STR-MISSING-SECTION` / `STR-SECTION-ORDER`）。
+  章节结构只由**预设参考文档**的标题派生（仅供「应用预设」机械补齐），不再对大模型任务构成约束。
+- **两项改名**：「章节骨架（Markdown；含示例与表格）」统一改为「**预设参考文档**」；
+  「风格与内容规则」统一改为「**修改要求**」，覆盖代码引用、界面文案与文档说明。
+- **大模型任务口径收敛**：M13 AI 整理 / M15 日志标准化 / M16 记忆归纳的 prompt 一律**仅以
+  「预设参考文档」与「修改要求」两项配置为核心参照依据**，不再注入机器规则摘要。
+- **预设编辑器精简**：移除「展开高级格式规则」（章节标题层级 / frontmatter 开关）；清理不必要或写死的
+  说明文字（「来源 / 当前 v N / 适用类型」「共 N 条」等）。
+
+### 修复
+- 说明横幅 `.alert-banner` 由 flex 改为块级排版，修复含 `<b>` / `<ul>` / `<span>` 的横幅文字被拆成多块、
+  行距错乱的问题；两个「预设编辑器」（日志标准化 / 日志总结）的说明改为「标题 + 要点列表」结构。
+
+### 文档
+- 同步 [API.md](docs/API.md) / [DATA-MODEL.md](docs/DATA-MODEL.md) / [DEVELOPMENT.md](docs/DEVELOPMENT.md) /
+  [UI-SPECS.md](docs/UI-SPECS.md) / [PRESET-TEMPLATE-REFACTOR-PLAN.md](docs/PRESET-TEMPLATE-REFACTOR-PLAN.md)
+  等文档；
+- 删除已完全过时的 UI 存档文档 `docs/UI-REDESIGN-PLAN.md`、`docs/UI-OPTIMIZATION-PLAN.md`（其事实已由
+  UI-SPECS.md 与代码承接）。
+
 ## [0.5.2] - 2026-09-26
 
 > 在 `v0.5.0` tag 尚未打出之前，先把本次交付（M16 工作日志总结 + 日志标准化页提示横幅排版重构）

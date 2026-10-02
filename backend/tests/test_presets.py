@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import json
+
 from app.models.db import PresetRow, PresetVersionRow
 from app.services.preset_service import (
     BUILTIN_PRESETS_REFRESHED,
@@ -153,12 +155,15 @@ def test_wlog_daily_std_preset_contract(client):
     assert res.status_code == 200
     data = res.json()["data"]
     assert data["target_file_type"] == "WORKLOG"
-    # 章节标题含序号：FormatValidator 对章节标题做精确匹配，序号不能丢
+    # 章节标题含序号（一、二、三、四、五），与外部 skill 的约定一致
     assert [s["title"] for s in data["sections_json"]] == [
         "一、今日概览", "二、关键事件", "三、关键决策", "四、待办事项", "五、明日计划"]
     assert all(s["required"] is True for s in data["sections_json"])
-    assert data["template_md"] and "section_order: strict" in data["template_md"]
-    assert "- title: 五、明日计划" in data["template_md"]
+    # 新形态：参考文档（纯 Markdown）+ 结构化规则，两处口径一致
+    assert data["template_md"] and "## 五、明日计划" in data["template_md"]
+    assert not data["template_md"].startswith("---")           # 参考文档不含 YAML
+    assert data["format_rules"]["section_heading_level"] == 2
+    assert "section_order" not in data["format_rules"]          # 章节顺序已不再是配置
 
     rules = " ".join(data["style_rules"])
     assert "默认不做敏感信息脱敏" in rules          # skill 的默认原则
@@ -175,13 +180,12 @@ def test_summarize_preset_contract(client):
     data = res.json()["data"]
     assert data["target_file_type"] == "SUMMARY"
     assert [s["title"] for s in data["sections_json"]] == [
-        "一、完成的工作", "二、经验教训", "三、重要决定", "四、重要信息", "五、待办事项"]
+        "一、完成的工作", "二、经验教训", "三、重要决定", "四、重要信息", "五、待办事项", "附录：溯源对照表"]
     assert all(s["required"] is True for s in data["sections_json"])
-    assert data["template_md"] and "section_order: strict" in data["template_md"]
-    assert "- title: 五、待办事项" in data["template_md"]
-    # 附录「溯源对照表」是**可选**章节：只出现在正文骨架里，不进必填章节
-    assert "附录：溯源对照表" in data["template_md"]
-    assert "- title: 附录：溯源对照表" not in data["template_md"]
+    assert data["template_md"] and "## 五、待办事项" in data["template_md"]
+    # 附录「溯源对照表」是参考文档里的普通章节（不再有「可选章节」概念）
+    assert "## 附录：溯源对照表" in data["template_md"]
+    assert "optional_sections" not in data["format_rules"]
 
     rules = " ".join(data["style_rules"])
     assert "经验教训是长期价值最高" in rules      # 教训优先
@@ -190,17 +194,109 @@ def test_summarize_preset_contract(client):
 
 
 def test_builtin_templates_match_sections_json():
-    """每个内置预设的模板文档必填章节必须与其 sections 一致（两处文案不得漂移）。"""
+    """每个内置预设的参考文档 + 结构化规则派生出的章节，必须与其 sections 一致（两处文案不得漂移）。"""
     from app.services.preset_service import BUILTIN_PRESETS
-    from app.services.preset_templates import BUILTIN_TEMPLATES
-    from app.services.template_rules import parse_template
+    from app.services.preset_templates import BUILTIN_FORMAT_RULES, BUILTIN_TEMPLATES
+    from app.services.template_rules import parse_preset
 
     for data in BUILTIN_PRESETS:
-        template_md = BUILTIN_TEMPLATES.get(data["id"])
-        assert template_md, f"{data['id']} 缺少内置模板文档"
+        skeleton = BUILTIN_TEMPLATES.get(data["id"])
+        assert skeleton, f"{data['id']} 缺少内置骨架"
         titles = [s["title"] for s in data["sections"]]
-        parsed = [s.title for s in parse_template(template_md).required_sections]
-        assert parsed == titles, f"{data['id']} 的模板章节与 sections 不一致"
+        parsed = [s.title for s in parse_preset(
+            skeleton, BUILTIN_FORMAT_RULES[data["id"]]).required_sections]
+        assert parsed == titles, f"{data['id']} 的骨架章节与 sections 不一致"
+
+
+# ---------- 存量形态的惰性兼容（YAML+骨架 → 纯骨架 + format_rules）----------
+
+_LEGACY_TEMPLATE = """---
+schema: soulforge.template/v1
+target_file_type: SOUL
+structure:
+  section_heading_level: 2
+  required_sections:
+    - title: 核心行为准则
+  section_order: strict
+elements:
+  heading_style: atx
+  list_style: "-"
+  heading_blank_line: true
+  paragraph_blank_line: true
+typography:
+  max_heading_level: 3
+  allow_bold: true
+  allow_italic: true
+  forbid_emoji: true
+  forbid_raw_html: true
+modules:
+  frontmatter: optional
+---
+
+# SOUL 标准模板
+
+## 核心行为准则
+
+- 简洁
+
+## 附录：溯源对照表
+
+- 可选章节
+"""
+
+
+def test_legacy_preset_reads_reference_and_effective_rules(registry):
+    """存量预设（template_md 仍是 YAML+参考文档、format_rules_json 为空）：
+    读取时返回纯参考文档 + 结构化规则，且**不写库**（惰性兼容）。"""
+    with registry.db.session() as s:
+        s.add(PresetRow(
+            id="preset-legacy-x", name="旧预设", target_file_type="SOUL",
+            description=None, template_md=_LEGACY_TEMPLATE,
+            sections_json=json.dumps([{"title": "核心行为准则", "required": True, "order": 1, "hint": None}]),
+            frontmatter_json="{}", style_rules="[]", is_system=0, version=1,
+        ))
+        s.commit()
+
+    detail = registry.presets.get("preset-legacy-x")
+    # 1) 对外 template_md 恒为纯参考文档（YAML 已被剥离）
+    assert detail.template_md is not None and not detail.template_md.startswith("---")
+    assert "## 核心行为准则" in detail.template_md
+    # 2) 结构化规则由旧 YAML 补齐（section_order / optional_sections 已不再是规则键）
+    assert detail.format_rules["section_heading_level"] == 2
+    assert "section_order" not in detail.format_rules
+    assert "optional_sections" not in detail.format_rules
+    # 3) 解析出的章节 = 参考文档正文里的全部标题（迁移前后一致口径：章节恒由正文派生）
+    rules = registry.presets.rules_for(detail)
+    assert [s.title for s in rules.required_sections] == ["核心行为准则", "附录：溯源对照表"]
+    assert rules.target_file_type == "SOUL"
+
+    # 4) 未写库（惰性）
+    with registry.db.session() as s:
+        assert s.get(PresetRow, "preset-legacy-x").format_rules_json is None
+
+
+def test_legacy_preset_save_persists_new_form(client, registry):
+    """经新编辑器保存后落库为新形态：template_md 无 YAML、format_rules_json 有值。"""
+    with registry.db.session() as s:
+        s.add(PresetRow(
+            id="preset-legacy-y", name="旧预设", target_file_type="SOUL",
+            description=None, template_md=_LEGACY_TEMPLATE,
+            sections_json=json.dumps([{"title": "核心行为准则", "required": True, "order": 1, "hint": None}]),
+            frontmatter_json="{}", style_rules="[]", is_system=0, version=1,
+        ))
+        s.commit()
+
+    res = client.put("/api/presets/preset-legacy-y", json={
+        "template_md": "# SOUL 标准模板\n\n## 核心行为准则\n\n- 简洁\n",
+        "format_rules": {"section_heading_level": 2, "require_frontmatter": False},
+    })
+    assert res.status_code == 200
+    with registry.db.session() as s:
+        row = s.get(PresetRow, "preset-legacy-y")
+        assert row.format_rules_json is not None
+        assert row.template_md is not None and not row.template_md.startswith("---")
+        assert json.loads(row.format_rules_json)["section_heading_level"] == 2
+        assert "section_order" not in json.loads(row.format_rules_json)
 
 
 # ---------- 更新 / version 自增 ----------
@@ -318,7 +414,8 @@ def test_seed_builtins_refreshes_updated_builtin(registry):
     data = svc.get("preset-wlog-daily-std")
     assert [s.title for s in data.sections_json][-1] == "五、明日计划"
     assert "按时间倒序归档" in " ".join(data.style_rules)
-    assert "- title: 五、明日计划" in (data.template_md or "")
+    assert "## 五、明日计划" in (data.template_md or "")          # 参考文档含该章节
+    assert data.format_rules["section_heading_level"] == 2        # 规则随参考文档一并刷新
     assert data.version == 2  # 升级留痕，不静默改内容
 
 
@@ -578,33 +675,26 @@ def test_create_from_document_happy_path(client):
     assert data["target_file_type"] == "SOUL"
     assert data["description"] == "由 main/SOUL.md 提取"
 
-    # 章节由模板 frontmatter 派生（代码块内的假章节不算）
+    # 章节由参考文档标题派生（代码块内的假章节不算）
     assert [s["title"] for s in data["sections_json"]] == [
         "核心行为准则", "工作态度和原则", "学习与连续性", "核心边界",
     ]
     assert all(s["required"] for s in data["sections_json"])
 
-    # 模板正文即当前文档，规则按参数写入 frontmatter
+    # 参考文档正文即当前文档（纯 Markdown）；规则另存结构化 format_rules
     template = data["template_md"]
-    assert template.startswith("---\n")
-    assert "name: \"我的 SOUL 结构\"" in template
-    assert "section_heading_level: 2" in template
-    assert "section_order: strict" in template
-    assert "frontmatter: optional" in template
+    assert not template.startswith("---")                     # 新形态不含 YAML
     assert "# SOUL.md" in template and "## 核心行为准则" in template
+    assert "## 这是代码块里的假章节" in template                 # 参考文档保留原文（含代码块）
+    assert data["format_rules"]["section_heading_level"] == 2
+    assert data["format_rules"]["require_frontmatter"] is False
+    assert "section_order" not in data["format_rules"]
+    assert "optional_sections" not in data["format_rules"]
 
     # 出现在预设列表中（5 内置 + 1 新建）
     listing = client.get("/api/presets").json()["data"]
     assert data["id"] in {p["id"] for p in listing}
     assert len(listing) == 6
-
-
-def test_create_from_document_required_sections_subset(client):
-    res = _create_from_document(client, required_sections=["核心行为准则", "核心边界"])
-    assert res.status_code == 201
-    data = res.json()["data"]
-    # 顺序仍按文档出现顺序，未勾选的不进必填
-    assert [s["title"] for s in data["sections_json"]] == ["核心行为准则", "核心边界"]
 
 
 def test_create_from_document_heading_level_selectable(client):
@@ -620,12 +710,6 @@ def test_create_from_document_heading_level_selectable(client):
     assert "未发现" in res.json()["error"]["message"]
 
 
-def test_create_from_document_unknown_required_section_rejected(client):
-    res = _create_from_document(client, required_sections=["不存在的章节"])
-    assert res.status_code == 400
-    assert "不存在" in res.json()["error"]["message"]
-
-
 def test_create_from_document_too_large_rejected(client):
     res = _create_from_document(client, content="# T\n\n## 章节A\n\n" + "x" * (31 * 1024))
     assert res.status_code == 400
@@ -635,18 +719,12 @@ def test_create_from_document_too_large_rejected(client):
 def test_create_from_document_requires_frontmatter_flag(client):
     res = _create_from_document(client, require_frontmatter=True)
     assert res.status_code == 201
-    assert "frontmatter: required" in res.json()["data"]["template_md"]
-
-
-def test_create_from_document_with_loose_order(client):
-    res = _create_from_document(client, section_order="loose")
-    assert res.status_code == 201
-    assert "section_order: loose" in res.json()["data"]["template_md"]
+    assert res.json()["data"]["format_rules"]["require_frontmatter"] is True
 
 
 def test_generated_preset_is_applicable(client):
-    """生成的预设可立即用于「应用预设」：缺失章节被补齐、格式校验通过。"""
-    pid = _create_from_document(client, required_sections=["核心行为准则", "核心边界"]).json()["data"]["id"]
+    """生成的预设可立即用于「应用预设」：章节被机械补齐、格式校验通过。"""
+    pid = _create_from_document(client).json()["data"]["id"]
 
     plan = client.post(f"/api/presets/{pid}/apply", json={
         "agent_id": "alpha", "file_path": "MEMORY.md",

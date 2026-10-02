@@ -4,7 +4,7 @@
 > 项目拥有者不需要懂代码，把本文档丢给 AI，它就能理解项目全貌并逐步生成代码。
 > 开发方式：Vibe Coding（自然语言描述 → AI 生成代码 → 老板验收）
 >
-> **版本号**：唯一事实源为 `backend/app/__init__.py` 的 `__version__`（当前 `0.5.2`），
+> **版本号**：唯一事实源为 `backend/app/__init__.py` 的 `__version__`（当前 `0.5.3`），
 > 版本历史与发版流程见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ---
@@ -224,33 +224,43 @@ Diff 渲染用后端归一化 + 行级 diff（`diff_service`），前端 `DiffVi
 
 > 老板诉求：保存「文档应该长什么样」的预设（SOUL/AGENTS/MEMORY/工作日志等），让所有文档结构统一。
 
-**核心数据**：
+**核心数据**（预设 = **预设参考文档** + **结构化规则** + **修改要求**，见 [PRESET-TEMPLATE-REFACTOR-PLAN.md](PRESET-TEMPLATE-REFACTOR-PLAN.md)）：
 
 ```json
 {
   "name": "SOUL.md 标准结构",
   "target_file_type": "SOUL",
-  "sections": [
-    {"title": "核心行为准则", "required": true,  "order": 1, "hint": "简洁优先、目标导向"},
-    {"title": "工作态度和原则", "required": true,  "order": 2, "hint": "先想后做、不吹嘘"},
-    {"title": "学习与连续性",   "required": true,  "order": 3, "hint": "记录、更新、演进"},
-    {"title": "核心边界",       "required": true,  "order": 4, "hint": "隐私、操作授权"}
-  ],
-  "frontmatter": {
-    "schema": "soulforge.preset/v1",
-    "owner":  "user"
+  "template_md": "# SOUL 文档标准模板\n\n## 核心行为准则\n\n- …\n\n## 工作态度和原则\n\n- …\n",
+  "format_rules": {
+    "section_heading_level": 2,
+    "require_frontmatter": false
   },
+  "sections": [
+    {"title": "核心行为准则", "required": true, "order": 1, "hint": null},
+    {"title": "工作态度和原则", "required": true, "order": 2, "hint": null}
+  ],
   "style_rules": ["emoji-in-section-title=false", "口语化禁令", "必须带应用范例"]
 }
 ```
+
+> `sections` 由**预设参考文档**的 `##` 标题派生，**不手写**；不再有「可选章节 / 章节顺序」配置。
+> `style_rules` 是**修改要求**（逐条自由文本，注入大模型 prompt 的弱规则）。
+> 其余排版键（`max_heading_level` / `list_style` / `forbid_emoji` / …）收敛为 `TemplateRules` 的全局默认。
+> 解析入口统一为 `template_rules.parse_preset(template_md, format_rules)`；`parse_template` 是存量兼容别名。
+> 旧的「YAML 规则 + 参考文档」模板在读取时**惰性兼容**（不写库），首次经新编辑器保存时落库为新形态。
+> 大模型处理**所有文档修改类任务**时，仅以「预设参考文档」与「修改要求」两项配置为核心参照依据。
 
 **端点**：`GET /api/presets`（`?target_file_type=` 按类型过滤 / `?scope=workbench` 排除大模型专用预设）、`GET/POST/PUT/DELETE /api/presets[/{id}]`、`POST /api/presets/from-document`（由当前文档生成）、`POST /api/presets/{id}/apply`、`POST /api/presets/{id}/apply/execute`。
 
 **UI 入口**：
 - 系统配置页 → 「文档预设」 → 列表 + 新建/编辑/删除 + 版本历史/回溯（**不含 WORKLOG 类**）
 - 文件编辑页 → 「应用预设」按钮 → 选预设 → 生成 diff plan → 老板确认 → 写入（**不含 WORKLOG 类**）
-- 文件编辑页工具栏 → 「设为预设」按钮 → 填写参数（名称/适用类型/说明/章节层级/必填章节/顺序/frontmatter）→ 存为预设
-- 业务工具 → 日志标准化 → 预设信息栏「查看 / 编辑」→ 页内编辑工作日志预设（**只在这里**）
+- 文件编辑页工具栏 → 「设为预设」按钮 → 填写参数（名称/适用类型/说明/章节层级/frontmatter）→ 存为预设
+- 业务工具 → 日志标准化 / 日志总结 → 预设信息栏「查看 / 编辑」→ 页内编辑工作日志预设（**只在这里**）
+
+**模板编辑器（共享组件 `PresetTemplateEditor`）**：**预设参考文档**（Markdown + 预览）+ **修改要求**
+（逐条文本）+ 折叠的「高级格式规则」（层级 / frontmatter）；普通用户全程不接触 YAML，
+也不再出现独立的「章节清单」面板。
 
 **两类预设的边界（不得混淆）**：
 
@@ -264,9 +274,9 @@ Diff 渲染用后端归一化 + 行级 diff（`diff_service`），前端 `DiffVi
 主工作台排除集合 = `LLM_ONLY_PRESET_TYPES`）；两侧的过滤都在**后端**完成，
 前端不自己判断。`Preset.is_builtin`（是否随版本分发的内置预设）用于 UI 展示「预设来源」。
 
-**「设为预设」语义**：以编辑器当前内容作模板正文，按参数生成带 YAML 规则 frontmatter 的模板文档；
-章节清单来自文档中指定层级的标题（扫描跳过围栏代码块），用户勾选决定哪些进必填；
-`max_heading_level` 由文档实际标题层级推断；模板正文 ≤ 30KB（模板全文会注入 AI 提示词）。
+**「设为预设」语义**：以编辑器当前内容作**预设参考文档**，按参数生成预设（参考文档 + 结构化规则）；
+章节清单来自文档中指定层级的标题（扫描跳过围栏代码块）；
+`max_heading_level` 由文档实际标题层级推断；参考文档正文 ≤ 30KB（全文会注入 AI 提示词）。
 
 **关键护栏**：
 - 内置预设与用户预设**同等可编辑、可删除**（播种时 `is_system=0`）；被用户改过的内置预设不会被升级覆盖（内容锚点比对）
@@ -341,32 +351,36 @@ class LLMProvider(Protocol):
 - 单文件 AI 调用**默认单次**，老板可点「重新生成」
 - 每次调用记录 provider + token 消耗 + 成本（审计日志）
 
-**Prompt 构造模板**（示意；实际实现见 `app/services/ai_job_service.py` 的 `_build_prompt()`，
-另额外注入【格式化规则】（`template_rule_summary` 生成）与【模板文档全文】，段名为「风格与内容规则」）：
+**Prompt 构造**（实际实现见 `app/services/ai_job_service.py` 的 `_build_prompt()`）：
+**只以两项配置为核心参照依据**——「预设参考文档」（`template_md` 的纯 Markdown 正文）
+与「修改要求」（`style_rules` 逐条）。不再注入任何机器规则摘要（章节 / 顺序等「章节」配置已移除）。
 
 ```text
-你是 Soulforge 的 AI 文档整理助手。
+你是 Soulforge 的 AI 文档整理助手。严格依据「预设参考文档」与「修改要求」两项配置修改目标文档……
 
-【任务】按以下预设结构，重新整理用户的文档，保留原意，不要丢失信息。
+【任务】严格依据下方「预设参考文档」与「修改要求」两项配置，修改目标文档：
+第一步：阅读并理解「预设参考文档」与「修改要求」；
+第二步：加载目标文档；
+第三步：严格按「预设参考文档」所示的结构与写法、以及「修改要求」提出的每一条要求修改目标文档；
+第四步：自查输出，确认完全符合两项配置后再交付。
 
-【预设：{preset.name}】
-适用文件类型：{preset.target_file_type}
-必须章节（按顺序）：
-{preset.sections_json}
+【预设参考文档】
+```markdown
+{reference}
+```
 
-【风格与内容规则】
-{preset.style_rules}
+【修改要求（必须逐条遵守）】
+{requirement_block}
 
-【附加指令】（老板可选）
+【附加指令】（可选）
 {user_extra_instructions}
 
-【原文档】
+【目标文档】
 ```markdown
 {file_content}
 ```
 
-【输出】
-只输出整理后的 Markdown 内容，不要解释，不要前缀。
+【输出】只输出修改后的 Markdown 文档正文本身……
 ```
 
 ### 模块 M14：超级同步（独立守护脚本）
@@ -413,17 +427,17 @@ class LLMProvider(Protocol):
 
 | 形态 | 规则放在哪 | 用途 |
 |---|---|---|
-| `system_embedded`（默认） | 规则全文进 **system prompt**，user prompt 只留任务与来源 | 生产默认；P3 实测定稿（输出 token −9.7%、单日耗时 −13.3%、三次一致性最高） |
-| `doc_full` | 规则 + 模板全文进 **user prompt** | P1/P2 的行为；对照基线 |
-| `trimmed` | user prompt，且按**当日来源类型**裁剪（无 B 类来源时不注入 session 元数据删除清单与对话腔改写规则）+ 只给章节骨架 | 省 prompt token 的备选；实测输出更长、掉过一次强规则，**不采用**，仅留作复测对照 |
+| `system_embedded`（默认） | 「预设参考文档」+「修改要求」全文进 **system prompt**，user prompt 只留任务与来源 | 生产默认；P3 实测定稿（输出 token −9.7%、单日耗时 −13.3%、三次一致性最高） |
+| `doc_full` | 两项配置全文进 **user prompt** | P1/P2 的行为；对照基线 |
+| `trimmed` | user prompt，且按**当日来源类型**裁剪（无 B 类来源时不注入 session 元数据删除清单与对话腔改写规则）+ 只给参考文档的章节标题 | 省 prompt token 的备选；实测输出更长、掉过一次强规则，**不采用**，仅留作复测对照 |
 
 三形态的「任务 / 目标 / 来源 / 输出要求」逐字一致（有单测守着），因此对比结果可归因到形态本身；
 业务链路（批次日归并 / M13）不传 `delivery`，形态切换不影响线上行为。
 
 **强/弱规则分层**（M15 的核心机制，改动前务必理解）：
 
-- **强规则**（`TemplateRules` + `FormatValidator`，机械校验并可自动修正）：H1、5 章节与顺序、命名 `YYYY-MM-DD.md`、禁 emoji / 禁裸 HTML → 不过就拦（`DailyRunService._acceptance_error()` 在写入前再跑一遍）
-- **弱规则**（技能预设正文 + `style_rules` → LLM）：保留什么 / 删什么 / 改写风格 / 去重合并 / 默认不脱敏
+- **强规则**（`TemplateRules` + `FormatValidator`，机械校验并可自动修正）：H1、标题层级 / 列表样式 / 空行 / 禁 emoji / 禁裸 HTML / frontmatter、命名 `YYYY-MM-DD.md` → 不过就拦（`DailyRunService._acceptance_error()` 在写入前再跑一遍）。**注：章节缺失 / 章节顺序已不再校验**（「章节」配置已移除）
+- **弱规则**（「预设参考文档」正文 + 「修改要求」→ LLM）：保留什么 / 删什么 / 改写风格 / 去重合并 / 默认不脱敏
 
 **四条刻意的边界**（易踩坑，详见方案附录 A / 附录 D）：
 

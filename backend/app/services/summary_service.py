@@ -78,7 +78,7 @@ from app.services.format_validator import FormatValidator
 from app.services.lint_service import LintService
 from app.services.llm_registry import LLMRegistry, LLMResponse
 from app.services.preset_service import PresetService
-from app.services.template_rules import TemplateRules, template_rule_summary
+from app.services.template_rules import TemplateRules, template_body
 
 # 批次状态机（见 docs/DATA-MODEL.md）
 RUN_PLANNED = "planned"          # 已创建，正在归纳（也包含「刚建、还没开跑」）
@@ -140,18 +140,18 @@ def _split_chunks(text: str, target_bytes: int = CHUNK_TARGET_BYTES) -> list[str
 
 SYSTEM_PROMPT = (
     "你是 Soulforge 的记忆归纳助手。把一段时间的分散记录归纳成一份单一综述："
-    "按「完成的工作 / 经验教训 / 重要决定 / 重要信息 / 待办事项」五大章节归类；"
+    "严格依据「预设参考文档」与「修改要求」两项配置组织结构与内容；"
     "丢弃每天重复的流水账与调试中间态，只保留有长期检索价值的事实、决定与待办；"
     "同一信息在多日反复出现时只保留最新口径。"
     "禁止在输出中写任何来源说明（「附录：溯源对照表」里的来源列除外）。"
-    "输出必须 100% 符合格式规则；正文只输出 Markdown 文档。"
-    "不要输出思考过程、任务分析、规则复述或任何对话性文字，第一行直接进入文档标题。"
+    "输出必须完全符合这两项配置；正文只输出 Markdown 文档。"
+    "不要输出思考过程、任务分析、配置复述或任何对话性文字，第一行直接进入文档标题。"
 )
 
 CHUNK_PROMPT_TEMPLATE = """【任务】下面是归纳来源「{path}」的第 {index}/{total} 段。
-请按「风格与内容规则」把它提炼成事实清单（保留结论、决定与可复用数据，删除过程噪音），供后续归纳使用。
+请按「修改要求」把它提炼成事实清单（保留结论、决定与可复用数据，删除过程噪音），供后续归纳使用。
 
-【风格与内容规则（来自预设，必须逐条遵守）】
+【修改要求（必须逐条遵守）】
 {style_block}
 
 【输出要求】
@@ -374,7 +374,7 @@ class SummaryService:
             raw_bytes=source.raw_bytes, rule_counts=source.rule_counts, summarized=True,
         )
 
-    def _build_prompts(self, preset, rules: TemplateRules, date_from: str, date_to: str,
+    def _build_prompts(self, preset, date_from: str, date_to: str,
                        output_path: str, prepared: list[tuple], extra_instructions: str | None,
                        ) -> tuple[str, str]:
         """组装 `(system_prompt, user_prompt)`。
@@ -390,31 +390,27 @@ class SummaryService:
                 f"【来源：{entry['path']}（{day} · {KIND_LABEL.get(entry['kind'], entry['kind'])}）{note}】\n"
                 f"```markdown\n{pre.text}\n```"
             )
-        user_prompt = f"""【任务】把 {date_from} ~ {date_to} 这段范围内的分散记录归纳成一份**单一**综述文档，严格遵循：
-第一步：读取并解析格式化规则与风格与内容规则；
+        user_prompt = f"""【任务】依据「预设参考文档」与「修改要求」两项配置，把 {date_from} ~ {date_to} 这段范围内的分散记录归纳成一份**单一**综述文档，严格遵循：
+第一步：阅读并理解「预设参考文档」与「修改要求」；
 第二步：通读全部来源（已按日期升序排列，每个来源都标注了日期）；
 第三步：丢弃低价值内容——每天重复的流水账 / 反思模板、临时性小任务、调试中间态、同一时段的重复记录，只保留最终结论；
-第四步：按五大主章节归类（完成的工作 / 经验教训 / 重要决定 / 重要信息 / 待办事项）；
-        同一信息在多日反复出现时只保留最新、最全的一条；有长期价值的教训必须加粗；
-第五步：自查输出，确保 100% 符合规则后再交付。
+第四步：按「预设参考文档」所示的结构组织内容；同一信息在多日反复出现时只保留最新、最全的一条；有长期价值的教训必须加粗；
+第五步：自查输出，确认完全符合两项配置后再交付。
 
 【本次归纳目标】
-- 目标文件：{output_path}（命名与结构由强规则校验，必须严格合规）
+- 目标文件：{output_path}
 - 第一行必须是 `# {span} 记忆归纳`
 - 输出中不得出现任何来源说明行（「附录：溯源对照表」里的来源列除外）
 
-【格式化规则（来自模板文档，必须逐条遵守）】
-{template_rule_summary(rules)}
-
-【风格与内容规则（来自预设，必须逐条遵守）】
-{self._style_block(preset)}
-
-【模板文档全文（含章节骨架示例，归纳时按此结构组织）】
+【预设参考文档（按此结构组织产出）】
 ```markdown
-{preset.template_md or '（该预设未提供模板文档，以上规则即全部要求）'}
+{template_body(preset.template_md) or '（该预设未提供参考文档）'}
 ```
 
-【附加指令】（老板可选）
+【修改要求（必须逐条遵守）】
+{self._style_block(preset)}
+
+【附加指令】（可选）
 {extra_instructions or '无'}
 
 【本次来源（共 {len(prepared)} 个）】
@@ -422,13 +418,11 @@ class SummaryService:
 
 【输出】只输出归纳后的 Markdown 文档正文，严格遵守：
 1. 第一行必须是 `# {span} 记忆归纳`；
-2. 必须按顺序包含且只包含五个二级章节：
-   `## 一、完成的工作` / `## 二、经验教训` / `## 三、重要决定` / `## 四、重要信息` / `## 五、待办事项`；
-3. 经验教训与重要决定建议用「| 日期 | … |」表格；待办用 `- [ ]`；内容宁可完整，不为精简而丢事实；
-4. 末尾可附 `## 附录：溯源对照表`（内容 ← 来源日期）；没有可溯源内容时可省略；
-5. 禁止输出思考过程、任务分析、步骤说明、规则复述、前言/结语、致谢等任何对话性文字；
-6. 禁止用 ``` 代码围栏包裹整篇文档（文档内部的代码块不受此限）；
-7. 所有大小标题使用中文。"""
+2. 章节结构以「预设参考文档」为准；经验教训与重要决定建议用「| 日期 | … |」表格，待办用 `- [ ]`；内容宁可完整，不为精简而丢事实；
+3. 末尾可附 `## 附录：溯源对照表`（内容 ← 来源日期）；没有可溯源内容时可省略；
+4. 禁止输出思考过程、任务分析、步骤说明、配置复述、前言/结语、致谢等任何对话性文字；
+5. 禁止用 ``` 代码围栏包裹整篇文档（文档内部的代码块不受此限）；
+6. 所有大小标题使用中文。"""
         return SYSTEM_PROMPT, user_prompt
 
     async def execute(self, run_id: str) -> None:
@@ -473,7 +467,7 @@ class SummaryService:
                 })
 
             system_prompt, prompt = self._build_prompts(
-                preset, rules, date_from, date_to, output_path, prepared, extra)
+                preset, date_from, date_to, output_path, prepared, extra)
             prompt_bytes = len(prompt.encode("utf-8"))
             if prompt_bytes > MAX_PROMPT_BYTES:
                 raise SummarySourceTooLargeError(

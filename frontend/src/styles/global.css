@@ -1769,14 +1769,23 @@ table.audit-table {
 }
 
 /* ---------- 警告条 ---------- */
+/* 说明横幅是「一段文字」，必须用块级排版：若用 flex，JSX 里的 text / <b> / <ul> / <span>
+   每个内联子节点都会变成独立 flex item 并排显示（文字被拆成多块、行距错乱）。 */
 .alert-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: block;
   padding: 9px 12px;
   border-radius: 8px;
   font-size: 13px;
+  line-height: 1.7;
   margin-bottom: 12px;
+}
+
+.alert-banner > :first-child {
+  margin-top: 0;
+}
+
+.alert-banner > :last-child {
+  margin-bottom: 0;
 }
 
 .alert-banner.warning {

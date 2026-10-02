@@ -23,7 +23,7 @@
 ```json
 {
   "data": { ... },
-  "meta": { "timestamp": 1754478710, "version": "0.5.2" }
+  "meta": { "timestamp": 1754478710, "version": "0.5.3" }
 }
 ```
 
@@ -702,22 +702,27 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
   "name": "AGENTS.md 老板风格",
   "target_file_type": "AGENTS",
   "description": "符合老板偏好的 AGENTS.md 结构",
-  "sections_json": [
-    {"title": "首次运行", "required": true, "order": 1},
-    {"title": "会话启动", "required": true, "order": 2},
-    {"title": "执行原则：三档授权", "required": true, "order": 3}
-  ],
+  "template_md": "# AGENTS.md 老板风格\n\n## 首次运行\n\n- …\n\n## 会话启动\n\n- …\n",
+  "format_rules": {
+    "section_heading_level": 2,
+    "require_frontmatter": false
+  },
   "frontmatter_json": {"schema": "soulforge.preset/v1", "owner": "user"},
   "style_rules": ["emoji-in-section-title=false", "口语化禁令"]
 }
 ```
 
+> `template_md` 是**预设参考文档**（纯 Markdown，不含 YAML）；结构化格式规则走 `format_rules`
+> （预设级只保留 `section_heading_level` / `require_frontmatter`）。
+> `style_rules` 是**修改要求**（逐条自由文本，注入大模型 prompt）。
+> 也可只传 `sections_json`（不传 `template_md`）。传了 `template_md` 时 `sections_json` 由参考文档派生。
+
 **响应**：`201 Created` + 新预设详情（含 id、version=1、is_system=false）。
 
 #### `POST /api/presets/from-document`
 
-由当前文档生成预设（编辑栏「设为预设」按钮）。以编辑器当前内容作为**模板正文**，
-配合用户填写的规则参数生成带 YAML 规则 frontmatter 的模板文档，等价于一次
+由当前文档生成预设（编辑栏「设为预设」按钮）。以编辑器当前内容作为**预设参考文档**，
+配合用户填写的规则参数生成预设（参考文档 + 结构化 `format_rules`），等价于一次
 「从现有文档反推结构」的预设创建。
 
 ```json
@@ -727,37 +732,33 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
   "content": "# SOUL.md\n\n## 核心行为准则\n\n- 简洁优先\n…",
   "description": "由 main/SOUL.md 提取",
   "section_heading_level": 2,
-  "required_sections": ["核心行为准则", "核心边界"],
-  "section_order": "strict",
   "require_frontmatter": false
 }
 ```
 
 | 参数 | 必填 | 说明 |
 |---|---|---|
-| `name` | 是 | 预设名称（写入模板 frontmatter） |
+| `name` | 是 | 预设名称 |
 | `target_file_type` | 是 | 适用文件类型 |
-| `content` | 是 | 作为模板正文的文档内容；UTF-8 体积 ≤ 30KB |
+| `content` | 是 | 作为预设参考文档的文档内容；UTF-8 体积 ≤ 30KB |
 | `description` | 否 | 用途说明 |
-| `section_heading_level` | 否 | 章节标题层级（1–6，默认 2）：该层级的标题构成章节清单 |
-| `required_sections` | 否 | 必填章节（须为文档中该层级的标题）；留空 = 该层级全部标题；顺序始终按文档出现顺序 |
-| `section_order` | 否 | `strict`（默认）/ `loose` |
+| `section_heading_level` | 否 | 章节标题层级（1–6，默认 2）：该层级的标题构成章节清单（供「应用预设」机械补齐） |
 | `require_frontmatter` | 否 | 是否要求目标文档带 YAML frontmatter（默认 `false`） |
 
-**响应**：`201 Created` + 新预设详情（`sections_json` 由模板 frontmatter 派生）。
+**响应**：`201 Created` + 新预设详情（`sections_json` 由参考文档标题派生，`format_rules` 记录规则）。
 
 **错误**：
 
 | HTTP | code | 场景 |
 |---|---|---|
-| 400 | `BAD_REQUEST` | 文档超过 30KB；文档中未发现该层级的标题；`required_sections` 在文档中均不存在 |
+| 400 | `BAD_REQUEST` | 文档超过 30KB；文档中未发现该层级的标题 |
 
-> 说明：`max_heading_level` 由文档实际标题层级推断，无需用户填写；
-> 标题扫描会跳过围栏代码块内的 `#`（与编辑器大纲口径一致）。
+> 说明：标题扫描会跳过围栏代码块内的 `#`（与编辑器大纲口径一致）。
 
 #### `GET /api/presets/{id}`
 
-查看预设完整内容（含 sections_json / frontmatter_json / style_rules）。
+查看预设完整内容（含 `template_md` 参考文档 / `format_rules` / `sections_json` / `frontmatter_json` / `style_rules`）。
+`template_md` 对外恒为**纯 Markdown 参考文档**（旧值里的 YAML 规则已由 `format_rules` 承载）。
 
 #### `PUT /api/presets/{id}`
 
@@ -1157,7 +1158,7 @@ python super_sync.py --once        # 只执行一轮（自检）
 
 ```json
 {
-  "data": { "status": "ok", "version": "0.5.2" }
+  "data": { "status": "ok", "version": "0.5.3" }
 }
 ```
 

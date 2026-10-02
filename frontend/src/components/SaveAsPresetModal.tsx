@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { api } from '../api';
 import { useToast } from '../hooks/useToast';
 import type { PresetTargetType } from '../types';
@@ -8,7 +8,7 @@ import { Modal } from './Modal';
 interface SaveAsPresetModalProps {
   agentId: string;
   filePath: string;
-  /** 编辑器当前内容（含未保存修改），作为预设模板正文 */
+  /** 编辑器当前内容（含未保存修改），作为预设参考文档正文 */
   content: string;
   onClose: () => void;
 }
@@ -17,7 +17,7 @@ const TARGET_TYPES: PresetTargetType[] = [
   'SOUL', 'AGENTS', 'MEMORY', 'USER', 'IDENTITY', 'TOOLS', 'WORKLOG', 'ANY',
 ];
 
-/** 后端 MAX_TEMPLATE_BYTES：模板全文会注入 AI 提示词，超限由前后端双重拦截 */
+/** 后端 MAX_TEMPLATE_BYTES：参考文档全文会注入 AI 提示词，超限由前后端双重拦截 */
 const MAX_TEMPLATE_BYTES = 30 * 1024;
 
 const HEADING_LEVELS = [1, 2, 3, 4];
@@ -62,7 +62,7 @@ function utf8Size(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
-/** 「设为预设」：把当前文档存为文档预设（模板正文 = 当前文档，规则参数由用户填写） */
+/** 「设为预设」：把当前文档存为文档预设（参考文档正文 = 当前文档，规则参数由用户填写） */
 export function SaveAsPresetModal({
   agentId,
   filePath,
@@ -77,30 +77,14 @@ export function SaveAsPresetModal({
   const [targetType, setTargetType] = useState<PresetTargetType>(() => inferTargetType(filePath));
   const [description, setDescription] = useState('');
   const [level, setLevel] = useState(() => inferSectionLevel(content));
-  const [checked, setChecked] = useState<string[]>(() => headingsAtLevel(content, inferSectionLevel(content)));
-  const [strictOrder, setStrictOrder] = useState(true);
   const [requireFrontmatter, setRequireFrontmatter] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const detected = useMemo(() => headingsAtLevel(content, level), [content, level]);
-  // 与 detected 取交集后再计数：切换层级的那一帧 checked 仍是旧层级的值
-  const selected = useMemo(
-    () => detected.filter((t) => checked.includes(t)).length,
-    [detected, checked],
-  );
   const size = useMemo(() => utf8Size(content), [content]);
   const tooLarge = size > MAX_TEMPLATE_BYTES;
 
-  // 切换章节层级 → 重新扫描，默认全选
-  useEffect(() => {
-    setChecked(headingsAtLevel(content, level));
-  }, [content, level]);
-
-  const toggle = (title: string) => {
-    setChecked((prev) => (prev.includes(title) ? prev.filter((t) => t !== title) : [...prev, title]));
-  };
-
-  const canSubmit = name.trim().length > 0 && selected > 0 && !tooLarge && !saving;
+  const canSubmit = name.trim().length > 0 && detected.length > 0 && !tooLarge && !saving;
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -112,11 +96,9 @@ export function SaveAsPresetModal({
         content,
         description: description.trim() || undefined,
         section_heading_level: level,
-        required_sections: checked,
-        section_order: strictOrder ? 'strict' : 'loose',
         require_frontmatter: requireFrontmatter,
       });
-      toast(`已保存预设「${preset.name}」（${preset.sections_json.length} 个必填章节）`, 'success');
+      toast(`已保存预设「${preset.name}」（${preset.sections_json.length} 个章节）`, 'success');
       onClose();
     } catch (e) {
       toast(`保存预设失败：${(e as Error).message}`, 'error');
@@ -143,7 +125,7 @@ export function SaveAsPresetModal({
       }
     >
       <div className="alert-banner info">
-        把当前文档保存为文档预设（结构模板）：内容将作为模板正文与章节骨架，
+        把当前文档保存为文档预设：内容将作为<b>预设参考文档</b>与示例，
         之后可在「应用预设 / AI 整理」中复用它统一其他 Agent 的同名文档。
       </div>
 
@@ -159,7 +141,7 @@ export function SaveAsPresetModal({
 
       {tooLarge && (
         <div className="alert-banner danger">
-          文档 {Math.round(size / 1024)}KB 超过 {MAX_TEMPLATE_BYTES / 1024}KB 上限：模板全文会注入 AI
+          文档 {Math.round(size / 1024)}KB 超过 {MAX_TEMPLATE_BYTES / 1024}KB 上限：参考文档全文会注入 AI
           提示词，Tokens 成本与质量风险过高，请先精简文档。
         </div>
       )}
@@ -208,41 +190,18 @@ export function SaveAsPresetModal({
             </option>
           ))}
         </select>
-        <div className="hint">该层级的标题构成预设的章节清单；切换层级会重新扫描文档标题。</div>
+        <div className="hint">
+          该层级的标题构成预设的章节结构（由参考文档派生，供「应用预设」机械补齐）；切换层级会重新扫描文档标题。
+        </div>
       </div>
 
-      <div className="section-title">
-        必填章节（{selected}/{detected.length}）
-      </div>
-      {detected.length === 0 ? (
+      {detected.length === 0 && (
         <div className="alert-banner warning">
           文档中未发现该层级的标题，请改用其他「章节标题层级」（或先给文档补上标题）。
         </div>
-      ) : (
-        <div className="checkbox-grid" style={{ maxHeight: 220 }}>
-          {detected.map((title) => (
-            <label key={title} className="checkbox-row" title={title}>
-              <input
-                type="checkbox"
-                checked={checked.includes(title)}
-                onChange={() => toggle(title)}
-              />
-              <span className="mono" style={{ minWidth: 0 }}>{title}</span>
-            </label>
-          ))}
-        </div>
       )}
-      <div className="hint">勾选的章节会写入预设规则：应用该预设时缺失的章节会被补齐；未勾选的不作要求。</div>
 
       <div className="field" style={{ marginTop: 12 }}>
-        <label className="checkbox-row" style={{ fontWeight: 400 }}>
-          <input
-            type="checkbox"
-            checked={strictOrder}
-            onChange={(e) => setStrictOrder(e.target.checked)}
-          />
-          <span>严格要求章节顺序（勾选后顺序错误会被格式校验拦下）</span>
-        </label>
         <label className="checkbox-row" style={{ fontWeight: 400 }}>
           <input
             type="checkbox"

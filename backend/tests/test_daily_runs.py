@@ -31,7 +31,7 @@ CALLS: list[list[dict]] = []
 OUTPUT_OVERRIDE: list[str | None] = [None]
 # 按日期指定输出（多日批次里需要逐日不同输出时用），优先级高于 OUTPUT_OVERRIDE
 OUTPUT_OVERRIDE_BY_DAY: dict[str, str] = {}
-_PROMPT_DATE_RE = re.compile(r"【任务】把 (\d{4}-\d{2}-\d{2}) 这一天")
+_PROMPT_DATE_RE = re.compile(r"把 (\d{4}-\d{2}-\d{2}) 这一天")
 
 
 def _doc(date: str, extra: str = "") -> str:

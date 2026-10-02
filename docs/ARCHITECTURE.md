@@ -682,15 +682,15 @@ UI 每 2.5s 轮询一次（满足 ≤ 3s 延迟）并支持手动刷新。
 |---|---|---|
 | `DailySourceScanner` | `app/services/daily_source_scanner.py` | 只扫 `memory/` **顶层**，按文件名分 A（`YYYY-MM-DD.md`，系统自动生成的日文件）/ B（`YYYY-MM-DD-HHMM.md`，含 `-HHMM-2`）/ C（`YYYY-MM-DD-<topic>.md`）三类，按日分组、排出碎片、标出「单来源但质量差」 |
 | （预处理器） | `app/services/daily_preprocessor.py` | 12 条**确定性**规则（零 token）：真壳 M01~M10（会话键 / untrusted metadata / 引用壳 / 排队消息 / dreaming 统计壳 / 纯 `HEARTBEAT_OK` / 过程过渡语）+ 归一 M11/M12（BOM·换行·空白）。`SHELL_RULES` / `detect_residual_shells()` 只查真壳（归一不算残留） |
-| `DailyMergeService` | `app/services/daily_merge_service.py` | 单日多来源 → 1 文件：组装 prompt（模板规则 + `style_rules` + 骨架 + 带优先级来源）→ LLM → `sanitize()` → `FormatValidator` 强规则校验/机械修正；只出 `DailyMergePlan`，**不写盘、不删碎片** |
+| `DailyMergeService` | `app/services/daily_merge_service.py` | 单日多来源 → 1 文件：组装 prompt（预设参考文档 + 修改要求 + 带优先级来源）→ LLM → `sanitize()` → `FormatValidator` 强规则校验/机械修正；只出 `DailyMergePlan`，**不写盘、不删碎片** |
 | `DailyRunService` | `app/services/daily_run_service.py` | 批次编排：创建（幂等键 / 天数与 token 上限 / 后台逐日生成）→ 确认执行（批次级写前预检 + 乐观锁 → 写入 + 备份 + 审计 → 碎片 `send2trash`）→ 验收报告（对磁盘真实文件核对 5 项） |
 
 **规则分层（强 / 弱）**：
 
 - **强规则**（机械可判定，不过就拦）：`preset.template_md` 的 YAML frontmatter → `TemplateRules`
-  （必填章节 / 顺序 / 禁止 emoji / 禁止原始 HTML …）→ `FormatValidator.validate_and_fix()`；
-  写前验收还要求真壳残留 = 0（`detect_residual_shells()`）
-- **弱规则**（语义，交给模型）：`preset.style_rules` + 模板正文，注入 prompt；
+  （标题层级 / 列表样式 / 空行 / 禁止 emoji / 禁止原始 HTML / frontmatter …）→ `FormatValidator.validate_and_fix()`；
+  写前验收还要求真壳残留 = 0（`detect_residual_shells()`）。**注：章节缺失 / 顺序不再校验**（「章节」配置已移除）
+- **弱规则**（语义，交给模型）：`preset.style_rules`（**修改要求**）+ 「**预设参考文档**」正文，注入 prompt；
   形态默认 `system_embedded`（规则全文进 system prompt，P3 实测最优）
 
 **关键设计**：

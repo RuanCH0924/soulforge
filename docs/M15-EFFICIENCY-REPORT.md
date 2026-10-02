@@ -35,8 +35,8 @@
 
 | 形态 | 规则放哪 | 注入量 | 现状 |
 |---|---|---|---|
-| ① `doc_full` | user prompt | 格式化规则摘要 + `style_rules` 全量 + **模板文档全文**（含 frontmatter 规则块与说明正文） | P1 / P2 的行为（对照基线） |
-| ② `trimmed` | user prompt | 同上，但按**当日来源类型**裁剪规则，且模板只给**章节骨架**（标题行） | P3 新增，仅用于对比 |
+| ① `doc_full` | user prompt | 格式化规则摘要 + `style_rules` 全量 + **预设参考文档全文**（含 frontmatter 规则块与说明正文） | P1 / P2 的行为（对照基线） |
+| ② `trimmed` | user prompt | 同上，但按**当日来源类型**裁剪修改要求，且参考文档只给**章节标题**（标题行） | P3 新增，仅用于对比 |
 | ③ `system_embedded` | **system prompt** | 与 ① 完全相同的文本，只是换到 system 角色；user prompt 里留一句指引 | P3 新增，**已定为默认** |
 
 ### 2.1 形态 ② 的裁剪口径

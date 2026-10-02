@@ -22,6 +22,7 @@
 | v1.9 | 2026-09-24 | **失败归因修正（P3 后补记）**：排查 17:46 批次失败时确认两个缺陷——① `detect_residual_shells()` 把 M11/M12「编码·空白归一」也当壳检测，导致**任何合规文档只要结尾带换行就被判「有残留」**（写前验收误拦 + 验收报告 `no_residue` 误报），现口径收窄到真壳规则 `SHELL_RULES`（M01~M10），报错改用规则名（`describe_shells()`）；② `LLMClient` 从不读 `finish_reason`，输出被 `max_tokens` 截断时被报成「强规则未通过」（谎报失败原因），现截断自动重试 1 次（预算翻倍、封顶 32768），仍截断则抛 `LLMOutputTruncatedError`（`422` / `LLM_OUTPUT_TRUNCATED`）并提示调大 provider 的 `max_tokens`。§9.2 新增第 12 条验收标准 |
 | v1.10 | 2026-09-24 | **预设边界与页内管理（P3 后补记）**：日志标准化预设与主工作台文档预设彻底分开——判据 `target_file_type=WORKLOG`；M15 界面新增预设信息栏（徽章「大模型专用」+ 版本 + 来源 +「查看 / 编辑」）与页内编辑器（用途说明 / 模板文档 / 风格与内容规则三类，比设置页表单多出 `style_rules`），保存即 version+1、新批次生效；设置页「文档预设」与主工作台「应用预设 / AI 整理」改取 `?scope=workbench`，不再出现日志预设 |
 | v1.11 | 2026-10-02 | **大模型无意义日志自动删除（可配置开关）**：`[daily_standardizer]` 新增布尔项 `auto_delete_meaningless_logs`（默认 `false`，关闭时零额外调用、行为与既有流程一致）；定义 5 个判定维度（空内容 / 重复冗余 / 无业务价值调试信息 / 无效格式 / 纯过程叙述，见 §6.4）；开关开启时批次「计划阶段」调一次大模型筛选当日碎片，命中的碎片在 `send2trash` **之前**先写入 7 天备份归档（`<data_dir>/meaningless-log-backups/`）再删除；归档失败则跳过删除。新增模块 `daily_log_filter` / `meaningless_log_archive`，逐日条目新增 `meaningless_json` 列与 `meaningless_logs` 字段 |
+| v1.12 | 2026-10-02 | **删除「章节」配置 + 两项改名 + prompt 收敛**：M15 用的 WORKLOG 预设不再有「章节（n）· 顺序即产出文档的章节顺序」——`section_order` / `optional_sections` 与必填章节 / 章节顺序校验全部下线，章节结构只由「**预设参考文档**」标题派生；「章节骨架」改名「预设参考文档」、「风格与内容规则」改名「修改要求」；归并 prompt 仅以这两项为核心参照依据。附录 B 标记为历史形态 |
 
 ---
 
@@ -234,13 +235,14 @@ OpenClaw Agent 的工作空间里，`memory/` 目录长期存在三类碎片：
 
 ### 6.1 前置改造（P0 · ✅ 已交付 2026-09-23）
 
-1. ✅ **接通 `style_rules` 到 prompt**：在 `AIJobService._build_prompt()` 新增【风格与内容规则】段，
-   把 `preset.style_rules`（列表）逐条注入。这是让「skill 文档化」真正成立的最小改动，
-   同时修掉既有文档↔实现漂移。
+1. ✅ **接通 `style_rules` 到 prompt**：在 `AIJobService._build_prompt()` 新增【修改要求】段
+   （当时名为「风格与内容规则」，v1.2 起统一更名），把 `preset.style_rules`（列表）逐条注入。
+   这是让「skill 文档化」真正成立的最小改动，同时修掉既有文档↔实现漂移。
 2. ✅ **把 SKILL.md 落成预设**（`target_file_type = WORKLOG`）：
-   - `template_md`：`schema: soulforge.template/v1` + `target_file_type: WORKLOG` +
-     `structure.required_sections`（一、今日概览 / 二、关键事件 / 三、关键决策 / 四、待办事项 / 五、明日计划）
-     + `section_order: strict` + 正文骨架（见附录 B）
+   - `template_md`（**v1.2 起称「预设参考文档」**）：P0 时为 `schema: soulforge.template/v1` +
+     `target_file_type: WORKLOG` + `structure.required_sections`（一、今日概览 / 二、关键事件 / 三、关键决策 / 四、待办事项 / 五、明日计划）
+     + `section_order: strict` + 正文骨架（见附录 B）；**v1.2 已删除「章节」配置**（`section_order` / `optional_sections`
+     与必填章节校验下线，章节恒由参考文档标题派生）
    - `style_rules`：语义规则清单（高价值保留项 / 低价值删除项 / 客观改写要求 / **默认不脱敏** / 按时间倒序归档）
    - 以内置预设 `preset-wlog-daily-std`「工作日志日标准化」落地（走 `seed_builtins()`），
      因而天然具备版本、回溯、UI 编辑能力
@@ -392,7 +394,7 @@ OpenClaw Agent 的工作空间里，`memory/` 目录长期存在三类碎片：
 | 形态 | 说明 | 实测结论 |
 |---|---|---|
 | ① `doc_full` · 文档注入（全量） | 规则 + 模板全文进 user prompt | 对照基线 |
-| ② `trimmed` · 按来源裁剪注入 | 只注入该来源类型相关的规则子集 + 章节骨架 | 省输入 10.5% 但**输出更长（+13.3%）**、耗时最高、掉过一次强规则 → 不采用 |
+| ② `trimmed` · 按来源裁剪注入 | 只注入该来源类型相关的修改要求子集 + 参考文档只给章节标题 | 省输入 10.5% 但**输出更长（+13.3%）**、耗时最高、掉过一次强规则 → 不采用 |
 | ③ `system_embedded` · 内嵌 system prompt | 规则全文进 system prompt | **定为默认**：输出 token −9.7%、单日耗时 −13.3%、三次输出一致性 0.442 → 0.518，合规率持平 |
 
 记录指标：输入 / 输出 token、单日耗时、整月总耗时（132 天外推 58.5 / 63.6 / 50.8 分钟）、
@@ -546,7 +548,12 @@ OpenClaw Agent 的工作空间里，`memory/` 目录长期存在三类碎片：
 
 ## 附录 B · 标准输出模板
 
-强规则部分（`template_md` 的 `structure`）：
+> ⚠️ **历史附录（v1.2 起已过时）**：下文的 `structure.required_sections` / `section_order`
+> 属于旧「章节」配置，现已被删除；章节结构只由「**预设参考文档**」的标题派生，
+> 且**不再做缺失 / 顺序校验**（`_heading_at()` 与 `STR-MISSING-SECTION` / `STR-SECTION-ORDER` 均已移除）。
+> 保留本附录仅为记录当初的模板形态。
+
+强规则部分（`template_md` 的 `structure`，历史形态）：
 
 ```yaml
 schema: soulforge.template/v1
@@ -575,10 +582,9 @@ modules:
   frontmatter: optional
 ```
 
-> **实现要点（易踩坑）**：`FormatValidator._heading_at()` 对章节标题做**精确匹配**
-> （要求 `标题.strip() == title`），因此序号 `一、二、三、四` 是标题的一部分，
-> `required_sections` 必须写成 `一、今日概览` 而不能写成 `今日概览`——
-> 否则会被判为「缺失必填章节」（`STR-MISSING-SECTION`）并触发机械补齐，产出重复章节。
+> **实现要点（v1.2 更新）**：`FormatValidator` 已**不再对章节标题做精确匹配**
+> （`_heading_at()` 已移除）——章节缺失 / 顺序不再拦截。现有的 M15 预设在
+> 「预设参考文档」的正文里保留了带序号的标题（一、今日概览 …），与外部 skill 的约定一致。
 > `section_heading_level: 2` 对应 skill 模板里的 `##` 章节；`max_heading_level: 3` 允许
 > 「关键事件」下的 `### 事件 N` 子标题。
 >

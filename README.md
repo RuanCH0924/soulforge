@@ -5,7 +5,7 @@
 **A cross-Agent system-prompt file manager for OpenClaw with a Web GUI**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.5.2-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.3-blue)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](backend/pyproject.toml)
 [![Backend](https://img.shields.io/badge/Backend-FastAPI-009688.svg)](backend)
 [![Frontend](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-61DAFB.svg)](frontend)
@@ -45,6 +45,7 @@ OpenClaw is a multi-Agent system in which every Agent owns a `workspace/` contai
 | **LLM providers** *(Phase 2.5)*        | Plug in any OpenAI-compatible LLM (OpenAI / Anthropic / DeepSeek / Ollama) with encrypted API keys and hot reload.                                                |
 | **AI organise** *(Phase 2.5)*          | Run an Agent on a chosen file against a preset, review the diff, then write — keeps every soul file consistently structured.                                       |
 | **Work-log standardiser** *(M15)*      | Merges all records of one day under `memory/` (daily file / session exports / topic fragments) into **exactly one `YYYY-MM-DD.md` per day**: deterministic shell-stripping (zero tokens) → LLM merge → per-day diff confirm → write and clean up fragments (via recycle bin). When a day genuinely has nothing worth keeping, the model returns a "nothing to archive" verdict instead of padding one out. |
+| **Memory summariser** *(M16)*          | Summarises a **date range** of scattered records under `memory/` into **one** recap document (work done / lessons learned / key decisions / key info / todos + optional traceability appendix). Read-only by default (plan → confirm → write); source-file cleanup is a separate, optional, recoverable step. |
 
 ## Roadmap
 
@@ -57,6 +58,7 @@ Soulforge ships in phases:
 | **Phase 2.5 · AI Editor** | Document presets → LLM provider plug-in → AI-powered document organising (3-step plan) | ✅ Shipped |
 | **Super Sync** | Second-level (near real-time) sync of same-named core documents across Agents (standalone daemon + UI matrix scope / status / logs) | ✅ Shipped |
 | **M15 · Work-log standardiser** | `memory/` daily-file merge (exactly one `YYYY-MM-DD.md` per day + metadata shell-stripping + fragment cleanup), manual batches + per-day confirm | ✅ Shipped |
+| **M16 · Memory summariser** | Summarise a date range under `memory/` into one recap document (read-only, plan + confirm, optional source cleanup) | ✅ Shipped |
 | **Phase 3 · Far future** | Team collaboration / cloud sync / third-party plugins | 📋 Planned |
 
 The unified version baseline starts at **v0.5.0** — see [CHANGELOG.md](CHANGELOG.md).
@@ -185,6 +187,7 @@ Base URL: `http://127.0.0.1:8848/api` · Interactive OpenAPI docs: <http://127.0
 | `GET` / `POST` / `PUT` / `DELETE` | `/api/llm/providers[/{id}]` · `/api/llm/providers/{id}/test` · `/api/llm/chat` | LLM providers + connectivity test |
 | `GET` / `POST` | `/api/ai/jobs[/{id}]` · `/api/ai/jobs/{id}/apply` · `/reject` · `/regenerate` | AI organise jobs (plan → diff → apply) |
 | `GET` / `POST` | `/api/daily-runs[/{id}]` · `/api/daily-runs/{id}/apply` · `/reject` · `/skip` · `/report` | Work-log standardiser batches (plan → per-day confirm → write + fragment cleanup → acceptance report) |
+| `GET` / `POST` | `/api/summary-runs[/{id}]` · `/api/summary-runs/{id}/apply` · `/reject` · `/cleanup-sources` · `/report` | Memory-summarisation batches (plan → confirm → write → optional source cleanup → report) |
 
 All responses follow the envelope `{"data": ...}`; errors return `{"error": {"code", "message", "details"}}`.
 `GET /api/health` returns the runtime version (`data.version`) — the same value as `backend/app/__init__.py`.

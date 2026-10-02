@@ -6,7 +6,7 @@
 1. 扫 + 分类 + 分组（`DailySourceScanner`）
 2. 预处理：确定性剥壳 + 归一 + 体积统计（`DailyPreprocessor`）
 3. 超限来源 → 分块摘要；仍超限 → 抛 `DailySourceTooLargeError` 转人工复核
-4. 组装 prompt（格式化规则 + 风格与内容规则 + 骨架 + 各来源）
+4. 组装 prompt（预设参考文档 + 修改要求 + 各来源）
 5. 调 LLM → `sanitize()` 剥思考过程 → `FormatValidator.validate_and_fix()` 强规则校验/机械修正
 
 **P1 只出计划，绝不写文件、绝不删文件**：写入与碎片删除是 P2 的 plan/execute 两步流。
@@ -54,7 +54,7 @@ from app.services.format_validator import FormatValidator
 from app.services.lint_service import LintService
 from app.services.llm_registry import LLMRegistry, LLMResponse
 from app.services.preset_service import PresetService
-from app.services.template_rules import template_rule_summary
+from app.services.template_rules import template_body
 
 # 单来源分块上限：超过即转人工复核（方案 §6.2 第 3 步「仍超限 → 该日转人工复核」）
 MAX_CHUNKS_PER_SOURCE = 6
@@ -73,7 +73,7 @@ KIND_LABEL = {
 # 三种形态只在「规则放哪里、放多少」上不同，任务与来源部分的措辞完全一致，
 # 这样对比出来的差异才可归因于形态本身。
 DELIVERY_DOC_FULL = "doc_full"          # ① 规则 + 模板全文进 user prompt（P1/P2 的行为）
-DELIVERY_TRIMMED = "trimmed"            # ② user prompt 内按当日来源类型裁剪规则与模板骨架
+DELIVERY_TRIMMED = "trimmed"            # ② user prompt 内按当日来源类型裁剪修改要求与参考文档
 DELIVERY_SYSTEM = "system_embedded"     # ③ 规则全文进 system prompt，user prompt 只留任务与来源
 DELIVERIES: tuple[str, ...] = (DELIVERY_DOC_FULL, DELIVERY_TRIMMED, DELIVERY_SYSTEM)
 # 默认形态由 P3 实测定稿（27 次真实调用，3 样本日 × 3 形态 × 3 重复，结论见效率报告 §4）：
@@ -97,7 +97,7 @@ def is_b_only_rule(rule: str) -> bool:
 
 
 def _skeleton_headings(template_md: str | None) -> str:
-    """只取模板的章节骨架（标题行），去掉 frontmatter 规则块与解释性正文。"""
+    """只取参考文档的章节标题行，去掉 frontmatter 规则块与解释性正文。"""
     if not template_md:
         return ""
     lines: list[str] = []
@@ -160,9 +160,9 @@ SYSTEM_PROMPT = (
 )
 
 CHUNK_PROMPT_TEMPLATE = """【任务】下面是一个过长工作日志来源的第 {index}/{total} 段。
-请按「风格与内容规则」把它提炼成事实清单（保留结论与关键信息，删除过程噪音），供后续归并使用。
+请按「修改要求」把它提炼成事实清单（保留结论与关键信息，删除过程噪音），供后续归并使用。
 
-【风格与内容规则（来自预设，必须逐条遵守）】
+【修改要求（来自预设，必须逐条遵守）】
 {style_block}
 
 【输出要求】
@@ -274,7 +274,7 @@ class DailyMergeService:
 
     @staticmethod
     def _style_block(preset: Preset, kinds: set[str] | None = None) -> str:
-        """风格与内容规则块。`kinds=None` → 全量；否则按当日来源类型裁剪。"""
+        """修改要求块。`kinds=None` → 全量；否则按当日来源类型裁剪。"""
         rules = list(preset.style_rules)
         if kinds is not None and KIND_B not in kinds:
             rules = [r for r in rules if not is_b_only_rule(r)]
@@ -315,24 +315,21 @@ class DailyMergeService:
         返回 `(user 段文案, system 段文案)`——同一份文本只会进其中一个（另一个为空串）。
         """
         trimmed = delivery == DELIVERY_TRIMMED
-        rules = self.presets.rules_for(preset)
         style_block = self._style_block(preset, kinds) if trimmed else self._style_block(preset)
         if trimmed:
-            skeleton = _skeleton_headings(preset.template_md) or "（该预设未提供模板文档，以上规则即全部要求）"
-            skeleton_title = "【模板章节骨架（归并时按此结构组织）】"
+            # 裁剪形态：只给参考文档的章节标题（不给示例正文）
+            reference = _skeleton_headings(preset.template_md) or "（该预设未提供参考文档）"
         else:
-            skeleton = preset.template_md or "（该预设未提供模板文档，以上规则即全部要求）"
-            skeleton_title = "【模板文档全文（含章节骨架示例，归并时按此结构组织）】"
-        text = f"""【格式化规则（来自模板文档，必须逐条遵守）】
-{template_rule_summary(rules)}
-
-【风格与内容规则（来自预设，必须逐条遵守）】
-{style_block}
-
-{skeleton_title}
+            # 只注入**预设参考文档**（剥掉旧模板里可能残留的 YAML）
+            reference = template_body(preset.template_md) or "（该预设未提供参考文档）"
+        # 只以两项配置为参照依据：预设参考文档 + 修改要求
+        text = f"""【预设参考文档（按此结构与写法组织产出）】
 ```markdown
-{skeleton}
-```"""
+{reference}
+```
+
+【修改要求（必须逐条遵守）】
+{style_block}"""
         return ("", text) if delivery == DELIVERY_SYSTEM else (text, "")
 
     def _build_prompts(self, preset: Preset, group: DayGroup, prepared: list[tuple],
@@ -346,7 +343,7 @@ class DailyMergeService:
         kinds = {source.kind for source, _ in prepared}
         user_rules, system_rules = self._rule_block(preset, kinds, delivery)
         if delivery == DELIVERY_SYSTEM:
-            rules_hint = "【规则】格式化规则与风格与内容规则已在上方系统提示中给出，必须逐条遵守。\n\n"
+            rules_hint = "【说明】「预设参考文档」与「修改要求」已在上方系统提示中给出，必须严格遵守。\n\n"
         else:
             rules_hint = f"{user_rules}\n\n"
         blocks = []
@@ -360,18 +357,18 @@ class DailyMergeService:
             f"当天已有标准日文件 {group.target_path}，请以「A 类主骨架」为基础改写，"
             "不要把其它来源的事件覆盖掉已有事实。"
             if group.has_standard
-            else f"当天还没有标准日文件，请按骨架新建 {group.target_path} 的内容。"
+            else f"当天还没有标准日文件，请按「预设参考文档」的结构新建 {group.target_path} 的内容。"
         )
-        user_prompt = f"""【任务】把 {group.date} 这一天的多个来源记录归并成 1 篇标准工作日志，严格遵循：
-第一步：读取并解析格式化规则、风格与内容规则；
+        user_prompt = f"""【任务】依据「预设参考文档」与「修改要求」两项配置，把 {group.date} 这一天的多个来源记录归并成 1 篇标准工作日志，严格遵循：
+第一步：阅读并理解「预设参考文档」与「修改要求」；
 第二步：读取全部来源（已按来源优先级 A > C > B 排好序）；
 第三步：先判断本日是否值得产出日文件（见【输出】的情形二），值得产出的再归并——
         同一天的多来源合并成 1 篇；跨来源重复的事件只保留信息量最大的一条；
-        任何来源独有的关键事实都不得丢失；「风格与内容规则」里要求保留的必须保留、要求删除的必须删除；
-第四步：自查输出，确保 100% 符合规则后再交付。
+        任何来源独有的关键事实都不得丢失；「修改要求」里要求保留的必须保留、要求删除的必须删除；
+第四步：自查输出，确认完全符合两项配置后再交付。
 
 【本次归并目标】
-- 目标文件：{group.target_path}（命名与结构由强规则校验，必须严格合规）
+- 目标文件：{group.target_path}
 - {target_hint}
 - 输出中不得出现任何来源说明（不写「整合自」「来源」「原始文件位置」等行）
 

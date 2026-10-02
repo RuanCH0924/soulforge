@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { api } from '../api';
-import type { Preset } from '../types';
+import { DEFAULT_FORMAT_RULES, type Preset, type PresetFormatRules } from '../types';
+import { scanHeadings } from '../utils/markdown';
 import { Modal } from './Modal';
+import { PresetTemplateEditor } from './PresetTemplateEditor';
 
 interface DailyPresetEditorProps {
   presetId: string;
@@ -17,8 +19,18 @@ interface DailyPresetEditorProps {
 
 const DEFAULT_NOTICE = (
   <>
-    本预设<b>专供大模型归并工作日志</b>使用（不出现在主工作台与文档预设页）。
-    保存后 <b>version +1</b> 并写入版本历史；<b>重新生成批次即生效</b>，已生成的计划不会重算。
+    <div className="alert-title">本预设专供大模型归并工作日志</div>
+    <ul className="alert-points">
+      <li>
+        不出现在主工作台与「文档预设」页，只在日志标准化界面查看与编辑。
+      </li>
+      <li>
+        保存后 <b>version +1</b> 并写入版本历史，可随时回溯。
+      </li>
+      <li>
+        <b>重新生成批次即生效</b>；已生成的计划不会重算。
+      </li>
+    </ul>
   </>
 );
 
@@ -26,16 +38,17 @@ const DEFAULT_NOTICE = (
  * 工作日志标准化预设编辑器（M15 页内）。
  *
  * 为什么不复用设置页的 PresetModal：① WORKLOG 类预设按边界不在设置页展示；
- * ② 它需要比「模板文档」更全的编辑面 —— 多一个「风格与内容规则」（`style_rules`，
+ * ② 它需要比「预设参考文档」更全的编辑面 —— 多一个「修改要求」（`style_rules`，
  * 逐行）字段，设置页表单没有这个字段，而它正是注入大模型 prompt 的弱规则。
  *
  * 保存走 `PUT /api/presets/{id}`：version +1 并留版本快照；改 `template_md` 时后端会
- * 重新派生 `sections_json`，所以章节列表不需要（也不应该）在这里单独编辑。
+ * 重新派生 `sections_json`，所以章节结构不需要在这里单独编辑。
  */
 export function DailyPresetEditor({ presetId, onSaved, onClose, titlePrefix, notice }: DailyPresetEditorProps) {
   const [preset, setPreset] = useState<Preset | null>(null);
   const [description, setDescription] = useState('');
   const [templateMd, setTemplateMd] = useState('');
+  const [formatRules, setFormatRules] = useState<PresetFormatRules>(DEFAULT_FORMAT_RULES);
   const [styleRules, setStyleRules] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -48,6 +61,7 @@ export function DailyPresetEditor({ presetId, onSaved, onClose, titlePrefix, not
         setPreset(p);
         setDescription(p.description ?? '');
         setTemplateMd(p.template_md ?? '');
+        setFormatRules(p.format_rules ?? DEFAULT_FORMAT_RULES);
         setStyleRules(p.style_rules.join('\n'));
       })
       .catch((e) => setError(`加载预设失败：${(e as Error).message}`))
@@ -55,8 +69,10 @@ export function DailyPresetEditor({ presetId, onSaved, onClose, titlePrefix, not
   }, [presetId]);
 
   const save = async () => {
-    if (!templateMd.trim() || !templateMd.includes('## ')) {
-      setError('模板文档不能为空，且需包含至少一个「## 」章节标题（章节列表由它派生）。');
+    const level = formatRules.section_heading_level ?? 2;
+    const hasSection = scanHeadings(templateMd).some((h) => h.level === level);
+    if (!templateMd.trim() || !hasSection) {
+      setError(`预设参考文档不能为空，且需包含至少一个「${'#'.repeat(level)}」开头的章节标题。`);
       return;
     }
     setSaving(true);
@@ -65,6 +81,7 @@ export function DailyPresetEditor({ presetId, onSaved, onClose, titlePrefix, not
       const saved = await api.updatePreset(presetId, {
         description: description.trim(),
         template_md: templateMd,
+        format_rules: formatRules,
         style_rules: styleRules
           .split('\n')
           .map((line) => line.trim())
@@ -96,7 +113,7 @@ export function DailyPresetEditor({ presetId, onSaved, onClose, titlePrefix, not
         </div>
       }
     >
-      <div className="alert-banner info">
+      <div className="alert-banner info intro">
         {notice ?? DEFAULT_NOTICE}
       </div>
 
@@ -113,52 +130,22 @@ export function DailyPresetEditor({ presetId, onSaved, onClose, titlePrefix, not
         </div>
       ) : (
         <>
-          <div className="hint" style={{ marginTop: 8 }}>
-            来源：{preset?.is_builtin ? '内置预设（随版本分发，升级时可能被刷新）' : '用户自建'} · 当前
-            v{preset?.version} · 适用类型 {preset?.target_file_type}
-          </div>
-
           <div className="field">
-            <label>用途说明（显示在预设选择处）</label>
+            <label>用途说明</label>
             <input
               className="input"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="用一句话说明这个预设归并出的日志长什么样"
+              placeholder="例：把一天的多份记录归并成一篇标准工作日志"
             />
           </div>
 
-          <div className="field">
-            <label>模板文档（YAML 格式化规则 + Markdown 章节骨架）</label>
-            <textarea
-              className="input"
-              rows={16}
-              style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
-              value={templateMd}
-              onChange={(e) => setTemplateMd(e.target.value)}
-              spellCheck={false}
-            />
-            <div className="hint" style={{ marginTop: 4 }}>
-              上半段 <span className="mono">---</span> 之间的 YAML 是强规则（必填章节、顺序、禁
-              emoji / 原始 HTML 等），会机械校验并拦截；下半段是给模型看的章节骨架。改这里会重新派生章节列表。
-            </div>
-          </div>
-
-          <div className="field">
-            <label>风格与内容规则（每行一条，注入大模型 prompt）</label>
-            <textarea
-              className="input"
-              rows={8}
-              style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
-              value={styleRules}
-              onChange={(e) => setStyleRules(e.target.value)}
-              spellCheck={false}
-              placeholder={'例如：按时间倒序归档\n只保留结论，不保留过程'}
-            />
-            <div className="hint" style={{ marginTop: 4 }}>
-              共 {styleRules.split('\n').filter((l) => l.trim()).length} 条 · 空行会被忽略；这些规则不参与机械校验，由模型遵守。
-            </div>
-          </div>
+          <PresetTemplateEditor
+            reference={templateMd}
+            onReferenceChange={setTemplateMd}
+            styleRules={styleRules}
+            onStyleRulesChange={setStyleRules}
+          />
         </>
       )}
     </Modal>

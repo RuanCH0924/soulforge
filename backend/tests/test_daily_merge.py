@@ -293,22 +293,24 @@ def test_delivery_default_is_system_embedded(prepared):
     system, user = _messages(calls)
     assert dms.DEFAULT_DELIVERY == dms.DELIVERY_SYSTEM
     assert "你是 Soulforge 的工作日志整理助手" in system
-    assert "【格式化规则（来自模板文档" in system      # 规则在 system
-    assert "【格式化规则（来自模板文档" not in user     # user 侧不留规则
+    assert "【修改要求（必须逐条遵守）】" in system      # 两项配置在 system
+    assert "【预设参考文档（按此结构与写法组织产出）】" in system
+    assert "【修改要求（必须逐条遵守）】" not in user     # user 侧不留规则
     assert "已在上方系统提示中给出" in user
 
 
 def test_delivery_doc_full_puts_rules_in_user_prompt(prepared):
-    """① 形态（对照基线）：规则与模板全文都进 user prompt。"""
+    """① 形态（对照基线）：两项配置（预设参考文档 + 修改要求）都进 user prompt。"""
     _, registry, calls = prepared
     _write(registry, "memory/2026-10-19.md", "# 2026-10-19\n\n- 主骨架事实：巡检完成\n")
 
     _plan(registry, "2026-10-19", dms.DELIVERY_DOC_FULL)
 
     system, user = _messages(calls)
-    assert "【格式化规则（来自模板文档" in user
-    assert "【模板文档全文" in user
-    assert "schema: soulforge.template/v1" in user      # 模板全文（含 frontmatter 规则块）
+    assert "【修改要求（必须逐条遵守）】" in user
+    assert "【预设参考文档（按此结构与写法组织产出）】" in user
+    assert "## 一、今日概览" in user                        # 参考文档章节进 prompt
+    assert "schema: soulforge.template/v1" not in user      # 参考文档已不含 YAML
     assert "你是 Soulforge 的工作日志整理助手" in system    # 基础 system 提示（无规则）
 
 
@@ -340,17 +342,17 @@ def test_delivery_trimmed_keeps_b_only_rules_with_b_source(prepared):
     assert "Session Key" in body                         # 元数据删除清单也保留
 
 
-def test_delivery_trimmed_uses_headings_only_skeleton(prepared):
-    """裁剪形态只给章节骨架，不给模板全文（frontmatter 规则块与解释性正文都不进 prompt）。"""
+def test_delivery_trimmed_uses_headings_only_reference(prepared):
+    """裁剪形态只给参考文档的章节标题，不给全文（frontmatter 规则块与解释性正文都不进 prompt）。"""
     _, registry, calls = prepared
     _write(registry, "memory/2026-10-23.md", "# 2026-10-23\n\n- 主骨架事实：巡检完成\n")
 
     _plan(registry, "2026-10-23", dms.DELIVERY_TRIMMED)
     _, trimmed_user = _messages(calls)
-    assert "【模板章节骨架" in trimmed_user
+    assert "【预设参考文档（按此结构与写法组织产出）】" in trimmed_user
     assert "schema: soulforge.template/v1" not in trimmed_user
     assert "## 一、今日概览" in trimmed_user               # 章节标题留下
-    assert "逐日归并当日全部来源" not in trimmed_user        # 模板正文说明被去掉
+    assert "逐日归并当日全部来源" not in trimmed_user        # 参考文档说明被去掉
 
     calls.clear()
     _plan(registry, "2026-10-23", dms.DELIVERY_DOC_FULL)
@@ -359,18 +361,19 @@ def test_delivery_trimmed_uses_headings_only_skeleton(prepared):
 
 
 def test_delivery_system_embedded_moves_rules_into_system_prompt(prepared):
-    """③ 形态：user prompt 里不再有规则块，规则全文进 system prompt。"""
+    """③ 形态：user prompt 里不再有配置块，两项配置全文进 system prompt。"""
     _, registry, calls = prepared
     _write(registry, "memory/2026-10-24.md", "# 2026-10-24\n\n- 主骨架事实：巡检完成\n")
 
     _plan(registry, "2026-10-24", dms.DELIVERY_SYSTEM)
 
     system, user = _messages(calls)
-    assert "【格式化规则（来自模板文档" in system
-    assert "【风格与内容规则（来自预设" in system
-    assert "schema: soulforge.template/v1" in system
-    assert "【格式化规则（来自模板文档" not in user
-    assert "【模板文档全文" not in user
+    assert "【预设参考文档（按此结构与写法组织产出）】" in system
+    assert "【修改要求（必须逐条遵守）】" in system
+    assert "## 一、今日概览" in system                    # 参考文档章节进 system
+    assert "schema: soulforge.template/v1" not in system  # 参考文档已不含 YAML
+    assert "【修改要求（必须逐条遵守）】" not in user
+    assert "【预设参考文档（按此结构与写法组织产出）】" not in user
     assert "已在上方系统提示中给出" in user
     # 任务与来源部分不受形态影响（保证对比可归因）
     assert "【本日来源" in user and "只输出归并后的 Markdown 文档正文本身" in user

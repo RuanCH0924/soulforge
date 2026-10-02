@@ -98,10 +98,15 @@ class PresetRow(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     target_file_type: Mapped[str] = mapped_column(String, nullable=False)  # SOUL/AGENTS/MEMORY/USER/.../ANY
     description: Mapped[str | None] = mapped_column(String, nullable=True)
-    template_md: Mapped[str | None] = mapped_column(Text, nullable=True)  # 标准 Markdown 模板文档（YAML 规则+骨架）
-    sections_json: Mapped[str] = mapped_column(Text, nullable=False)  # [{title, required, order, hint}]（由模板派生）
+    # 预设参考文档（Markdown；新形态不含 YAML，旧值兼容、读取时惰性归一）
+    template_md: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 结构化格式化规则（见 docs/PRESET-TEMPLATE-REFACTOR-PLAN.md）：
+    # {schema, section_heading_level, require_frontmatter}
+    # 为空 = 存量数据，读取时由 template_md 的旧 YAML / 全局默认补齐（惰性兼容，不写库）
+    format_rules_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sections_json: Mapped[str] = mapped_column(Text, nullable=False)  # [{title, required, order, hint}]（由预设参考文档派生）
     frontmatter_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    style_rules: Mapped[str | None] = mapped_column(Text, nullable=True)
+    style_rules: Mapped[str | None] = mapped_column(Text, nullable=True)  # 修改要求（逐条自由文本）
     is_system: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 1=系统预设不可删
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # PUT 后自增
     # 非空 = 该预设已退役（内置预设随版本下线）：不再出现在列表里，但行保留，
@@ -344,7 +349,8 @@ class Database:
     def _migrate(self) -> None:
         """轻量迁移：为已存在的旧表补齐新增列（create_all 不会改动已存在的表）。"""
         columns = {
-            "presets": [("template_md", "TEXT"), ("retired_at", "INTEGER")],
+            "presets": [("template_md", "TEXT"), ("retired_at", "INTEGER"),
+                        ("format_rules_json", "TEXT")],
             "daily_run_items": [("empty_reason", "TEXT"), ("meaningless_json", "TEXT")],
         }
         with self.engine.connect() as conn:

@@ -254,6 +254,27 @@ export interface PresetSection {
   hint?: string | null;
 }
 
+/**
+ * 结构化格式化规则（替代原先模板文档里的 YAML 规则块）。
+ * 预设级只保留必要开关；其余排版键收敛为后端全局默认。
+ */
+export interface PresetFormatRules {
+  schema?: string;
+  /** 章节标题层级（默认 2） */
+  section_heading_level: number;
+  /** 目标文档是否必须以 YAML frontmatter（---）开头 */
+  require_frontmatter: boolean;
+  /** 迁移保留的排版覆盖项（与全局默认不同时才出现；新 UI 不暴露） */
+  [key: string]: unknown;
+}
+
+/** 新建预设时的默认规则（与后端 FORMAT_RULES_DEFAULTS 一致） */
+export const DEFAULT_FORMAT_RULES: PresetFormatRules = {
+  schema: 'soulforge.format-rules/v1',
+  section_heading_level: 2,
+  require_frontmatter: false,
+};
+
 export interface FormatViolation {
   rule_id: string;
   rule_name: string;
@@ -280,7 +301,9 @@ export interface PresetSummary {
 }
 
 export interface Preset extends PresetSummary {
+  /** 预设参考文档（纯 Markdown；不再含 YAML 规则块） */
   template_md?: string | null;
+  format_rules: PresetFormatRules;
   sections_json: PresetSection[];
   frontmatter_json: Record<string, string>;
   style_rules: string[];
@@ -314,6 +337,7 @@ export interface PresetVersionInfo {
   target_file_type: PresetTargetType;
   description?: string | null;
   template_md?: string | null;
+  format_rules: PresetFormatRules;
   sections_json: PresetSection[];
   frontmatter_json: Record<string, string>;
   style_rules: string[];

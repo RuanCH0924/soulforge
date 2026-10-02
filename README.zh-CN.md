@@ -5,7 +5,7 @@
 **OpenClaw 跨 Agent system-prompt 文件管理器（Web GUI）**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.5.2-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.3-blue)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](backend/pyproject.toml)
 [![Backend](https://img.shields.io/badge/Backend-FastAPI-009688.svg)](backend)
 [![Frontend](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-61DAFB.svg)](frontend)
@@ -45,6 +45,7 @@ OpenClaw 是一个多 Agent 系统，每个 Agent 都拥有自己的 `workspace/
 | **LLM 接入** *(Phase 2.5)*     | 接入任意 OpenAI 兼容协议的 LLM（OpenAI / Anthropic / DeepSeek / Ollama），API key 加密存储 + 配置热加载。       |
 | **AI 整理** *(Phase 2.5)*       | 选预设 + 选 provider → Agent 按预设重写文档 → diff 预览 → 老板确认后写入，保证所有灵魂文档结构一致。       |
 | **工作日志标准化** *(M15)*     | 把 `memory/` 里同一天的多份记录（日文件 / 会话导出 / 主题碎片）归并成**每天恰好 1 个 `YYYY-MM-DD.md`**：确定性剥壳（零 token）→ 大模型归并 → 逐日 diff 确认 → 写入并清理碎片（走回收站）。整天确实无内容时由模型判定「无可归档内容」，不产出日文件、不硬凑。 |
+| **工作日志总结（记忆归纳）** *(M16)* | 把 `memory/` 下**一段日期范围**的分散记录归纳成**1 份**综述（完成的工作 / 经验教训 / 重要决定 / 重要信息 / 待办事项 + 可选溯源附录）。默认**只读归纳**（计划 → 确认 → 写入）；清理源文件是单独的、可恢复的可选步骤。 |
 
 ## 路线图
 
@@ -57,6 +58,7 @@ Soulforge 分阶段交付：
 | **Phase 2.5 · AI Editor** | 文档预设 → LLM 接入 → AI 自动整理（三步走） | ✅ 已交付 |
 | **超级同步** | 多 Agent 同名核心文档秒级实时同步（独立守护脚本 + UI 矩阵配置 / 状态 / 日志） | ✅ 已交付 |
 | **M15 · 工作日志标准化** | `memory/` 日文件归并（每天 1 个 `YYYY-MM-DD.md` + 元数据剥壳 + 碎片清理），手动批次 + 逐日确认 | ✅ 已交付 |
+| **M16 · 工作日志总结（记忆归纳）** | 把 `memory/` 下一段日期范围的分散记录归纳为 1 份综述（默认只读，计划 + 确认 + 可选清理源文件） | ✅ 已交付 |
 | **Phase 3 · 远期** | 团队协作 / 云端同步 / 第三方插件 | 📋 规划中 |
 
 统一版本基线自 **v0.5.0** 起 —— 见 [CHANGELOG.md](CHANGELOG.md)。
@@ -184,6 +186,7 @@ npm run dev        # Vite 开发服务器，将 /api 代理到 http://127.0.0.1:
 | `GET` / `POST` / `PUT` / `DELETE` | `/api/llm/providers[/{id}]` · `/api/llm/providers/{id}/test` · `/api/llm/chat` | LLM Provider 管理与连通性测试 |
 | `GET` / `POST` | `/api/ai/jobs[/{id}]` · `/api/ai/jobs/{id}/apply` · `/reject` · `/regenerate` | AI 整理任务（生成 → diff → 写入） |
 | `GET` / `POST` | `/api/daily-runs[/{id}]` · `/api/daily-runs/{id}/apply` · `/reject` · `/skip` · `/report` | 工作日志标准化批次（生成计划 → 逐日确认 → 写入 + 碎片清理 → 验收报告） |
+| `GET` / `POST` | `/api/summary-runs[/{id}]` · `/api/summary-runs/{id}/apply` · `/reject` · `/cleanup-sources` · `/report` | 工作日志总结（记忆归纳）批次（生成计划 → 确认 → 写入 → 可选清理源文件 → 验收报告） |
 
 所有响应统一封装为 `{"data": ...}`；错误返回 `{"error": {"code", "message", "details"}}`。
 `GET /api/health` 返回运行时版本号（`data.version`），与 `backend/app/__init__.py` 中的值一致。

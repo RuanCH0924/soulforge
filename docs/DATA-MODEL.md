@@ -141,10 +141,11 @@ CREATE TABLE presets (
     name                TEXT NOT NULL,             -- 预设名
     target_file_type    TEXT NOT NULL,             -- 适用文件类型：SOUL/AGENTS/MEMORY/USER/IDENTITY/TOOLS/WORKLOG/SUMMARY/ANY
     description         TEXT,                      -- 用途说明
-    template_md         TEXT,                      -- 标准 Markdown 模板文档（YAML 规则 + 章节骨架），校验唯一标准
-    sections_json       TEXT NOT NULL,             -- 章节列表 JSON（由 template_md 派生）：[{title, required, order, hint}]
+    template_md         TEXT,                      -- 预设参考文档（纯 Markdown）；旧值可能仍含 YAML 规则块（读取时惰性兼容）
+    format_rules_json   TEXT,                      -- 结构化格式化规则 JSON（新形态）；为空 = 由旧 YAML / 全局默认补齐
+    sections_json       TEXT NOT NULL,             -- 章节列表 JSON（由预设参考文档 + format_rules 派生）：[{title, required, order, hint}]
     frontmatter_json    TEXT,                      -- YAML frontmatter 模板 JSON
-    style_rules         TEXT,                      -- 风格规则（自由文本）
+    style_rules         TEXT,                      -- 修改要求（逐条自由文本）
     is_system            INTEGER NOT NULL DEFAULT 0,-- 历史字段，恒为 0（内置预设与用户预设同等可编辑 / 可删）
     version             INTEGER NOT NULL DEFAULT 1,-- 预设版本（编辑后自增）
     retired_at          INTEGER,                   -- 非空 = 已退役（内置预设随版本下线）：不再出现在列表，get() 仍可取
@@ -166,6 +167,21 @@ CREATE INDEX idx_presets_system ON presets(is_system);
   {"title": "核心边界",       "required": true,  "order": 4, "hint": "隐私、操作授权"}
 ]
 ```
+
+**format_rules_json 示例**（收敛后的预设级开关；见 [PRESET-TEMPLATE-REFACTOR-PLAN.md](PRESET-TEMPLATE-REFACTOR-PLAN.md)）：
+
+```json
+{
+  "schema": "soulforge.format-rules/v1",
+  "section_heading_level": 2,
+  "require_frontmatter": false
+}
+```
+
+> 其余排版键（`max_heading_level` / `list_style` / `forbid_emoji` / …）收敛为 `TemplateRules` 的
+> **全局默认**，不再逐预设存储；仅在存量迁移需要保留用户定制（与全局默认不同）时才作为覆盖项出现。
+> `sections_json` 由预设参考文档的标题派生（无「可选章节 / 章节顺序」概念）；
+> `template_md` 对外恒为纯 Markdown 参考文档。
 
 **完整记录示例**：
 

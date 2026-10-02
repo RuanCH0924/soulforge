@@ -1,41 +1,25 @@
-"""内置预设的标准 Markdown 模板文档（Phase 2.5 · 文档重排校验）。
+"""内置预设的模板常量（见 docs/PRESET-TEMPLATE-REFACTOR-PLAN.md）。
 
-模板 = YAML frontmatter（机器可读的格式化规则）+ 正文（章节结构骨架）。
-TemplateRuleParser 负责解析；FormatValidator 负责校验/修正。
+改造后模板拆成两部分，普通用户只需维护**预设参考文档**：
+
+- `BUILTIN_TEMPLATES[id]`：**纯 Markdown 预设参考文档**（不含 YAML frontmatter）。
+  `##` 标题即章节，`required_sections` 由它派生（顺序不再作为模型约束）。
+- `BUILTIN_FORMAT_RULES[id]`：**结构化格式化规则**（预设级只保留必要开关）。
+
+解析入口统一为 `template_rules.parse_preset(template_md, format_rules)`。
 """
 from __future__ import annotations
 
-SOUL_TEMPLATE = """---
-schema: soulforge.template/v1
-target_file_type: SOUL
-structure:
-  section_heading_level: 2
-  required_sections:
-    - title: 核心行为准则
-    - title: 工作态度和原则
-    - title: 学习与连续性
-    - title: 核心边界
-  section_order: strict
-elements:
-  heading_style: atx
-  list_style: "-"
-  code_fence: "```"
-  blockquote_prefix: "> "
-  heading_blank_line: true
-  paragraph_blank_line: true
-typography:
-  max_heading_level: 3
-  allow_bold: true
-  allow_italic: true
-  forbid_emoji: true
-  forbid_raw_html: true
-modules:
-  frontmatter: optional
----
+from app.services.template_rules import normalize_format_rules
 
-# SOUL 文档标准模板
 
-> 本文档即模板本体：重排目标文档时，需严格遵循 YAML 中定义的格式化规则，
+def _rules(**over) -> dict:
+    return normalize_format_rules(over)
+
+
+SOUL_TEMPLATE = """# SOUL 文档标准模板
+
+> 本文档即模板本体：重排目标文档时，需严格遵循格式化规则，
 > 并按下方「章节模板」的标题结构组织内容；原有信息不得丢失。
 
 ## 核心行为准则
@@ -60,39 +44,9 @@ modules:
 - 明确边界与禁止项
 """
 
-AGENTS_TEMPLATE = """---
-schema: soulforge.template/v1
-target_file_type: AGENTS
-structure:
-  section_heading_level: 2
-  required_sections:
-    - title: 首次运行
-    - title: 启动流程
-    - title: 记忆
-    - title: 工具
-    - title: 群聊
-    - title: 安全
-  section_order: strict
-elements:
-  heading_style: atx
-  list_style: "-"
-  code_fence: "```"
-  blockquote_prefix: "> "
-  heading_blank_line: true
-  paragraph_blank_line: true
-typography:
-  max_heading_level: 3
-  allow_bold: true
-  allow_italic: true
-  forbid_emoji: true
-  forbid_raw_html: true
-modules:
-  frontmatter: optional
----
+AGENTS_TEMPLATE = """# AGENTS 文档标准模板
 
-# AGENTS 文档标准模板
-
-> 严格遵循 YAML 格式化规则，并按下方章节结构组织内容。
+> 严格遵循格式化规则，并按下方章节结构组织内容。
 
 ## 首次运行
 
@@ -119,37 +73,9 @@ modules:
 - 安全护栏与禁止项
 """
 
-MEMORY_TEMPLATE = """---
-schema: soulforge.template/v1
-target_file_type: MEMORY
-structure:
-  section_heading_level: 2
-  required_sections:
-    - title: 重要决定
-    - title: 经验教训
-    - title: 待办事项
-    - title: 执行摘要
-  section_order: strict
-elements:
-  heading_style: atx
-  list_style: "-"
-  code_fence: "```"
-  blockquote_prefix: "> "
-  heading_blank_line: true
-  paragraph_blank_line: true
-typography:
-  max_heading_level: 3
-  allow_bold: true
-  allow_italic: true
-  forbid_emoji: true
-  forbid_raw_html: true
-modules:
-  frontmatter: optional
----
+MEMORY_TEMPLATE = """# MEMORY 文档标准模板
 
-# MEMORY 文档标准模板
-
-> 严格遵循 YAML 格式化规则，按章节结构组织长期记忆。
+> 严格遵循格式化规则，按章节结构组织长期记忆。
 
 ## 重要决定
 
@@ -170,40 +96,10 @@ modules:
 
 # 「工作日志日标准化」（M15 的规则载体）：逐日归并 memory/ 下的日文件，
 # 契约来自外部 skill `memory-daily-standardizer`。注意：
-# 1) 章节标题含序号（一、二、三、四、五），因为 FormatValidator 对章节标题做精确匹配；
-# 2) 章节骨架里 关键决策 使用表格，FormatValidator 已按块级元素处理表格行，不会误判段落空行；
+# 1) 章节标题保留序号（一、二、三、四、五），与外部 skill `memory-daily-standardizer` 的约定一致；
+# 2) 参考文档里 关键决策 使用表格，FormatValidator 已按块级元素处理表格行，不会误判段落空行；
 # 3) 不含 HTML 注释提示：模板全文会进入 prompt，模型若照抄注释会触发 forbid_raw_html 而无机械修正手段。
-WLOG_DAILY_TEMPLATE = """---
-schema: soulforge.template/v1
-name: "工作日志日标准化"
-target_file_type: WORKLOG
-structure:
-  section_heading_level: 2
-  required_sections:
-    - title: 一、今日概览
-    - title: 二、关键事件
-    - title: 三、关键决策
-    - title: 四、待办事项
-    - title: 五、明日计划
-  section_order: strict
-elements:
-  heading_style: atx
-  list_style: "-"
-  code_fence: "```"
-  blockquote_prefix: "> "
-  heading_blank_line: true
-  paragraph_blank_line: true
-typography:
-  max_heading_level: 3
-  allow_bold: true
-  allow_italic: true
-  forbid_emoji: true
-  forbid_raw_html: true
-modules:
-  frontmatter: optional
----
-
-# 工作日志日标准化模板
+WLOG_DAILY_TEMPLATE = """# 工作日志日标准化模板
 
 > 逐日归并当日全部来源（标准日文件 / 同日 session 导出 / 同日主题文件），
 > 剥离元数据壳与对话腔噪音后改写成客观记录。产出文档第一行固定为
@@ -238,42 +134,11 @@ modules:
 
 # 「工作日志总结（记忆归纳）」（M16 的规则载体）：把一段时间的分散记录归纳成**单份**综述，
 # 契约来自外部 skill `memory-summarize`（模式 A：月度/主题归纳）。注意：
-# 1) 章节标题含序号（一、二、三、四、五），因为 FormatValidator 对章节标题做精确匹配；
+# 1) 章节标题含序号（一、二、三、四、五），供参考文档与章节清单（应用预设补齐）一致；
 # 2) 经验教训 / 重要决定 用表格，FormatValidator 已按块级元素处理表格行；
-# 3) 附录「溯源对照表」是**可选**章节 —— 只出现在正文骨架里，不进 required_sections，
-#    否则「没有来源可溯源」时会被强规则拦死；
-# 4) 不含 HTML 注释提示：模板全文会进入 prompt，模型若照抄注释会触发 forbid_raw_html。
-SUMMARY_TEMPLATE = """---
-schema: soulforge.template/v1
-name: "工作日志总结（记忆归纳）"
-target_file_type: SUMMARY
-structure:
-  section_heading_level: 2
-  required_sections:
-    - title: 一、完成的工作
-    - title: 二、经验教训
-    - title: 三、重要决定
-    - title: 四、重要信息
-    - title: 五、待办事项
-  section_order: strict
-elements:
-  heading_style: atx
-  list_style: "-"
-  code_fence: "```"
-  blockquote_prefix: "> "
-  heading_blank_line: true
-  paragraph_blank_line: true
-typography:
-  max_heading_level: 3
-  allow_bold: true
-  allow_italic: true
-  forbid_emoji: true
-  forbid_raw_html: true
-modules:
-  frontmatter: optional
----
-
-# 工作日志总结模板
+# 3) 附录「溯源对照表」只是参考文档里的一个章节，**不再有「可选 / 必填」之分**（该配置已移除）；
+# 4) 不含 HTML 注释提示：参考文档会进入 prompt，模型若照抄注释会触发 forbid_raw_html。
+SUMMARY_TEMPLATE = """# 工作日志总结模板
 
 > 把一段时间（如某个月）的分散记录归纳成一份单一综述：按五大主章节归类，
 > 丢弃每天重复的流水账与调试中间态，只保留有长期检索价值的内容。
@@ -311,10 +176,20 @@ modules:
 | ... | ... |
 """
 
+# 预设参考文档（`##` 标题即章节）—— required_sections 由它派生
 BUILTIN_TEMPLATES: dict[str, str] = {
     "preset-soul-std": SOUL_TEMPLATE,
     "preset-agents-std": AGENTS_TEMPLATE,
     "preset-mem-std": MEMORY_TEMPLATE,
     "preset-wlog-daily-std": WLOG_DAILY_TEMPLATE,
     "preset-mem-summarize": SUMMARY_TEMPLATE,
+}
+
+# 结构化格式化规则（预设级只保留必要开关；其余排版键走全局默认）
+BUILTIN_FORMAT_RULES: dict[str, dict] = {
+    "preset-soul-std": _rules(),
+    "preset-agents-std": _rules(),
+    "preset-mem-std": _rules(),
+    "preset-wlog-daily-std": _rules(),
+    "preset-mem-summarize": _rules(),
 }

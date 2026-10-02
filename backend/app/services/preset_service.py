@@ -23,7 +23,6 @@ from app.core.errors import (
 from app.core.security import _safe_join
 from app.models.db import Database, PresetRow, PresetVersionRow
 from app.models.schemas import (
-    FormatReport,
     Preset,
     PresetApplyPlan,
     PresetApplyResult,
@@ -40,8 +39,17 @@ from app.services.diff_service import unified_diff
 from app.services.file_manager import FileManager
 from app.services.format_validator import FormatValidator
 from app.services.lint_service import LintService
-from app.services.preset_templates import BUILTIN_TEMPLATES
-from app.services.template_rules import RequiredSection, TemplateRules, derive_sections, parse_template
+from app.services.preset_templates import BUILTIN_FORMAT_RULES, BUILTIN_TEMPLATES
+from app.services.template_rules import (
+    RequiredSection,
+    TemplateRules,
+    apply_format_rules,
+    derive_sections,
+    extract_format_rules,
+    normalize_format_rules,
+    parse_preset,
+    template_body,
+)
 
 # ---------- 预设两类用途的边界（UI-SPECS §5.7） ----------
 # 「专供大模型处理工作日志」的预设类型 = M15 日志标准化的规则载体。
@@ -198,6 +206,8 @@ BUILTIN_PRESETS: list[dict] = [
             {"title": "三、重要决定", "required": True, "order": 3, "hint": "用户明确选择 + 架构/配置/流程决策"},
             {"title": "四、重要信息", "required": True, "order": 4, "hint": "身份档案、联系人、关键配置、账号、工具脚本"},
             {"title": "五、待办事项", "required": True, "order": 5, "hint": "未完成、持续跟进、探索方向、暂时搁置"},
+            # 章节清单由「预设参考文档」标题派生，故与参考文档保持一一对应（含附录）
+            {"title": "附录：溯源对照表", "required": True, "order": 6, "hint": "可选附录，有来源可溯源时列出"},
         ],
         "frontmatter": {"schema": "soulforge.preset/v1", "owner": "user"},
         "style_rules": [
@@ -320,10 +330,21 @@ class PresetService:
         )
 
     @staticmethod
-    def _row_to_detail(row: PresetRow) -> Preset:
+    def _effective_format_rules(row: PresetRow) -> dict:
+        """结构化规则：库里有就用；没有（存量）则由旧模板 YAML / 全局默认补齐（惰性兼容）。"""
+        stored = _parse_json(row.format_rules_json, None)
+        if isinstance(stored, dict) and stored:
+            return normalize_format_rules(stored)
+        return extract_format_rules(row.template_md)
+
+    @classmethod
+    def _row_to_detail(cls, row: PresetRow) -> Preset:
         return Preset(
             id=row.id, name=row.name, target_file_type=row.target_file_type,  # type: ignore[arg-type]
-            description=row.description, template_md=row.template_md,
+            description=row.description,
+            # 契约：`template_md` 对外恒为**纯 Markdown 参考文档**（旧值里的 YAML 规则已由 format_rules 承载）
+            template_md=template_body(row.template_md) if row.template_md else None,
+            format_rules=cls._effective_format_rules(row),
             sections_json=[PresetSection(**s) for s in _parse_json(row.sections_json, [])],
             frontmatter_json=_parse_json(row.frontmatter_json, {}),
             style_rules=_parse_json(row.style_rules, []),
@@ -332,14 +353,15 @@ class PresetService:
             created_at=row.created_at, updated_at=row.updated_at,
         )
 
-    @staticmethod
-    def _snapshot_dict(row: PresetRow) -> dict:
+    @classmethod
+    def _snapshot_dict(cls, row: PresetRow) -> dict:
         """把当前预设行转成历史快照 dict。"""
         return {
             "name": row.name,
             "target_file_type": row.target_file_type,
             "description": row.description,
             "template_md": row.template_md,
+            "format_rules": cls._effective_format_rules(row),
             "sections": _parse_json(row.sections_json, []),
             "frontmatter": _parse_json(row.frontmatter_json, {}),
             "style_rules": _parse_json(row.style_rules, []),
@@ -368,6 +390,8 @@ class PresetService:
         row.target_file_type = data["target_file_type"]
         row.description = data["description"]
         row.template_md = BUILTIN_TEMPLATES.get(data["id"]) or None
+        rules = BUILTIN_FORMAT_RULES.get(data["id"])
+        row.format_rules_json = json.dumps(rules, ensure_ascii=False) if rules else None
         row.sections_json = json.dumps(data["sections"], ensure_ascii=False)
         row.frontmatter_json = json.dumps(data["frontmatter"], ensure_ascii=False)
         row.style_rules = json.dumps(data["style_rules"], ensure_ascii=False)
@@ -455,82 +479,42 @@ class PresetService:
                 if self._matches_definition(row, last_def):
                     row.retired_at = int(time.time())
                     row.updated_at = int(time.time())
-            # 存量回填：内置预设 template_md 为空 → 由现有 sections 反向合成模板
-            # （保留用户已编辑的章节，不覆盖）
+            # 存量回填：内置预设 template_md 为空 → 由现有 sections 反向合成参考文档
+            # （保留用户已编辑的章节，不覆盖）。
+            # 注：format_rules_json 不做启动回填 —— 存量数据走**惰性兼容**（读取时由旧 YAML /
+            # 全局默认补齐，不写库），用户首次经新编辑器保存时才落库，避免静默改数据。
             for preset_id in BUILTIN_TEMPLATES:
                 row = s.get(PresetRow, preset_id)
-                if row is not None and not row.template_md:
-                    secs = _parse_json(row.sections_json, [])
-                    if not secs:
-                        continue
-                    row.template_md = self._synthesize_template(
-                        row.name, row.target_file_type, [PresetSection(**x) for x in secs])
-                    row.version += 1
-                    row.updated_at = int(time.time())
+                if row is None or row.template_md:
+                    continue
+                secs = _parse_json(row.sections_json, [])
+                if not secs:
+                    continue
+                row.template_md = self._synthesize_skeleton(
+                    row.name, [PresetSection(**x) for x in secs])
+                row.version += 1
+                row.updated_at = int(time.time())
             s.commit()
 
     @staticmethod
-    def _yaml_str(value: str) -> str:
-        """把自由文本安全地写成 YAML 双引号标量（JSON 字符串与 YAML flow 标量兼容）。"""
-        return json.dumps(value, ensure_ascii=False)
+    def _compose_skeleton(body: str, title: str | None = None) -> str:
+        """拼装**纯 Markdown 预设参考文档**（不再产出 YAML；规则另存 format_rules）。"""
+        skeleton = body.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+        if title and not skeleton.lstrip().startswith("#"):
+            skeleton = f"# {title}\n\n{skeleton}" if skeleton else f"# {title}"
+        return skeleton.rstrip("\n") + "\n"
 
     @staticmethod
-    def _compose_template(
-        *,
-        name: str,
-        target_type: str,
-        section_titles: list[str],
-        body: str,
-        section_heading_level: int = 2,
-        section_order: str = "strict",
-        max_heading_level: int = 3,
-        frontmatter_required: bool = False,
-        title: str | None = None,
-    ) -> str:
-        """拼装标准模板文档：YAML 规则 frontmatter +（可选 H1 标题）+ 正文骨架。"""
-        required = "\n".join(f"    - title: {t}" for t in section_titles)
-        title_block = f"# {title}\n\n" if title else ""
-        return (
-            "---\n"
-            "schema: soulforge.template/v1\n"
-            f"name: {PresetService._yaml_str(name)}\n"
-            f"target_file_type: {target_type}\n"
-            "structure:\n"
-            f"  section_heading_level: {section_heading_level}\n"
-            "  required_sections:\n"
-            f"{required}\n"
-            f"  section_order: {section_order}\n"
-            "elements:\n"
-            "  heading_style: atx\n"
-            "  list_style: \"-\"\n"
-            "  heading_blank_line: true\n"
-            "  paragraph_blank_line: true\n"
-            "typography:\n"
-            f"  max_heading_level: {max_heading_level}\n"
-            "  allow_bold: true\n"
-            "  allow_italic: true\n"
-            "  forbid_emoji: true\n"
-            "  forbid_raw_html: true\n"
-            "modules:\n"
-            f"  frontmatter: {'required' if frontmatter_required else 'optional'}\n"
-            "---\n\n"
-            f"{title_block}{body}\n"
-        )
-
-    @staticmethod
-    def _synthesize_template(name: str, target_type: str, sections: list[PresetSection]) -> str:
-        """旧数据（无 template_md）→ 由 sections_json 反向生成模板文档。"""
+    def _synthesize_skeleton(name: str, sections: list[PresetSection]) -> str:
+        """旧数据（无 template_md）→ 由 sections_json 反向生成纯 Markdown 参考文档。"""
         secs = sorted(sections, key=lambda x: x.order)
-        body = "\n\n".join(
-            f"## {sec.title}\n\n"
-            + (f"<!-- 提示：{sec.hint} -->\n" if sec.hint else "")
-            + f"- 在此填写{sec.title}内容"
-            for sec in secs
-        )
-        return PresetService._compose_template(
-            name=name, target_type=target_type,
-            section_titles=[sec.title for sec in secs], body=body, title=name,
-        )
+        parts = [f"# {name}", ""]
+        for sec in secs:
+            parts += [f"## {sec.title}", ""]
+            if sec.hint:
+                parts += [f"> {sec.hint}", ""]
+            parts += [f"- 在此填写{sec.title}内容", ""]
+        return "\n".join(parts).rstrip("\n") + "\n"
 
     # ---------- CRUD ----------
 
@@ -559,11 +543,13 @@ class PresetService:
             return self._row_to_detail(self._get_row(s, preset_id))
 
     def create(self, payload: PresetCreate) -> Preset:
-        """创建用户预设，is_system=False，保存 v1 快照。template_md 优先，sections 由其派生。"""
+        """创建用户预设，is_system=False，保存 v1 快照。template_md（参考文档）优先，sections 由其派生。"""
         now = int(time.time())
+        format_rules = normalize_format_rules(payload.format_rules)
         sections = payload.sections_json
         if payload.template_md:
-            sections = [PresetSection(**sec) for sec in derive_sections(payload.template_md)]
+            sections = [PresetSection(**sec)
+                        for sec in derive_sections(payload.template_md, format_rules)]
         with self.db.session() as s:
             row = PresetRow(
                 id=f"preset-{uuid.uuid4().hex}",
@@ -571,6 +557,7 @@ class PresetService:
                 target_file_type=payload.target_file_type,
                 description=payload.description,
                 template_md=payload.template_md,
+                format_rules_json=json.dumps(format_rules, ensure_ascii=False),
                 sections_json=json.dumps([sec.model_dump() for sec in sections], ensure_ascii=False),
                 frontmatter_json=json.dumps(payload.frontmatter_json, ensure_ascii=False),
                 style_rules=json.dumps(payload.style_rules, ensure_ascii=False),
@@ -606,31 +593,17 @@ class PresetService:
             raise BadRequestError(
                 f"文档中未发现 {'#' * level} 级标题，无法据此生成预设章节",
                 details={"section_heading_level": level})
-        if payload.required_sections:
-            wanted = set(payload.required_sections)
-            required = [t for t in detected if t in wanted]
-            if not required:
-                raise BadRequestError(
-                    "所勾选的必填章节在文档中不存在，请重新选择",
-                    details={"required_sections": payload.required_sections})
-        else:
-            required = detected
-
-        template_md = self._compose_template(
-            name=payload.name,
-            target_type=payload.target_file_type,
-            section_titles=required,
-            body=body,
-            section_heading_level=level,
-            section_order=payload.section_order,
-            max_heading_level=max([lv for lv, _ in headings] + [level]),
-            frontmatter_required=payload.require_frontmatter,
-        )
+        format_rules = normalize_format_rules({
+            "section_heading_level": level,
+            "require_frontmatter": payload.require_frontmatter,
+        })
         return self.create(PresetCreate(
             name=payload.name,
             target_file_type=payload.target_file_type,
             description=payload.description,
-            template_md=template_md,
+            # 「预设参考文档」即当前文档内容（规则另存 format_rules）
+            template_md=self._compose_skeleton(body),
+            format_rules=format_rules,
         ))
 
     def update(self, preset_id: str, payload: PresetUpdate) -> Preset:
@@ -643,12 +616,22 @@ class PresetService:
                 row.target_file_type = payload.target_file_type
             if payload.description is not None:
                 row.description = payload.description
+
+            new_format: dict | None = None
+            if payload.format_rules is not None:
+                new_format = normalize_format_rules(payload.format_rules)
+                row.format_rules_json = json.dumps(new_format, ensure_ascii=False)
+
             if payload.template_md is not None:
                 row.template_md = payload.template_md
-                # 模板变更 → 派生更新 sections
+                # 参考文档变更 → 依据有效规则（显式 > 存量 > 全局默认）重派生 sections
+                effective = new_format if new_format is not None else self._effective_format_rules(row)
                 row.sections_json = json.dumps(
-                    [sec.model_dump() for sec in
-                     [PresetSection(**sec) for sec in derive_sections(payload.template_md)]], ensure_ascii=False)
+                    derive_sections(payload.template_md, effective), ensure_ascii=False)
+            elif new_format is not None and row.template_md:
+                # 只改了规则（标题层级 / frontmatter）→ 依据现有参考文档重派生 sections
+                row.sections_json = json.dumps(
+                    derive_sections(row.template_md, new_format), ensure_ascii=False)
             elif payload.sections_json is not None:
                 row.sections_json = json.dumps([sec.model_dump() for sec in payload.sections_json], ensure_ascii=False)
             if payload.frontmatter_json is not None:
@@ -682,6 +665,7 @@ class PresetService:
                     target_file_type=snap.get("target_file_type", "ANY"),
                     description=snap.get("description"),
                     template_md=snap.get("template_md"),
+                    format_rules=snap.get("format_rules") or {},
                     sections_json=[PresetSection(**sec) for sec in snap.get("sections", [])],
                     frontmatter_json=snap.get("frontmatter", {}),
                     style_rules=snap.get("style_rules", []),
@@ -701,6 +685,8 @@ class PresetService:
             row.target_file_type = snap.get("target_file_type", row.target_file_type)
             row.description = snap.get("description")
             row.template_md = snap.get("template_md") or None
+            restored_rules = snap.get("format_rules")
+            row.format_rules_json = json.dumps(restored_rules, ensure_ascii=False) if restored_rules else None
             row.sections_json = json.dumps(snap.get("sections", []), ensure_ascii=False)
             row.frontmatter_json = json.dumps(snap.get("frontmatter", {}), ensure_ascii=False)
             row.style_rules = json.dumps(snap.get("style_rules", []), ensure_ascii=False)
@@ -743,20 +729,26 @@ class PresetService:
         return "\n".join(parts)
 
     def rules_for(self, preset: Preset) -> TemplateRules:
-        """解析预设的模板规则；无模板文档时由 sections 兜底构造。
+        """解析预设的模板规则（参考文档 + 结构化规则）；无参考文档时由 sections 兜底构造。
 
         公开方法：AI 整理（M13）与工作日志归并（M15）都要用同一口径解析预设规则，
         避免各服务各写一份副本。
         """
         if preset.template_md:
-            return parse_template(preset.template_md)
-        return TemplateRules(
-            name=preset.name, target_file_type=preset.target_file_type,
-            required_sections=[
-                RequiredSection(title=sec.title, required=sec.required)
-                for sec in sorted(preset.sections_json, key=lambda x: x.order)
-            ],
-        )
+            rules = parse_preset(preset.template_md, preset.format_rules)
+        else:
+            rules = TemplateRules(
+                name=preset.name, target_file_type=preset.target_file_type,
+                required_sections=[
+                    RequiredSection(title=sec.title, required=sec.required)
+                    for sec in sorted(preset.sections_json, key=lambda x: x.order)
+                ],
+            )
+            # 无参考文档时仍尊重结构化规则里的层级 / frontmatter 开关
+            apply_format_rules(rules, preset.format_rules)
+        # 适用类型以预设字段为准（纯 Markdown 参考文档里不含 YAML，不再由模板自身携带）
+        rules.target_file_type = preset.target_file_type
+        return rules
 
     def apply_plan(self, preset_id: str, agent_id: str, file_path: str,
                    extra_instructions: str | None = None) -> PresetApplyPlan:

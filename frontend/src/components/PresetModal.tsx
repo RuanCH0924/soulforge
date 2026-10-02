@@ -1,11 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { useToast } from '../hooks/useToast';
-import type { Preset, PresetSummary, PresetTargetType, PresetVersionInfo } from '../types';
+import {
+  DEFAULT_FORMAT_RULES,
+  type Preset,
+  type PresetFormatRules,
+  type PresetSummary,
+  type PresetTargetType,
+  type PresetVersionInfo,
+} from '../types';
 import { formatTime } from '../utils/format';
-import { renderMarkdown } from '../utils/markdown';
+import { scanHeadings } from '../utils/markdown';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Modal } from './Modal';
+import { PresetTemplateEditor } from './PresetTemplateEditor';
 
 interface PresetModalProps {
   onClose: () => void;
@@ -22,32 +30,8 @@ const TARGET_TYPES: PresetTargetType[] = [
   'SOUL', 'AGENTS', 'MEMORY', 'USER', 'IDENTITY', 'TOOLS', 'ANY',
 ];
 
-/** 默认模板文档（新建预设时使用） */
-const DEFAULT_TEMPLATE = `---
-schema: soulforge.template/v1
-target_file_type: SOUL
-structure:
-  section_heading_level: 2
-  required_sections:
-    - title: 章节一
-    - title: 章节二
-  section_order: strict
-elements:
-  heading_style: atx
-  list_style: "-"
-  heading_blank_line: true
-  paragraph_blank_line: true
-typography:
-  max_heading_level: 3
-  allow_bold: true
-  allow_italic: true
-  forbid_emoji: true
-  forbid_raw_html: true
-modules:
-  frontmatter: optional
----
-
-# 我的预设
+/** 默认预设参考文档（新建预设时使用；规则走 DEFAULT_FORMAT_RULES） */
+const DEFAULT_TEMPLATE = `# 我的预设
 
 ## 章节一
 
@@ -58,39 +42,13 @@ modules:
 - 在此填写内容
 `;
 
-/** 旧预设（只有 sections_json 无模板）→ 反推模板文档 */
+/** 旧预设（只有 sections_json 无参考文档）→ 反推纯 Markdown */
 function templateFromPreset(p: Preset): string {
   const secs = [...p.sections_json].sort((a, b) => a.order - b.order);
   const body = secs
-    .map((s) => `## ${s.title}\n\n${s.hint ? `<!-- 提示：${s.hint} -->\n` : ''}- 在此填写${s.title}内容\n`)
+    .map((s) => `## ${s.title}\n\n${s.hint ? `> ${s.hint}\n\n` : ''}- 在此填写${s.title}内容\n`)
     .join('\n');
-  return `---
-schema: soulforge.template/v1
-target_file_type: ${p.target_file_type}
-structure:
-  section_heading_level: 2
-  required_sections:
-${secs.map((s) => `    - title: ${s.title}`).join('\n')}
-  section_order: strict
-elements:
-  heading_style: atx
-  list_style: "-"
-  heading_blank_line: true
-  paragraph_blank_line: true
-typography:
-  max_heading_level: 3
-  allow_bold: true
-  allow_italic: true
-  forbid_emoji: true
-  forbid_raw_html: true
-modules:
-  frontmatter: optional
----
-
-# ${p.name}
-
-${body}
-`;
+  return `# ${p.name}\n\n${body}`;
 }
 
 // ---------- 草稿实时保存（localStorage，按编辑上下文隔离） ----------
@@ -100,6 +58,7 @@ interface PresetDraft {
   targetType: PresetTargetType;
   description: string;
   templateMd: string;
+  formatRules: PresetFormatRules;
 }
 
 const DRAFT_PREFIX = 'soulforge.preset-draft.';
@@ -155,7 +114,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
   const [targetType, setTargetType] = useState<PresetTargetType>('ANY');
   const [description, setDescription] = useState('');
   const [templateMd, setTemplateMd] = useState(DEFAULT_TEMPLATE);
-  const [preview, setPreview] = useState(false);
+  const [formatRules, setFormatRules] = useState<PresetFormatRules>(DEFAULT_FORMAT_RULES);
 
   const load = () => {
     setLoading(true);
@@ -175,8 +134,8 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
   // 编辑状态实时保存：表单任何变化都写入草稿
   useEffect(() => {
     if (!draftCtxRef.current || view !== 'edit') return;
-    writeDraft(draftCtxRef.current, { name, targetType, description, templateMd });
-  }, [name, targetType, description, templateMd, view]);
+    writeDraft(draftCtxRef.current, { name, targetType, description, templateMd, formatRules });
+  }, [name, targetType, description, templateMd, formatRules, view]);
 
   const applyDraft = (ctx: string, fallback: () => void) => {
     fallback();
@@ -186,6 +145,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
       setTargetType(d.targetType);
       setDescription(d.description);
       setTemplateMd(d.templateMd);
+      if (d.formatRules) setFormatRules(d.formatRules);
       toast('已恢复上次未保存的编辑内容', 'info');
     }
   };
@@ -194,13 +154,13 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
     setCreating(true);
     setEditing({} as Preset);
     setView('edit');
-    setPreview(false);
     draftCtxRef.current = '__new__';
     applyDraft('__new__', () => {
       setName('');
       setTargetType('ANY');
       setDescription('');
       setTemplateMd(DEFAULT_TEMPLATE);
+      setFormatRules(DEFAULT_FORMAT_RULES);
     });
   };
 
@@ -210,13 +170,13 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
       setCreating(false);
       setEditing(detail);
       setView('edit');
-      setPreview(false);
       draftCtxRef.current = p.id;
       applyDraft(p.id, () => {
         setName(detail.name);
         setTargetType(detail.target_file_type);
         setDescription(detail.description ?? '');
         setTemplateMd(detail.template_md ?? templateFromPreset(detail));
+        setFormatRules(detail.format_rules ?? DEFAULT_FORMAT_RULES);
       });
     } catch (e) {
       toast(`读取预设失败：${(e as Error).message}`, 'error');
@@ -246,8 +206,9 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
       toast('预设名不能为空', 'warning');
       return;
     }
-    if (!templateMd.trim() || !templateMd.trim().includes('## ')) {
-      toast('模板文档不能为空，且需包含至少一个「## 」章节标题', 'error');
+    const level = formatRules.section_heading_level ?? 2;
+    if (!templateMd.trim() || !scanHeadings(templateMd).some((h) => h.level === level)) {
+      toast(`预设参考文档不能为空，且需包含至少一个「${'#'.repeat(level)}」开头的章节标题`, 'error');
       return;
     }
     setSaving(true);
@@ -257,6 +218,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
         target_file_type: targetType,
         description: description.trim() || undefined,
         template_md: templateMd,
+        format_rules: formatRules,
       };
       if (creating) {
         await api.createPreset(body);
@@ -353,7 +315,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
       {view === 'edit' ? (
         <>
           <div className="alert-banner info">
-            编辑内容会<b>实时保存为草稿</b>（本机）；点「保存版本」后 version +1 并写入版本历史，可随时回溯。
+            编辑内容会自动存为草稿；点「保存版本」即可保存，并可随时回溯历史版本。
           </div>
           <div className="field">
             <label>预设名</label>
@@ -377,8 +339,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
               ))}
             </select>
             <div className="hint" style={{ marginTop: 4 }}>
-              工作日志（WORKLOG）类预设专供大模型归并日志使用，在「业务工具 → 日志标准化」界面里查看与编辑，
-              本页不展示。
+              工作日志（WORKLOG）类预设专供大模型归并日志使用，请在「业务工具 → 日志标准化」界面查看与编辑。
             </div>
           </div>
           <div className="field">
@@ -390,37 +351,10 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
             />
           </div>
 
-          <div className="field">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <label style={{ marginBottom: 0 }}>模板文档（YAML 格式化规则 + Markdown 章节骨架）</label>
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => setPreview((v) => !v)}
-                title={preview ? '切换到 Markdown 编辑' : '渲染预览模板文档'}
-              >
-                {preview ? '编辑' : '预览'}
-              </button>
-            </div>
-            {preview ? (
-              <div
-                className="md-preview md-preview-flow"
-                style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', maxHeight: 320, overflowY: 'auto' }}
-                dangerouslySetInnerHTML={{ __html: renderMarkdown(templateMd) }}
-              />
-            ) : (
-              <textarea
-                className="input"
-                rows={14}
-                style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
-                value={templateMd}
-                onChange={(e) => setTemplateMd(e.target.value)}
-                spellCheck={false}
-              />
-            )}
-            <div className="hint">
-              YAML（结构/章节/排版规则）由系统解析执行；正文「## 」章节决定重排后的章节结构。修改格式规则会影响所有使用该预设的重排校验。
-            </div>
-          </div>
+          <PresetTemplateEditor
+            reference={templateMd}
+            onReferenceChange={setTemplateMd}
+          />
         </>
       ) : view === 'history' ? (
         historyLoading ? (
@@ -444,7 +378,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
                     </span>
                   </div>
                   <div className="item-sub">
-                    {v.name} · {v.target_file_type} · {v.sections_json.length} 章节
+                    {v.name} · {v.target_file_type}
                     {v.description ? ` · ${v.description}` : ''}
                   </div>
                 </div>
@@ -458,7 +392,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
               </div>
             ))}
             <div className="hint" style={{ marginTop: 8 }}>
-              回溯会把该版本的完整内容恢复到当前预设，version 再 +1 并另存为新快照。
+              回溯会用该版本覆盖当前预设，并另存一份新快照。
             </div>
           </div>
         )

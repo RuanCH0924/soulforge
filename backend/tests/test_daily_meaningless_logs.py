@@ -32,7 +32,7 @@ SCREEN_CALLS: list[list[dict]] = []
 MERGE_CALLS: list[list[dict]] = []
 SCREEN_RESPONSES: list[str] = []
 _CURRENT_DATE: list[str] = [""]
-_PROMPT_DATE_RE = re.compile(r"【任务】把 (\d{4}-\d{2}-\d{2}) 这一天")
+_PROMPT_DATE_RE = re.compile(r"把 (\d{4}-\d{2}-\d{2}) 这一天")
 
 
 def _doc(date: str) -> str:

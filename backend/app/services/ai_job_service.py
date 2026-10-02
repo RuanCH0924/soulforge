@@ -46,15 +46,21 @@ from app.services.format_validator import FormatValidator
 from app.services.lint_service import LintService
 from app.services.llm_registry import LLMRegistry
 from app.services.preset_service import PresetService
-from app.services.template_rules import RequiredSection, TemplateRules, parse_template, template_rule_summary
+from app.services.template_rules import (
+    RequiredSection,
+    TemplateRules,
+    apply_format_rules,
+    parse_preset,
+    template_body,
+)
 
 AI_FILE_SIZE_LIMIT = 30 * 1024  # 30KB（token 成本 + 质量风险）
 
 SYSTEM_PROMPT = (
     "你是 Soulforge 的 AI 文档整理助手。"
-    "严格遵守用户给出的「格式化规则」重新整理目标文档：保留原意、不丢失信息、不新增事实。"
-    "输出必须 100% 符合规则，正文只输出 Markdown 内容。"
-    "不要输出任何思考过程、任务分析、规则复述或对话性文字（如「让我…」「以下是…」），"
+    "严格依据「预设参考文档」与「修改要求」两项配置修改目标文档：保留原意、不丢失信息、不新增事实。"
+    "输出必须完全符合这两项配置，正文只输出 Markdown 内容。"
+    "不要输出任何思考过程、任务分析、配置复述或对话性文字（如「让我…」「以下是…」），"
     "第一行就要直接进入文档正文。"
 )
 
@@ -165,48 +171,52 @@ class AIJobService:
 
     @staticmethod
     def _rules_for(preset: Preset) -> TemplateRules:
-        """解析预设模板规则；无模板文档时由 sections 兜底构造。"""
+        """解析预设模板规则（参考文档 + 结构化规则）；无参考文档时由 sections 兜底构造。"""
         if preset.template_md:
-            return parse_template(preset.template_md)
-        return TemplateRules(
-            name=preset.name, target_file_type=preset.target_file_type,
-            required_sections=[
-                RequiredSection(title=sec.title, required=sec.required)
-                for sec in sorted(preset.sections_json, key=lambda x: x.order)
-            ],
-        )
+            rules = parse_preset(preset.template_md, preset.format_rules)
+        else:
+            rules = TemplateRules(
+                name=preset.name, target_file_type=preset.target_file_type,
+                required_sections=[
+                    RequiredSection(title=sec.title, required=sec.required)
+                    for sec in sorted(preset.sections_json, key=lambda x: x.order)
+                ],
+            )
+            apply_format_rules(rules, preset.format_rules)
+        rules.target_file_type = preset.target_file_type
+        return rules
 
     @staticmethod
     def _build_prompt(preset: Preset, content: str, extra_instructions: str | None) -> str:
-        rules = AIJobService._rules_for(preset)
-        summary = template_rule_summary(rules)
-        skeleton = preset.template_md or "（该预设未提供模板文档，以上规则即全部要求）"
-        # 预设的「风格与内容规则」（style_rules）：与格式化规则同为前置约束。
-        # 注：此前只存库、未注入 prompt，与 docs/DEVELOPMENT.md 模块 M13 的声明不符，已在此修正。
-        style_block = (
+        """组装文档修改任务的 prompt。
+
+        **只以两项配置为核心参照依据**：
+        - 「预设参考文档」（`preset.template_md`，纯 Markdown）—— 体现目标文档的结构与写法；
+        - 「修改要求」（`preset.style_rules`，逐条）—— 明确要保留 / 删除 / 改写什么。
+        不再注入任何机器规则摘要（章节 / 顺序等「章节」配置已移除）。
+        """
+        reference = template_body(preset.template_md) or "（该预设未提供参考文档）"
+        requirement_block = (
             "\n".join(f"{i}. {line}" for i, line in enumerate(preset.style_rules, start=1))
             if preset.style_rules
             else "（无）"
         )
-        return f"""【任务】按下方「格式化规则」与「风格与内容规则」对目标文档做结构化重排与格式校验，严格遵循：
-第一步：读取并解析格式化规则、风格与内容规则；
+        return f"""【任务】严格依据下方「预设参考文档」与「修改要求」两项配置，修改目标文档：
+第一步：阅读并理解「预设参考文档」与「修改要求」；
 第二步：加载目标文档；
-第三步：按照全部规则对目标文档进行结构化重新整理（保留原意，不丢失、不新增信息）——
-        「风格与内容规则」里要求保留的必须保留、要求删除的必须删除；
-第四步：自查输出，确保 100% 符合规则后再交付。
+第三步：严格按「预设参考文档」所示的结构与写法、以及「修改要求」提出的每一条要求修改目标文档
+        （保留原文意图，不丢失、不新增信息）；
+第四步：自查输出，确认完全符合两项配置后再交付。
 
-【格式化规则（来自模板文档，必须逐条遵守）】
-{summary}
-
-【风格与内容规则（来自预设，必须逐条遵守）】
-{style_block}
-
-【模板文档全文（含章节骨架示例，重排时按此结构组织）】
+【预设参考文档】
 ```markdown
-{skeleton}
+{reference}
 ```
 
-【附加指令】（老板可选）
+【修改要求（必须逐条遵守）】
+{requirement_block}
+
+【附加指令】（可选）
 {extra_instructions or '无'}
 
 【目标文档】
@@ -214,9 +224,9 @@ class AIJobService:
 {content}
 ```
 
-【输出】只输出整理后的 Markdown 文档正文本身，严格遵守：
-1. 第一行必须是文档标题（ATX 标题，如 `# SOUL.md`）；模板要求 frontmatter 时，第一行必须是 `---`；
-2. 禁止输出思考过程、任务分析、步骤说明、格式化规则复述、前言/结语、致谢等任何对话性文字；
+【输出】只输出修改后的 Markdown 文档正文本身，严格遵守：
+1. 第一行必须是文档标题（ATX 标题，如 `# SOUL.md`）；约定要求 frontmatter 时，第一行必须是 `---`；
+2. 禁止输出思考过程、任务分析、步骤说明、配置复述、前言/结语、致谢等任何对话性文字；
 3. 禁止用 ``` 代码围栏包裹整篇文档（文档内部的代码块不受此限）；
 4. 不要写「让我」「以下是」「以上是」「如需调整」之类的话，直接从正文开始、到正文结束。"""
 

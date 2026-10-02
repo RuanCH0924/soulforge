@@ -1,21 +1,68 @@
 """单元测试：模板规则解析（TemplateRuleParser）与格式校验（FormatValidator）。
 
 覆盖：
-- 模板文档 → 结构化规则（frontmatter + 正文骨架兜底）
-- 规则摘要生成（供 AI prompt）
-- 格式校验各维度：章节缺失/顺序、标题风格/层级、列表前缀、段落空行、
+- 模板文档 → 结构化规则（frontmatter + 由参考文档标题派生章节）
+- 格式校验各维度：标题风格/层级、列表前缀、段落空行、
   emoji、原始 HTML、代码围栏、frontmatter
 - 机械性自动修正 + 修正后重校验（100% 合规）
+
+说明：**章节缺失 / 章节顺序**校验已随「章节」配置一并移除，不再是校验维度
+（章节清单只由预设参考文档派生，仅供「应用预设」机械补齐）。
 """
 from __future__ import annotations
 
 from app.services.format_validator import FormatValidator
-from app.services.preset_templates import SOUL_TEMPLATE
-from app.services.template_rules import derive_sections, parse_template, template_rule_summary
+from app.services.preset_templates import BUILTIN_FORMAT_RULES, SOUL_TEMPLATE
+from app.services.template_rules import (
+    derive_sections,
+    extract_format_rules,
+    parse_preset,
+    parse_template,
+)
 
 EMPTY_TEMPLATE = "# 无 frontmatter 模板\n\n## 章节甲\n\n正文。\n\n## 章节乙\n\n正文。\n"
 
-# 精简模板：仅两个必填章节，便于聚焦各维度校验
+# 存量形态：YAML 规则 + 正文参考文档（验证「惰性兼容」路径；YAML 里的 section_order 已被忽略）
+LEGACY_YAML_TEMPLATE = """---
+schema: soulforge.template/v1
+target_file_type: SOUL
+structure:
+  section_heading_level: 2
+  required_sections:
+    - title: 核心行为准则
+    - title: 工作态度和原则
+  section_order: strict
+elements:
+  heading_style: atx
+  list_style: "-"
+  heading_blank_line: true
+  paragraph_blank_line: true
+typography:
+  max_heading_level: 3
+  allow_bold: true
+  allow_italic: true
+  forbid_emoji: true
+  forbid_raw_html: true
+modules:
+  frontmatter: optional
+---
+
+# SOUL 文档标准模板
+
+## 核心行为准则
+
+- x
+
+## 工作态度和原则
+
+- y
+
+## 附录：溯源对照表
+
+- z
+"""
+
+# 精简模板：仅两个章节，便于聚焦各维度校验
 COMPACT_TEMPLATE = """---
 schema: soulforge.template/v1
 target_file_type: SOUL
@@ -44,14 +91,15 @@ modules:
 
 # ---------- 模板规则解析 ----------
 
-def test_parse_template_full_rules():
-    rules = parse_template(SOUL_TEMPLATE)
+def test_parse_template_legacy_yaml_rules():
+    """存量形态（YAML + 参考文档）解析：章节恒由正文标题派生（YAML 里的 section_order 被忽略）。"""
+    rules = parse_template(LEGACY_YAML_TEMPLATE)
     assert rules.name == "SOUL 文档标准模板"  # frontmatter 未写 name，正文 H1 兜底
     assert rules.target_file_type == "SOUL"
     assert rules.section_heading_level == 2
-    assert rules.section_order == "strict"
+    # 章节由正文全部二级标题派生（不再有「可选章节」排除）
     assert [s.title for s in rules.required_sections] == [
-        "核心行为准则", "工作态度和原则", "学习与连续性", "核心边界"]
+        "核心行为准则", "工作态度和原则", "附录：溯源对照表"]
     assert all(s.required for s in rules.required_sections)
     assert rules.heading_style == "atx"
     assert rules.list_style == "-"
@@ -65,11 +113,60 @@ def test_parse_template_full_rules():
     assert rules.frontmatter == "optional"
 
 
+# ---------- 新形态：纯参考文档 + 结构化规则 ----------
+
+def test_parse_preset_pure_reference_derives_sections():
+    rules = parse_preset(SOUL_TEMPLATE, BUILTIN_FORMAT_RULES["preset-soul-std"])
+    assert rules.section_heading_level == 2
+    # 章节由参考文档 `##` 标题派生（不再手写章节清单）
+    assert [s.title for s in rules.required_sections] == [
+        "核心行为准则", "工作态度和原则", "学习与连续性", "核心边界"]
+    # 全局默认排版键仍在（收敛后的唯一事实源）
+    assert rules.forbid_emoji is True and rules.forbid_raw_html is True
+    assert rules.max_heading_level == 3
+
+
+def test_parse_preset_reference_headings_all_derived():
+    from app.services.preset_templates import SUMMARY_TEMPLATE
+    rules = parse_preset(SUMMARY_TEMPLATE, BUILTIN_FORMAT_RULES["preset-mem-summarize"])
+    titles = [s.title for s in rules.required_sections]
+    assert titles == [
+        "一、完成的工作", "二、经验教训", "三、重要决定", "四、重要信息", "五、待办事项", "附录：溯源对照表"]
+
+
+def test_parse_preset_format_rules_override_legacy_yaml():
+    """显式结构化规则优先于旧 YAML。"""
+    rules = parse_preset(LEGACY_YAML_TEMPLATE, {"section_heading_level": 3, "require_frontmatter": True})
+    assert rules.section_heading_level == 3
+    assert rules.frontmatter == "required"
+
+
+def test_parse_preset_skips_headings_inside_code_fence():
+    body = "# 标题\n\n## 真章节\n\n```markdown\n## 假章节\n```\n"
+    rules = parse_preset(body, {})
+    assert [s.title for s in rules.required_sections] == ["真章节"]
+
+
+def test_extract_format_rules_from_legacy_template():
+    rules = extract_format_rules(LEGACY_YAML_TEMPLATE)
+    assert rules["section_heading_level"] == 2
+    assert rules["require_frontmatter"] is False
+    assert "section_order" not in rules
+    assert "optional_sections" not in rules
+
+
+def test_extract_format_rules_defaults_without_yaml():
+    assert extract_format_rules("# T\n\n## A\n\n## B\n") == {
+        "schema": "soulforge.format-rules/v1",
+        "section_heading_level": 2, "require_frontmatter": False,
+    }
+
+
 def test_parse_template_fallback_without_frontmatter():
     rules = parse_template(EMPTY_TEMPLATE)
     assert rules.target_file_type == "ANY"
     assert rules.section_heading_level == 2
-    # 正文二级标题兜底为必填章节
+    # 正文二级标题兜底为章节
     assert [s.title for s in rules.required_sections] == ["章节甲", "章节乙"]
     assert rules.name == "无 frontmatter 模板"  # 正文 H1 兜底
 
@@ -79,17 +176,6 @@ def test_derive_sections_orders_by_template():
     assert sections[0] == {"title": "核心行为准则", "required": True, "order": 1, "hint": None}
     assert [s["title"] for s in sections] == [
         "核心行为准则", "工作态度和原则", "学习与连续性", "核心边界"]
-
-
-def test_template_rule_summary_contains_key_rules():
-    summary = template_rule_summary(parse_template(SOUL_TEMPLATE))
-    assert "适用文件类型：SOUL" in summary
-    assert "##（二级标题）" in summary
-    assert "核心行为准则（必填）" in summary
-    assert "严格按下列顺序" in summary
-    assert "无序列表统一用「- 」" in summary
-    assert "禁止 emoji：是" in summary
-    assert "禁止原始 HTML：是" in summary
 
 
 # ---------- 格式校验 ----------
@@ -109,22 +195,24 @@ def test_validate_ok_for_compliant_doc():
     assert report.violations == []
 
 
-def test_validate_missing_required_section():
+def test_validate_missing_section_no_longer_flagged():
+    """「章节」不再是模型约束：缺失某章节不再被强规则拦下。"""
     content = "# 标题\n\n## 章节B\n\n- 内容乙\n"
     report = FormatValidator().validate(content, _rules())
-    assert report.ok is False
-    assert "STR-MISSING-SECTION" in {v.rule_id for v in report.violations}
-    assert any("章节A" in v.message for v in report.violations)
+    assert report.ok is True
+    assert "STR-MISSING-SECTION" not in {v.rule_id for v in report.violations}
 
 
-def test_validate_section_order_wrong():
+def test_validate_section_order_not_constrained():
+    """章节顺序不再作为约束：打乱顺序也通过。"""
     content = (
         "# 标题\n\n"
         "## 章节B\n\n- 内容乙\n\n"
         "## 章节A\n\n- 内容甲\n"
     )
     report = FormatValidator().validate(content, _rules())
-    assert "STR-SECTION-ORDER" in {v.rule_id for v in report.violations}
+    assert report.ok is True
+    assert "STR-SECTION-ORDER" not in {v.rule_id for v in report.violations}
 
 
 def test_validate_setext_heading_flagged():
@@ -300,11 +388,13 @@ def test_validate_and_fix_idempotent_for_compliant_doc():
     assert fixed == content  # 已合规时保持原文不变
 
 
-def test_validate_and_fix_unfixable_missing_section():
+def test_validate_and_fix_missing_section_passes():
+    """缺失章节不再拦截：整篇仍可通过（其余维度合规）。"""
     content = "# 标题\n\n## 章节B\n\n- 内容乙\n"
-    _, report = FormatValidator().validate_and_fix(content, _rules())
-    assert report.ok is False  # 缺失章节无法机械补齐
-    assert "STR-MISSING-SECTION" in {v.rule_id for v in report.violations}
+    fixed, report = FormatValidator().validate_and_fix(content, _rules())
+    assert report.ok is True
+    assert "STR-MISSING-SECTION" not in {v.rule_id for v in report.violations}
+    assert fixed == content
 
 
 # ---------- 输出净化：剥离思考过程 / 前言（sanitize） ----------

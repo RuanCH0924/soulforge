@@ -222,10 +222,13 @@ class PresetCreate(BaseModel):
     name: str = Field(..., min_length=1, description="预设名")
     target_file_type: PresetTargetType
     description: str | None = None
-    template_md: str | None = Field(None, description="标准 Markdown 模板文档（YAML 规则+骨架）")
-    sections_json: list[PresetSection] = Field(default_factory=list, description="章节列表（由模板派生，可省略）")
+    template_md: str | None = Field(None, description="预设参考文档（Markdown；新形态不含 YAML）")
+    format_rules: dict = Field(
+        default_factory=dict,
+        description="结构化格式规则：section_heading_level / require_frontmatter")
+    sections_json: list[PresetSection] = Field(default_factory=list, description="章节列表（由预设参考文档派生，可省略）")
     frontmatter_json: dict[str, str] = Field(default_factory=dict, description="frontmatter 模板")
-    style_rules: list[str] = Field(default_factory=list, description="风格规则")
+    style_rules: list[str] = Field(default_factory=list, description="修改要求（逐条）")
 
 
 class PresetUpdate(BaseModel):
@@ -235,6 +238,7 @@ class PresetUpdate(BaseModel):
     target_file_type: PresetTargetType | None = None
     description: str | None = None
     template_md: str | None = None
+    format_rules: dict | None = None
     sections_json: list[PresetSection] | None = None
     frontmatter_json: dict[str, str] | None = None
     style_rules: list[str] | None = None
@@ -263,6 +267,7 @@ class Preset(BaseModel):
     target_file_type: PresetTargetType
     description: str | None = None
     template_md: str | None = None
+    format_rules: dict = Field(default_factory=dict)
     sections_json: list[PresetSection] = Field(default_factory=list)
     frontmatter_json: dict[str, str] = Field(default_factory=dict)
     style_rules: list[str] = Field(default_factory=list)
@@ -282,7 +287,7 @@ class PresetApplyRequest(BaseModel):
 class PresetFromDocument(BaseModel):
     """由当前文档生成预设（编辑栏「设为预设」）。
 
-    以编辑器当前内容作为模板正文，配合用户填写的参数生成带规则 frontmatter 的模板文档，
+    以编辑器当前内容作为「预设参考文档」，配合用户填写的参数生成预设（规则另存 format_rules），
     从而得到一个可「应用预设 / AI 整理」复用的结构预设。
     """
 
@@ -291,12 +296,7 @@ class PresetFromDocument(BaseModel):
     content: str = Field(..., min_length=1, description="作为模板正文的文档内容（编辑器当前内容）")
     description: str | None = Field(None, description="用途说明")
     section_heading_level: int = Field(
-        2, ge=1, le=6, description="章节标题层级：该层级的标题构成预设的章节清单")
-    required_sections: list[str] = Field(
-        default_factory=list,
-        description="必填章节（须为文档中该层级的标题）；留空 = 文档中该层级的全部标题",
-    )
-    section_order: Literal["strict", "loose"] = Field("strict", description="章节顺序是否严格")
+        2, ge=1, le=6, description="标题层级：该层级的标题构成预设的章节清单（供应用预设补齐）")
     require_frontmatter: bool = Field(False, description="是否要求文档带 YAML frontmatter")
 
 
@@ -350,6 +350,7 @@ class PresetVersionInfo(BaseModel):
     target_file_type: PresetTargetType
     description: str | None = None
     template_md: str | None = None
+    format_rules: dict = Field(default_factory=dict)
     sections_json: list[PresetSection] = Field(default_factory=list)
     frontmatter_json: dict[str, str] = Field(default_factory=dict)
     style_rules: list[str] = Field(default_factory=list)

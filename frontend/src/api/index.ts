@@ -167,6 +167,7 @@ export const api = {
     target_file_type: PresetTargetType;
     description?: string;
     template_md?: string;
+    format_rules?: Preset['format_rules'];
     sections_json?: Preset['sections_json'];
     frontmatter_json?: Preset['frontmatter_json'];
     style_rules?: string[];
@@ -180,8 +181,6 @@ export const api = {
     content: string;
     description?: string;
     section_heading_level?: number;
-    required_sections?: string[];
-    section_order?: 'strict' | 'loose';
     require_frontmatter?: boolean;
   }) => request<Preset>('POST', '/api/presets/from-document', { json: body }),
   deletePreset: (id: string) =>

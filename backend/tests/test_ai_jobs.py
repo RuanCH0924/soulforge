@@ -38,11 +38,10 @@ LINT_BAD_OUTPUT = (
 # 格式违规：缺失必填章节、缺章节标题后空行、含 emoji、用 * 列表
 FORMAT_BAD_OUTPUT = (
     "# 整理后\n\n"
-    "## 工作态度和原则\n"
-    "* 先想后做\n\n"
+    "## 工作态度和原则\n\n"
+    "- 先想后做\n\n"
     "## 学习与连续性\n\n记录。\n\n"
-    "## 核心边界\n\n隐私。\n\n"
-    "遗留内容。\n"
+    "## 核心边界\n\n<div>原始 HTML</div>\n"
 )
 
 # 格式违规 → 可被 auto_fix 机械修正：Setext 下划线 + emoji 标题 + 混合列表前缀
@@ -235,10 +234,10 @@ def test_apply_format_violation_blocked_422(client, monkeypatch):
     monkeypatch.setattr("app.services.llm_registry.LLMClient.chat", _fake_chat_format_bad)
     job_id = _create_job(client)
     job = _wait_job(client, job_id)
-    # 输出缺少必填章节「核心行为准则」→ 机械修正无法补齐 → format_report.not ok
+    # 输出含原始 HTML（无机械修正手段）→ format_report.not ok
     assert job["diff_plan_json"]["format_report"]["ok"] is False
     rule_ids = {v["rule_id"] for v in job["diff_plan_json"]["format_report"]["violations"]}
-    assert "STR-MISSING-SECTION" in rule_ids
+    assert "TYP-RAW-HTML" in rule_ids
 
     res = client.post(f"/api/ai/jobs/{job_id}/apply")
     assert res.status_code == 422
@@ -369,7 +368,7 @@ def test_get_job_not_found(client):
 # ---------- prompt 组装 ----------
 
 def test_style_rules_injected_into_prompt(client, monkeypatch):
-    """预设的「风格与内容规则」（style_rules）必须进入 prompt。
+    """预设的「修改要求」（style_rules）与「预设参考文档」必须进入 prompt。
 
     回归：此前 _build_prompt 只注入 template_md，style_rules 只存库未使用，
     与 docs/DEVELOPMENT.md 模块 M13 的声明不符。
@@ -385,9 +384,10 @@ def test_style_rules_injected_into_prompt(client, monkeypatch):
     user_prompt = CAPTURED_PROMPTS[-1][-1]["content"]
     assert "整理助手" in system_prompt
 
-    assert "【风格与内容规则（来自预设，必须逐条遵守）】" in user_prompt
+    assert "【修改要求（必须逐条遵守）】" in user_prompt
     assert "1. emoji-in-section-title=false" in user_prompt
     assert "3. 必须带应用范例" in user_prompt
-    # 格式化规则段仍在（两段并存，不是替换）
-    assert "【格式化规则（来自模板文档，必须逐条遵守）】" in user_prompt
-    assert "【模板文档全文（含章节骨架示例，重排时按此结构组织）】" in user_prompt
+    # 两项配置并存：预设参考文档段仍在
+    assert "【预设参考文档】" in user_prompt
+    assert "## 核心行为准则" in user_prompt
+    assert "「预设参考文档」与「修改要求」两项配置" in user_prompt

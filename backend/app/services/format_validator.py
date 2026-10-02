@@ -1,7 +1,6 @@
 """FormatValidator：按模板规则校验文档格式，并支持机械性自动修正。
 
 校验维度（对应模板 YAML 的 structure / elements / typography / modules）：
-- 必填章节存在且顺序严格
 - ATX 标题（禁用 Setext 下划线）
 - 标题层级不超过上限
 - 无序列表统一使用指定前缀
@@ -10,6 +9,8 @@
 - 标题禁 emoji
 - 禁原始 HTML
 - frontmatter 是否必需
+
+注：**不做「章节」相关校验**（必填章节 / 章节顺序已随「章节」配置移除）。
 
 auto_fix 只做机械性修正（不影响语义），修正后再次校验。
 FormatReport / FormatViolation 直接复用 schemas 中的 Pydantic 模型。
@@ -89,38 +90,13 @@ def raw_html_tag(line: str) -> str | None:
     return None
 
 
-def _heading_at(content: str, title: str, level: int) -> int | None:
-    """返回指定层级标题所在行号（1-based），未找到返回 None。"""
-    for i, line in enumerate(content.splitlines(), start=1):
-        m = HEADING_RE.match(line)
-        if m and len(m.group(1)) == level and m.group(2).strip() == title:
-            return i
-    return None
-
-
 class FormatValidator:
     def validate(self, content: str, rules: TemplateRules) -> FormatReport:
         violations: list[FormatViolation] = []
         lines = content.splitlines()
 
-        # ---------- 结构：必填章节 ----------
-        for sec in rules.required_sections:
-            if not sec.required:
-                continue
-            if _heading_at(content, sec.title, rules.section_heading_level) is None:
-                violations.append(FormatViolation(
-                    rule_id="STR-MISSING-SECTION", rule_name="缺失必填章节",
-                    message=f"缺少必填章节「{sec.title}」（应为 {'#' * rules.section_heading_level} 级标题）"))
-
-        # ---------- 结构：章节顺序 ----------
-        if rules.section_order == "strict":
-            positions = [_heading_at(content, s.title, rules.section_heading_level)
-                         for s in rules.required_sections if s.required]
-            positions = [p for p in positions if p is not None]
-            if len(positions) >= 2 and any(positions[i] > positions[i + 1] for i in range(len(positions) - 1)):
-                violations.append(FormatViolation(
-                    rule_id="STR-SECTION-ORDER", rule_name="章节顺序错误",
-                    message="必填章节未按模板规定的顺序排列"))
+        # 注：本节不再做「章节」相关校验（必填章节 / 章节顺序）——
+        # 该配置已移除，模型任务仅以「预设参考文档」与「修改要求」为依据（见 template_rules 模块说明）。
 
         in_fence = False
         fence_count = 0
