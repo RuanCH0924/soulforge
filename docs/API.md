@@ -1213,10 +1213,15 @@ python super_sync.py --once        # 只执行一轮（自检）
     "max_days_per_run": 31,
     "token_budget": 200000,
     "provider_id": "",
-    "dry_run_only": false
+    "dry_run_only": false,
+    "auto_delete_meaningless_logs": false
   }
 }
 ```
+
+`auto_delete_meaningless_logs`：是否启用「大模型无意义日志自动删除」。默认 `false`；
+开启后日志标准化批次会在计划阶段额外调一次大模型判定无意义碎片，并在删除前做 7 天备份归档，
+详见 [MEMORY-DAILY-STANDARDIZER-PLAN.md](MEMORY-DAILY-STANDARDIZER-PLAN.md) §6.4。
 
 **生效时机**：`backup` / `lint` / `ui` / `advanced` / `openclaw` / `daily_standardizer` 立即生效；
 `server.host` / `server.port` 需重启服务。
@@ -1294,7 +1299,9 @@ python super_sync.py --once        # 只执行一轮（自检）
 #### `GET /api/daily-runs/{run_id}`
 
 批次详情：批次摘要 + `items[]`（逐日条目）。每个条目含来源清单（`sources[]`：路径 / A·B·C 类别 /
-剥壳前后体积）、`fragments_to_delete[]`、`output_content`、`unified_diff` / `html_diff`、
+剥壳前后体积）、`fragments_to_delete[]`、`meaningless_logs[]`（大模型判定为无意义的碎片：
+`path` / `dimension` / `dimension_name` / `reason` / `backup_path` / `sha256` / `archived_at`；
+仅 `auto_delete_meaningless_logs=true` 时非空）、`output_content`、`unified_diff` / `html_diff`、
 `format_report`、`lint_warnings`、`notes`、`empty_reason`、`status`、逐日 token 与成本。
 
 `status` 取值：`pending` / `planned` / `failed` / `blocked` / `applied` / `partially_applied` /
@@ -1309,7 +1316,9 @@ python super_sync.py --once        # 只执行一轮（自检）
    - 任一日验收不过 → 该日标 `blocked`，不写入（其余继续）
    - 「无可归档内容」的日期不写文件，改按**逐个碎片**的 SHA-256 比对（碎片被改动同样抛 `409`）
 2. 逐个写入日文件（`FileManager.write`：自动备份 + 审计），随后删除该日碎片（`send2trash`）；
-   「无可归档内容」的日期**跳过写入**，只清碎片（A 类主文件 `YYYY-MM-DD.md` 不动），审计动作 `daily_empty_content`
+   「无可归档内容」的日期**跳过写入**，只清碎片（A 类主文件 `YYYY-MM-DD.md` 不动），审计动作 `daily_empty_content`。
+   若 `auto_delete_meaningless_logs=true`：被判定为无意义的碎片在删除**之前**先写入 7 天归档
+   （`<data_dir>/meaningless-log-backups/`），归档失败则跳过删除；审计 `daily_apply` 记 `meaningless_archived`
 3. 写批次状态并跑验收报告；报告不通过 → 批次标 `needs_review`（已写入的日文件**不回滚**）
 
 **请求**（`dates` 与 `apply_all` 二者其一）：

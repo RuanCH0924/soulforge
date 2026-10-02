@@ -32,6 +32,11 @@ from loguru import logger
 
 from app.core.errors import BadRequestError, DailySourceTooLargeError
 from app.models.schemas import FormatReport, LintWarning, Preset
+from app.services.daily_log_filter import (
+    MeaninglessFinding,
+    ScreeningCandidate,
+    screen_meaningless,
+)
 from app.services.daily_preprocessor import (
     PreprocessedSource,
     preprocess_source,
@@ -209,6 +214,9 @@ class DailyMergePlan:
     # 非 None = 模型判定「本日无可归档内容」（值为一句话理由）：不产出日文件，
     # 只清理 B/C 碎片，A 类主文件保持不动。见 parse_empty_verdict()
     empty_reason: str | None = None
+    # 大模型判定为「无意义」的碎片（仅开关开启时才会非空）：删除前需先备份归档。
+    # 见 app.services.daily_log_filter / meaningless_log_archive
+    meaningless_logs: list[MeaninglessFinding] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -395,13 +403,35 @@ class DailyMergeService:
 
     # ---------- 单日归并 ----------
 
+    async def _screen_fragments(self, client, group: DayGroup, prepared: list[tuple],
+                                usage: list[LLMResponse]) -> list[MeaninglessFinding]:
+        """对当日的 B/C 碎片做无意义判定（开关开启时由 plan_day 调用）。
+
+        只判定会被删除的碎片；没有碎片则不发起任何调用。判定结论仅用于「删除前备份」，
+        不改变归并内容本身（保守：不让筛选结果影响正文本产出）。
+        """
+        candidates = [
+            ScreeningCandidate(path=source.path, kind=source.kind, text=pre.text)
+            for source, pre in prepared if source.kind != KIND_A
+        ]
+        if not candidates:
+            return []
+        findings, resp = await screen_meaningless(client, group.date, candidates)
+        usage.append(resp)
+        logger.info(f"{group.date} 无意义日志筛选：{len(findings)}/{len(candidates)} 个碎片被判为无意义")
+        return findings
+
     async def plan_day(self, agent_id: str, date: str, preset_id: str, provider_id: str,
                        extra_instructions: str | None = None,
-                       delivery: str = DEFAULT_DELIVERY) -> DailyMergePlan:
+                       delivery: str = DEFAULT_DELIVERY,
+                       screen_meaningless: bool = False) -> DailyMergePlan:
         """产出某一天的归并计划（只读，不写盘、不删文件）。
 
         `delivery` 是规则投递形态（P3 效率对比用），默认取 `DEFAULT_DELIVERY`；
         业务链路（批次日归并 / M13）不传该参数，因此形态切换不影响线上行为。
+
+        `screen_meaningless=True` 时额外调用大模型做一次无意义日志判定（结果落在
+        `meaningless_logs`，供 P2 在删除前做备份归档）；默认 `False`，保持既有行为。
         """
         if delivery not in DELIVERIES:
             raise BadRequestError(
@@ -422,6 +452,10 @@ class DailyMergeService:
         usage: list[LLMResponse] = []
         prepared, reports, notes = await self._prepare_sources_for(
             client, style_block, group, usage, agent_id)
+        # 无意义日志判定（开关开启时）：只判碎片，结论用于「删除前备份」
+        meaningless_logs: list[MeaninglessFinding] = []
+        if screen_meaningless:
+            meaningless_logs = await self._screen_fragments(client, group, prepared, usage)
         system_prompt, prompt = self._build_prompts(
             preset, group, prepared, extra_instructions, delivery)
         if len(prompt.encode("utf-8")) > MAX_MERGE_PROMPT_BYTES:
@@ -463,6 +497,7 @@ class DailyMergeService:
                 output_content="", unified_diff="",
                 format_report=FormatReport(ok=True), lint_warnings=[],
                 fragments_to_delete=fragments, empty_reason=empty_reason,
+                meaningless_logs=meaningless_logs,
                 notes=[], **usage_fields,
             )
 
@@ -477,7 +512,8 @@ class DailyMergeService:
             has_standard=group.has_standard, sources=reports,
             output_content=output, unified_diff=diff, format_report=format_report,
             lint_warnings=self.lint.lint_file(agent_id, group.target_path, output),
-            fragments_to_delete=fragments, notes=notes, **usage_fields,
+            fragments_to_delete=fragments, meaningless_logs=meaningless_logs,
+            notes=notes, **usage_fields,
         )
 
     async def _prepare_sources_for(self, client, style_block: str, group: DayGroup,

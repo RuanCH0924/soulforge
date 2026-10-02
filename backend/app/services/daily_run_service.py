@@ -53,10 +53,13 @@ from app.models.schemas import (
     DailySourceInfo,
     FormatReport,
     LintWarning,
+    MeaninglessLogInfo,
 )
 from app.services.audit_service import AuditService
+from app.services.daily_log_filter import dimension_name
 from app.services.daily_merge_service import DailyMergePlan, DailyMergeService, sha256_text
 from app.services.daily_preprocessor import describe_shells, detect_residual_shells
+from app.services.meaningless_log_archive import MeaninglessLogArchive
 from app.services.daily_source_scanner import DailySourceScanner, DayGroup, classify_daily_filename
 from app.services.diff_service import render_html_diff
 from app.services.file_manager import FileManager
@@ -94,7 +97,7 @@ class DailyRunService:
 
     def __init__(self, db: Database, config: Config, file_manager: FileManager, presets: PresetService,
                  llm: LLMRegistry, audit: AuditService, merge: DailyMergeService,
-                 scanner: DailySourceScanner):
+                 scanner: DailySourceScanner, archive: MeaninglessLogArchive):
         self.db = db
         self.config = config
         self.file_manager = file_manager
@@ -103,6 +106,7 @@ class DailyRunService:
         self.audit = audit
         self.merge = merge
         self.scanner = scanner
+        self.archive = archive
 
     # ---------- 查询 ----------
 
@@ -120,7 +124,7 @@ class DailyRunService:
     def _row_to_item(row: DailyRunItemRow) -> DailyRunItem:
         parsed = {f: _load_json(getattr(row, f)) for f in
                   ("sources_json", "fragments_json", "format_report_json",
-                   "lint_warnings_json", "notes_json")}
+                   "lint_warnings_json", "notes_json", "meaningless_json")}
         hashes = _load_json(row.source_hashes_json) or {}
         return DailyRunItem(
             date=row.date, target_path=row.target_path,
@@ -128,6 +132,7 @@ class DailyRunService:
             has_standard=bool(hashes.get(row.target_path)),
             sources=[DailySourceInfo(**s) for s in (parsed["sources_json"] or [])],
             fragments_to_delete=parsed["fragments_json"] or [],
+            meaningless_logs=[MeaninglessLogInfo(**m) for m in (parsed["meaningless_json"] or [])],
             output_content=row.output_content, unified_diff=row.unified_diff,
             html_diff=render_html_diff(row.unified_diff) if row.unified_diff else None,
             format_report=FormatReport(**parsed["format_report_json"]) if parsed["format_report_json"]
@@ -311,6 +316,7 @@ class DailyRunService:
                   "summarized": s.summarized, "chunks": s.chunks} for s in plan.sources],
                 ensure_ascii=False),
             fragments_json=json.dumps(plan.fragments_to_delete, ensure_ascii=False),
+            meaningless_json=json.dumps(_findings_payload(plan.meaningless_logs), ensure_ascii=False),
             format_report_json=json.dumps(plan.format_report.model_dump(), ensure_ascii=False),
             lint_warnings_json=json.dumps([w.model_dump() for w in plan.lint_warnings], ensure_ascii=False),
             notes_json=json.dumps(plan.notes, ensure_ascii=False),
@@ -329,11 +335,15 @@ class DailyRunService:
             extra, budget = run.extra_instructions, run.token_budget
             dates = [i.date for i in self._items_of(s, run_id)]
 
+        # 无意义日志自动删除开关：开启时才在计划阶段触发大模型筛选（见 §M15 扩展）
+        screen = self.config.daily_standardizer.auto_delete_meaningless_logs
         tokens_used, cost = 0, 0.0
         stopped: str | None = None
         for date in dates:
             try:
-                plan = await self.merge.plan_day(agent_id, date, preset_id, provider_id, extra)
+                plan = await self.merge.plan_day(
+                    agent_id, date, preset_id, provider_id, extra,
+                    screen_meaningless=screen)
             except Exception as e:  # 单日失败（LLM 报错 / 来源超限）不拖垮整批
                 logger.warning(f"批次 {run_id} 的第 {date} 天生成失败：{e}")
                 self._update_item(run_id, date, item_status=ITEM_FAILED, error=str(e))
@@ -498,15 +508,38 @@ class DailyRunService:
                 problems.append(f"{fragment}：已被外部删除或修改（计划基于旧内容）")
         return problems
 
-    def _delete_fragments(self, agent_id: str, item: DailyRunItemRow) -> list[str]:
-        """删除该日拟清理的碎片（走回收站）；返回失败说明（空 = 全部成功）。"""
+    def _delete_fragments(self, agent_id: str, item: DailyRunItemRow, *,
+                          archive: MeaninglessLogArchive | None = None
+                          ) -> tuple[list[str], dict[str, dict]]:
+        """删除该日拟清理的碎片（走回收站）；返回 `(失败说明, 归档记录)`。
+
+        `archive` 非空（= 无意义日志自动删除开关开启）时：对被大模型判定为无意义的碎片，
+        **先备份归档、再删除**；备份失败则跳过该文件的删除（宁可留文件，不可无备份地删）。
+        """
         errors: list[str] = []
+        archived: dict[str, dict] = {}
+        findings = {f.get("path"): f for f in _meaningless_of(item) if isinstance(f, dict)}
         for fragment in self._fragments_of(item):
+            finding = findings.get(fragment)
+            if archive is not None and finding is not None:
+                try:
+                    content = self.file_manager.read_text(agent_id, fragment)
+                    entry = archive.archive(
+                        agent_id, fragment, content,
+                        reason=finding.get("reason", ""),
+                        dimension=finding.get("dimension", ""))
+                    archived[fragment] = {
+                        "backup_path": entry.backup_path, "sha256": entry.sha256,
+                        "archived_at": entry.created_at,
+                    }
+                except Exception as e:  # 备份失败 → 不删除该文件（保守）
+                    errors.append(f"{fragment}：无意义日志备份归档失败，已跳过删除（{e}）")
+                    continue
             try:
                 self.file_manager.delete(agent_id, fragment)
             except Exception as e:  # 碎片删失败 → 不写/不回滚日文件（方案 §7.3）
                 errors.append(f"{fragment}：{e}")
-        return errors
+        return errors, archived
 
     @staticmethod
     def _actionable(item: DailyRunItemRow) -> bool:
@@ -525,6 +558,9 @@ class DailyRunService:
             raise DailyRunDisabledError(
                 "执行已被全局开关关闭（config.toml 的 daily_standardizer.dry_run_only=true），当前只能出计划",
                 details={"run_id": run_id})
+
+        # 无意义日志自动删除开关：开启时，被判定为无意义的碎片在删除前先备份归档（7 天）
+        archive = self.archive if self.config.daily_standardizer.auto_delete_meaningless_logs else None
 
         with self.db.session() as s:
             run = self._get_row(s, run_id)
@@ -585,17 +621,21 @@ class DailyRunService:
             if item.date in blocked_dates:
                 continue
             if item.item_status == ITEM_EMPTY:
-                cleanup_errors = self._delete_fragments(agent_id, item)
+                cleanup_errors, archived = self._delete_fragments(
+                    agent_id, item, archive=archive)
                 self._update_item(
                     run_id, item.date, item_status=ITEM_EMPTY, decision="applied",
                     applied_at=now, backup_id=None,
+                    meaningless_json=_with_archive(item, archived),
                     error=(f"碎片删除失败（本日未产出日文件，可手工清理）：{'；'.join(cleanup_errors)}"
                            if cleanup_errors else None))
                 no_content.append(item.date)
                 self.audit.record("daily_empty_content", agent_id, item.target_path, {
                     "run_id": run_id, "date": item.date, "reason": item.empty_reason,
                     "fragments_deleted": len(self._fragments_of(item)) - len(cleanup_errors),
-                    "fragments_failed": cleanup_errors, "tokens": item.total_tokens,
+                    "fragments_failed": cleanup_errors,
+                    "meaningless_archived": sorted(archived),
+                    "tokens": item.total_tokens,
                     "cost_estimate_usd": item.cost_estimate_usd,
                 }, result="failed" if cleanup_errors else "ok")
                 continue
@@ -609,17 +649,20 @@ class DailyRunService:
                 failed.append(item.date)
                 continue
 
-            cleanup_errors = self._delete_fragments(agent_id, item)
+            cleanup_errors, archived = self._delete_fragments(agent_id, item, archive=archive)
             item_status = ITEM_PARTIAL if cleanup_errors else ITEM_APPLIED
             error = ("碎片删除失败（日文件已保留，可手工清理）：" + "；".join(cleanup_errors)) \
                 if cleanup_errors else None
             self._update_item(run_id, item.date, item_status=item_status, decision="applied",
-                              applied_at=now, backup_id=result.backup_id, error=error)
+                              applied_at=now, backup_id=result.backup_id,
+                              meaningless_json=_with_archive(item, archived), error=error)
             (partial if cleanup_errors else applied).append(item.date)
             self.audit.record("daily_apply", agent_id, item.target_path, {
                 "run_id": run_id, "date": item.date, "backup_id": result.backup_id,
                 "fragments_deleted": len(self._fragments_of(item)) - len(cleanup_errors),
-                "fragments_failed": cleanup_errors, "tokens": item.total_tokens,
+                "fragments_failed": cleanup_errors,
+                "meaningless_archived": sorted(archived),
+                "tokens": item.total_tokens,
                 "cost_estimate_usd": item.cost_estimate_usd,
             }, result="failed" if cleanup_errors else "ok")
 
@@ -750,6 +793,32 @@ def _load_json(value: str | None):
         return json.loads(value)
     except (json.JSONDecodeError, TypeError):
         return None
+
+
+def _findings_payload(findings) -> list[dict]:
+    """把大模型的无意义判定结论序列化为落库载荷（含维度可读名）。"""
+    return [
+        {"path": f.path, "dimension": f.dimension,
+         "dimension_name": dimension_name(f.dimension), "reason": f.reason}
+        for f in findings
+    ]
+
+
+def _meaningless_of(item: DailyRunItemRow) -> list[dict]:
+    """读取该日条目的无意义判定结论（未开启开关时为空列表）。"""
+    return _load_json(item.meaningless_json) or []
+
+
+def _with_archive(item: DailyRunItemRow, archived: dict[str, dict]) -> str:
+    """把归档结果（备份路径 / 哈希 / 时间）合并进无意义判定结论后序列化。"""
+    out: list[dict] = []
+    for finding in _meaningless_of(item):
+        merged = dict(finding)
+        info = archived.get(finding.get("path"))
+        if info:
+            merged.update(info)
+        out.append(merged)
+    return json.dumps(out, ensure_ascii=False)
 
 
 def _day_files(workspace: Path, date: str) -> list[str]:

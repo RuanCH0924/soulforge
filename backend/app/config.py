@@ -72,12 +72,18 @@ class DailyStandardizerConfig:
     - `token_budget`：单批 token 预算，0 = 不限；越限即中止该批次且不写入任何文件
     - `provider_id`：默认 LLM provider（UI 可覆盖）
     - `dry_run_only`：全局「关闭执行（只出计划）」开关，异常时一键降级为 dry-run
+    - `auto_delete_meaningless_logs`：是否启用「大模型无意义日志自动删除」。
+      默认 `False`（关闭，保持既有行为：碎片仅走回收站、不做大模型筛选）。
+      开启后，批次生成计划时会额外调一次大模型对当日碎片做无意义判定，
+      被判定为无意义的日志在删除前会先写入 7 天可追溯备份归档（见
+      `app.services.meaningless_log_archive`），再走回收站删除。
     """
 
     max_days_per_run: int = 31
     token_budget: int = 200_000
     provider_id: str = ""
     dry_run_only: bool = False
+    auto_delete_meaningless_logs: bool = False
 
 
 @dataclass
@@ -186,6 +192,8 @@ def load_config() -> Config:
             token_budget=int(daily_raw.get("token_budget", 200_000)),
             provider_id=str(daily_raw.get("provider_id", "")),
             dry_run_only=bool(daily_raw.get("dry_run_only", False)),
+            auto_delete_meaningless_logs=bool(
+                daily_raw.get("auto_delete_meaningless_logs", False)),
         ),
         summarizer=SummarizerConfig(
             max_days_per_run=int(summary_raw.get("max_days_per_run", 62)),

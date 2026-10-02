@@ -52,6 +52,8 @@ class DailyStandardizerCfg(BaseModel):
     token_budget: int | None = Field(None, ge=0, description="单批 token 预算，0 = 不限")
     provider_id: str | None = Field(None, description="默认 LLM provider")
     dry_run_only: bool | None = Field(None, description="关闭执行（只出计划）开关")
+    auto_delete_meaningless_logs: bool | None = Field(
+        None, description="是否启用大模型无意义日志自动删除（删除前备份 7 天）")
 
 
 class SummarizerCfg(BaseModel):

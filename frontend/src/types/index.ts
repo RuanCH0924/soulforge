@@ -231,6 +231,8 @@ export interface ConfigSnapshot {
     token_budget: number;
     provider_id: string;
     dry_run_only: boolean;
+    /** 是否启用大模型无意义日志自动删除（删除前备份 7 天） */
+    auto_delete_meaningless_logs: boolean;
   };
   /** M16 记忆归纳护栏（配置中心下发的只读快照） */
   summarizer?: {
@@ -432,6 +434,19 @@ export interface DailySourceInfo {
   chunks: number;
 }
 
+export interface MeaninglessLogInfo {
+  path: string;
+  /** 判定维度 id：empty_content | duplicate_redundant | debug_noise | invalid_format | process_chatter */
+  dimension: string;
+  /** 维度可读名称 */
+  dimension_name: string;
+  reason: string;
+  /** 删除前备份归档的副本路径（apply 后填充，保留 7 天） */
+  backup_path?: string | null;
+  sha256?: string | null;
+  archived_at?: number | null;
+}
+
 export interface DailyRunItem {
   date: string;
   /** 归并目标：恒为 memory/YYYY-MM-DD.md */
@@ -441,6 +456,8 @@ export interface DailyRunItem {
   sources: DailySourceInfo[];
   /** 归并后拟删除的碎片（走系统回收站，可恢复） */
   fragments_to_delete: string[];
+  /** 大模型判定为「无意义」的碎片（仅 auto_delete_meaningless_logs 开启时非空；删除前已备份） */
+  meaningless_logs: MeaninglessLogInfo[];
   output_content?: string | null;
   unified_diff?: string | null;
   html_diff?: string | null;

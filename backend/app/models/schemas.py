@@ -557,6 +557,22 @@ class DailySourceInfo(BaseModel):
     chunks: int = 0
 
 
+class MeaninglessLogInfo(BaseModel):
+    """大模型判定为「无意义」的碎片日志（删除前已备份归档）。
+
+    仅在 `daily_standardizer.auto_delete_meaningless_logs=true` 时非空；
+    `backup_path` 在 apply（备份 + 删除）后才会被填充，供 7 天可追溯。
+    """
+
+    path: str
+    dimension: str = ""            # 判定维度 id（见 daily_log_filter.MEANINGLESS_DIMENSIONS）
+    dimension_name: str = ""       # 维度可读名称
+    reason: str = ""               # 大模型给出的一句话理由
+    backup_path: str | None = None  # 归档副本路径（apply 后填充）
+    sha256: str | None = None
+    archived_at: int | None = None
+
+
 class DailyRunItem(BaseModel):
     """批次的逐日条目。"""
 
@@ -565,6 +581,7 @@ class DailyRunItem(BaseModel):
     has_standard: bool = False
     sources: list[DailySourceInfo] = Field(default_factory=list)
     fragments_to_delete: list[str] = Field(default_factory=list)
+    meaningless_logs: list[MeaninglessLogInfo] = Field(default_factory=list)
     output_content: str | None = None
     unified_diff: str | None = None
     html_diff: str | None = None

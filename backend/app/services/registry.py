@@ -20,6 +20,7 @@ from app.services.file_manager import FileManager
 from app.services.import_export import ImportExportService
 from app.services.lint_service import LintService
 from app.services.llm_registry import LLMRegistry
+from app.services.meaningless_log_archive import MeaninglessLogArchive
 from app.services.preset_service import PresetService
 from app.services.search_service import SearchService
 from app.services.stats_service import StatsService
@@ -55,9 +56,11 @@ class Registry:
         self.daily_scanner = DailySourceScanner(self.file_manager)
         self.daily_merge = DailyMergeService(
             self.file_manager, self.presets, self.llm, self.lint, self.daily_scanner)
+        # 无意义日志的删除前备份归档（7 天可追溯）
+        self.meaningless_archive = MeaninglessLogArchive(config)
         self.daily_runs = DailyRunService(
             self.db, config, self.file_manager, self.presets, self.llm, self.audit,
-            self.daily_merge, self.daily_scanner)
+            self.daily_merge, self.daily_scanner, self.meaningless_archive)
         # M16 工作日志总结（记忆归纳）：一段范围 → 单份综述，只读归纳、源文件默认不动
         self.summary = SummaryService(
             self.db, config, self.file_manager, self.presets, self.llm, self.lint,
@@ -69,6 +72,7 @@ class Registry:
         removed = self.backup.cleanup_old()
         if removed:
             self.db.vacuum()
+        self.meaningless_archive.cleanup_old()   # 无意义日志归档：7 天保留
         self.presets.seed_builtins()
         self.llm.load_from_db()
         scan = self.file_manager.scan_all()
@@ -102,6 +106,7 @@ class Registry:
                 "token_budget": c.daily_standardizer.token_budget,
                 "provider_id": c.daily_standardizer.provider_id,
                 "dry_run_only": c.daily_standardizer.dry_run_only,
+                "auto_delete_meaningless_logs": c.daily_standardizer.auto_delete_meaningless_logs,
             },
             "summarizer": {
                 "max_days_per_run": c.summarizer.max_days_per_run,
@@ -147,7 +152,8 @@ class Registry:
             if "show_other" in patch["advanced"]:
                 c.advanced.show_other = patch["advanced"]["show_other"]
         if "daily_standardizer" in patch:
-            for key in ("max_days_per_run", "token_budget", "provider_id", "dry_run_only"):
+            for key in ("max_days_per_run", "token_budget", "provider_id", "dry_run_only",
+                        "auto_delete_meaningless_logs"):
                 if key in patch["daily_standardizer"]:
                     setattr(c.daily_standardizer, key, patch["daily_standardizer"][key])
         if "summarizer" in patch:

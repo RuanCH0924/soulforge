@@ -242,6 +242,9 @@ class DailyRunItemRow(Base):
     source_hashes_json: Mapped[str] = mapped_column(Text, nullable=False)  # {path: sha256}，乐观锁用
     sources_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # 各来源的体积/剥壳事实
     fragments_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # 拟删碎片路径清单
+    # 大模型判定为「无意义」的碎片（仅 auto_delete_meaningless_logs 开启时非空）：
+    # [{path, dimension, reason, backup_path?, sha256?, archived_at?}]，删除前已备份归档
+    meaningless_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     unified_diff: Mapped[str | None] = mapped_column(Text, nullable=True)
     format_report_json: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -342,7 +345,7 @@ class Database:
         """轻量迁移：为已存在的旧表补齐新增列（create_all 不会改动已存在的表）。"""
         columns = {
             "presets": [("template_md", "TEXT"), ("retired_at", "INTEGER")],
-            "daily_run_items": [("empty_reason", "TEXT")],
+            "daily_run_items": [("empty_reason", "TEXT"), ("meaningless_json", "TEXT")],
         }
         with self.engine.connect() as conn:
             for table, adds in columns.items():

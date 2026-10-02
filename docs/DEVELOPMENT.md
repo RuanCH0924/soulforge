@@ -401,8 +401,10 @@ class LLMProvider(Protocol):
 |---|---|---|
 | `DailySourceScanner` | `backend/app/services/daily_source_scanner.py` | 扫 `memory/` **顶层**、按文件名分 A/B/C 三类、按日分组、标出碎片与「单来源但质量差」 |
 | （预处理器） | `backend/app/services/daily_preprocessor.py` | 12 条**确定性**规则（零 token）= 真壳 M01~M10 + 归一 M11/M12；`SHELL_RULES` / `detect_residual_shells()`（只查真壳，归一不算残留）供验收「残留 = 0」，`describe_shells()` 渲染可读规则名 |
-| `DailyMergeService` | `backend/app/services/daily_merge_service.py` | 单日多来源 → 1 文件：组装 prompt（模板规则 + `style_rules` + 骨架 + 来源）→ LLM → `sanitize()` → `FormatValidator` 强规则校验；超限来源分块摘要，仍超限转人工复核 |
-| `DailyRunService` | `backend/app/services/daily_run_service.py` | 批次编排：创建（幂等键 / 天数与 token 上限 / 后台逐日生成）→ 确认执行（批次级写前预检 + 乐观锁 → 写入 + 备份 + 审计 → 碎片 `send2trash`）→ 验收报告（对磁盘真实文件核对 5 项） |
+| `DailyMergeService` | `backend/app/services/daily_merge_service.py` | 单日多来源 → 1 文件：组装 prompt（模板规则 + `style_rules` + 骨架 + 来源）→ LLM → `sanitize()` → `FormatValidator` 强规则校验；超限来源分块摘要，仍超限转人工复核。开关开启时额外调一次大模型做无意义日志判定（`screen_meaningless=True`） |
+| `daily_log_filter` | `backend/app/services/daily_log_filter.py` | 「无意义日志」判定维度（`MEANINGLESS_DIMENSIONS`）+ 筛选 prompt（`build_screening_prompt`）+ 从严解析（`parse_screening_result`，脏输出一律不删） |
+| `MeaninglessLogArchive` | `backend/app/services/meaningless_log_archive.py` | 无意义日志的**删除前**备份归档（`<data_dir>/meaningless-log-backups/` + `index.jsonl`），保留 7 天，启动时清理过期项；与常规 `backups/`（30 天）分离 |
+| `DailyRunService` | `backend/app/services/daily_run_service.py` | 批次编排：创建（幂等键 / 天数与 token 上限 / 后台逐日生成）→ 确认执行（批次级写前预检 + 乐观锁 → 写入 + 备份 + 审计 → 碎片 `send2trash`，无意义碎片先归档再删）→ 验收报告（对磁盘真实文件核对 5 项） |
 | API | `backend/app/api/daily.py` | `/api/daily-runs` 6 个端点（见 [API.md](./API.md) 3.15） |
 | 前端 | `frontend/src/components/DailyStandardizerPanel.tsx` | Tools 页「日志标准化」tab：参数 → 逐日确认（默认全不勾选）→ 验收报告 |
 | 对比台 | `backend/daily_form_bench.py` | P3 效率对比（三种规则投递形态 × N 次重复，只读、带 token 预算硬中止）；结论见 [M15-EFFICIENCY-REPORT.md](./M15-EFFICIENCY-REPORT.md) |
@@ -429,6 +431,17 @@ class LLMProvider(Protocol):
 2. 只有三种命名模式命中：`YYYY-MM-DD.md`（A）/ `YYYY-MM-DD-HHMM.md`（B，含 `-HHMM-2` 去重后缀）/ `YYYY-MM-DD-<topic>.md`（C）
 3. 碎片只删 B/C，A 是被改写的主体；删除走 `send2trash`，且必须先经 diff 确认
 4. **批量 apply 是"全或无"**：先对全部目标日做批次级预检，任一日不过（乐观锁冲突 / 写前验收不过）就整批不写；写入后的碎片删失败不回滚日文件（标 `partially_applied`）
+
+**大模型无意义日志自动删除（可配置开关）**：
+
+- 开关：`config.toml` 的 `[daily_standardizer].auto_delete_meaningless_logs`（默认 `false`）。
+  **关闭时零额外调用、零归档**，行为与既有流程逐字一致；仅开启时才在计划阶段触发大模型筛选。
+- 判定维度（`daily_log_filter.MEANINGLESS_DIMENSIONS`）：`empty_content` 空日志内容 /
+  `duplicate_redundant` 重复冗余日志 / `debug_noise` 无业务价值的调试信息 /
+  `invalid_format` 无效格式日志 / `process_chatter` 纯过程叙述。
+- 保守性：判定与解析都「宁可漏删不可误删」；解析失败一律不删除任何日志。
+- 删除前备份：命中的碎片在 `send2trash` **之前**先写入 7 天归档（`MeaninglessLogArchive`）；
+  归档失败则跳过删除（宁可留文件，不可无备份地删）。
 
 **两个实测踩坑（已修，勿回归）**：
 

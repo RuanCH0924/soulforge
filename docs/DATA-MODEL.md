@@ -612,7 +612,23 @@ max_days_per_run = 31                 # 单批天数上限，超过则创建批�
 token_budget = 200000                 # 单批 token 预算，越限即中止（0 = 不限）
 provider_id = ""                      # 默认 provider（UI 可覆盖）
 dry_run_only = false                  # true = 全局「只出计划」：apply 直接 403
+auto_delete_meaningless_logs = false  # true = 启用大模型无意义日志自动删除（删除前备份 7 天）
 ```
+
+### 7.1 无意义日志归档（文件存储，不进 DB）
+
+启用 `daily_standardizer.auto_delete_meaningless_logs` 后，被大模型判定为「无意义」并删除的
+碎片日志，会在删除**之前**留存一份副本，7 天可追溯（文件存储，不写 SQLite）：
+
+```
+<data_dir>/meaningless-log-backups/
+├── index.jsonl                                         # 每次归档追加一行（agent / path / 维度 / 理由 / sha256 / 时间）
+└── <agent_id>/<sanitized_path>/<name>.<Ymd-HMS>.bak     # 原始日志内容副本
+```
+
+- 归档保留 7 天（`meaningless_log_archive.MEANINGLESS_LOG_RETENTION_DAYS`），启动时清理过期项；
+  与常规写前备份（`backups/`，默认 30 天）**分离**，互不影响保留策略。
+- 判定维度与删除流程见 [MEMORY-DAILY-STANDARDIZER-PLAN.md](MEMORY-DAILY-STANDARDIZER-PLAN.md) §6.4。
 
 **为什么用 TOML**：比 JSON 适合人改，比 YAML 不缩进敏感，比 INI 表达力强。
 
