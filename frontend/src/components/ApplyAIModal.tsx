@@ -3,7 +3,10 @@ import { api } from '../api';
 import { useToast } from '../hooks/useToast';
 import type { AIJob, LLMProvider, PresetSummary } from '../types';
 import { renderMarkdown } from '../utils/markdown';
+import { applyHunks, canRebuild, parseUnifiedDiff } from '../utils/unifiedDiff';
+import type { DiffHunk } from '../utils/unifiedDiff';
 import { ConfirmDialog } from './ConfirmDialog';
+import { DiffHunkPicker } from './DiffHunkPicker';
 import { Modal } from './Modal';
 
 interface ApplyAIModalProps {
@@ -30,6 +33,14 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
   const [acting, setActing] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [regenerateExtra, setRegenerateExtra] = useState('');
+  // 「按块接受」：从 unified_diff 解析出的 hunk 与逐块勾选状态（默认全接受）
+  const [hunks, setHunks] = useState<DiffHunk[]>([]);
+  const [accepted, setAccepted] = useState<boolean[]>([]);
+  const allAccepted = hunks.length === 0 || accepted.every(Boolean);
+  // 解析可靠（全部接受能精确重建 AI 输出）时才允许「按块接受」，否则退回整段 diff + 整体应用
+  const hunksReliable =
+    job?.status === 'awaiting_confirm' &&
+    canRebuild(job.input_snapshot ?? '', hunks, job.output_content ?? '');
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -78,6 +89,16 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
     };
   }, []);
 
+  // 「按块接受」：任务进入待确认态后把差异解析为 hunk（默认全接受）。
+  // 只在任务切换 / 状态变化时重解析，避免重置用户的勾选。
+  useEffect(() => {
+    const diff = job?.status === 'awaiting_confirm' ? job.diff_plan_json?.unified_diff ?? '' : '';
+    const parsed = parseUnifiedDiff(diff);
+    setHunks(parsed.hunks);
+    setAccepted(parsed.hunks.map(() => true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job?.id, job?.status]);
+
   const generate = async () => {
     if (!presetId || !providerId) {
       toast('请先选择预设和 Provider', 'warning');
@@ -106,8 +127,15 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
     if (!job) return;
     setActing(true);
     try {
-      await api.applyAIJob(job.id);
-      toast(`已应用 AI 整理结果（已自动备份原文件）`, 'success');
+      if (allAccepted) {
+        await api.applyAIJob(job.id);
+        toast('已应用 AI 整理结果（已自动备份原文件）', 'success');
+      } else {
+        // 按块接受：按选中 hunk 重建内容后交后端；后端仍跑同一套格式 + lint 闸门
+        const content = applyHunks(job.input_snapshot ?? '', hunks, accepted);
+        await api.applyAIJob(job.id, content);
+        toast(`已写入选中的 ${accepted.filter(Boolean).length} 块改动（已自动备份原文件）`, 'success');
+      }
       setConfirming(false);
       onDone();
       onClose();
@@ -202,9 +230,9 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
               {presets.map((p) => (
                 <label key={p.id} className="checkbox-row">
                   <input type="radio" name="ai-preset" checked={presetId === p.id} onChange={() => setPresetId(p.id)} />
-                  <span style={{ minWidth: 0 }}>
+                  <span className="min-w-0">
                     {p.name}
-                    <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+                    <span className="muted text-xs ml-6">
                       {p.target_file_type}
                     </span>
                   </span>
@@ -223,9 +251,9 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
               {providers.map((p) => (
                 <label key={p.id} className="checkbox-row">
                   <input type="radio" name="ai-provider" checked={providerId === p.id} onChange={() => setProviderId(p.id)} />
-                  <span style={{ minWidth: 0 }}>
+                  <span className="min-w-0">
                     {p.id}
-                    <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+                    <span className="muted text-xs ml-6">
                       {p.model}
                     </span>
                   </span>
@@ -234,7 +262,7 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
             </div>
           )}
 
-          <div className="field" style={{ marginTop: 12 }}>
+          <div className="field mt-12">
             <label>附加指令（可选）</label>
             <input
               className="input"
@@ -262,7 +290,7 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
             )}
           </div>
           {job.diff_plan_json && !job.diff_plan_json.format_report.ok && (
-            <div className="alert-banner danger" style={{ marginTop: 8 }}>
+            <div className="alert-banner danger mt-8">
               <b>模板格式校验未通过</b>（以下违规项机械修正后仍存在，需修改模板或重新生成）：
               <ul style={{ margin: '6px 0 0 18px', fontSize: 12 }}>
                 {job.diff_plan_json.format_report.violations.slice(0, 8).map((v, i) => (
@@ -275,17 +303,35 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
             </div>
           )}
           <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
-            <span className="muted" style={{ fontSize: 12 }}>
-              {showDiff ? '查看原始差异：' : '预览 AI 整理后的文档：'}
+            <span className="muted text-sm">
+              {showDiff ? '逐块确认差异（可分别接受 / 拒绝）：' : '预览 AI 整理后的文档：'}
             </span>
             <button className="btn btn-ghost btn-sm" onClick={() => setShowDiff((v) => !v)}>
               {showDiff ? '查看预览' : '查看差异'}
             </button>
           </div>
           {showDiff ? (
-            <pre className="diff-view" style={{ maxHeight: '50vh' }}>
-              {job.diff_plan_json?.unified_diff || '（AI 输出与原内容一致）'}
-            </pre>
+            hunksReliable ? (
+              <>
+                {!allAccepted && (
+                  <div className="alert-banner warning">
+                    已拒绝 {hunks.length - accepted.filter(Boolean).length} 块：只应用选中的改动。
+                    后端仍会按同一套模板格式 + lint 闸门校验，不通过则拒绝写入。
+                  </div>
+                )}
+                <DiffHunkPicker
+                  hunks={hunks}
+                  accepted={accepted}
+                  onChange={setAccepted}
+                  emptyText="（AI 输出与原内容一致）"
+                  maxHeight="50vh"
+                />
+              </>
+            ) : (
+              <pre className="diff-view" style={{ maxHeight: '50vh' }}>
+                {job.diff_plan_json?.unified_diff || '（AI 输出与原内容一致）'}
+              </pre>
+            )
           ) : (
             <div
               className="md-preview md-preview-flow"
@@ -313,7 +359,7 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
         <div className="state-block">
           <div className="alert-banner danger">AI 整理失败：{job.error ?? '未知错误'}</div>
           {job.diff_plan_json && !job.diff_plan_json.format_report.ok && (
-            <div className="alert-banner danger" style={{ marginTop: 8 }}>
+            <div className="alert-banner danger mt-8">
               <b>模板格式校验未通过：</b>
               <ul style={{ margin: '6px 0 0 18px', fontSize: 12 }}>
                 {job.diff_plan_json.format_report.violations.slice(0, 8).map((v, i) => (
@@ -358,7 +404,15 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
               <p>
                 将把 AI 整理结果写入 <b className="mono">{job.file_path}</b>（Agent: {job.agent_id}）。
               </p>
-              <p className="hint">写入前自动备份当前版本；AI 输出需通过 lint 检查。</p>
+              {allAccepted ? (
+                <p className="hint">写入前自动备份当前版本；AI 输出需通过模板格式与 lint 检查。</p>
+              ) : (
+                <p className="hint">
+                  本次<strong>只应用选中的 {accepted.filter(Boolean).length} 块改动</strong>
+                  （其余 {hunks.length - accepted.filter(Boolean).length} 块保留原样）；
+                  后端仍会按同一套模板格式 + lint 闸门校验，不通过则拒绝写入。写入前自动备份。
+                </p>
+              )}
             </>
           }
         />

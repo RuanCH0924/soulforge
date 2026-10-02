@@ -31,6 +31,9 @@
 | v1.15 | 2026-10-02 | **预设模板不再暴露 YAML**：模板拆成「预设参考文档（Markdown）+ 结构化格式规则」，普通用户全程不接触 YAML。新增共享组件 `PresetTemplateEditor`（参考文档：Markdown + 预览；修改要求：逐条文本；高级折叠：章节层级 / frontmatter），文档预设页与日志标准化 / 日志总结页内编辑器共用 |
 | v1.16 | 2026-10-02 | **删除「章节」配置 + 两项改名 + prompt 收敛**：① 彻底移除「章节（n）· 顺序即产出文档的章节顺序」——不再有章节清单面板 / 可选勾选 / 排序 / 增删 / 「章节顺序」复选框，`section_order` / `optional_sections` / 必填章节校验一并下线，「应用预设」的章节补齐仅由参考文档标题派生；② 「章节骨架（Markdown；含示例与表格）」统一改名为「**预设参考文档**」；③ 「风格与内容规则」统一改名为「**修改要求**」；④ 大模型处理所有文档修改类任务时**仅以「预设参考文档」与「修改要求」两项配置为核心参照依据**。一致性核对表同步更新 2 行 |
 | v1.17 | 2026-10-02 | **预设编辑器精简**：移除「展开高级格式规则」（章节标题层级 / frontmatter 开关）；「设为预设」弹窗去掉「可选章节 / 顺序」口径；两个页内编辑器（日志标准化 / 日志总结）去掉「来源 / 当前 v N / 适用类型」与「共 N 条」等说明文字，说明横幅统一为「标题 + 要点」块级排版。删除过时文档 `UI-REDESIGN-PLAN.md` / `UI-OPTIMIZATION-PLAN.md` |
+| v1.18 | 2026-10-02 | **可访问性与交互一致性（P0/P1）**：① 模态统一走 `Modal` 的 dialog 语义 + 焦点陷阱 + 打开聚焦 / 关闭归还焦点，Esc 只关最上层（修复「弹窗内再开确认框会被一起关掉」）；② Toast 增加 `role="status"/"alert"`、手动关闭、悬停/聚焦暂停、错误停留更久；③ 命令面板补齐 combobox / listbox / option 与 `aria-activedescendant`；④ 新增 `:focus-visible` 焦点环与 `prefers-reduced-motion`；⑤ 工作台原生 `window.confirm` 全部替换为 `ConfirmDialog`（`App.tsx` 的 `confirmAction()`）；⑥ 侧边导航图标由字符字形（`⌂ ⇄ ◇ ⚙`）改为内联 SVG（`SideNav.tsx` 的 `NavIcon`），并补 `aria-current="page"` 标记当前页；⑦ 保存冲突（409）由死胡同 toast 改为「重新加载 / 覆盖保存 / 取消」恢复对话框（`ConfirmDialog` 新增可选第三按钮 `secondaryText` / `onSecondary`）；⑧ 内联样式收敛：高频纯排版的字号 / 间距改为绑定 token 的排版工具类（`.text-xs` / `.text-sm` / `.ml-*` / `.mt-*` / `.mb-8` / `.min-w-0`），共迁移 85 处、内联 `style` 由 254 降至 169；⑨ 全量 lint 扫描改为前端编排的「单飞共享扫描」（逐 Agent 串行调用 `GET /api/lint/{agent_id}`，与 `/api/lint/all` 同口径），状态栏 / 检查报告 / 统计面板共用同一轮扫描，新增「已完成 N / 共 M」进度与取消（取消后标注结果不完整）。一致性核对表新增 7 行、修订 1 行 |
+| v1.19 | 2026-10-02 | **断连恢复（P2）**：后端连通性改为「由每次请求上报」的单一信号（`api/connection.ts`：拿到 HTTP 响应即在线，`fetch` 抛错即离线），不再只在启动时探测一次；断连时顶部出现横幅、状态栏连接点变灰并提供「重连」，每 5s 自动探测 `/api/health`，恢复后自动重载 Agent 列表 / 统计 / lint 并保留当前选中的 Agent；断连期间进行中的 lint 扫描立即中止并标记失败，不把残缺结果当成功 |
+| v1.20 | 2026-10-02 | **P2 收尾三项**：① **快捷键帮助浮层**——按 `?`（输入框 / 编辑器聚焦时不触发）或经命令面板「键盘快捷键」打开，列出完整快捷键表（与 §七 一致），命令面板索引动作数 15 → 16；② **编辑器分包预取**——首屏渲染后在空闲时预取 Monaco 分包（`requestIdleCallback`，超时 4s；不支持则 2s 延时），缩短首次打开文档的等待；③ **差异「按块接受」**——应用预设 / AI 整理 的差异预览改为逐 hunk 勾选（默认全接受，可全选 / 全不选），只有「全部接受能精确重建目标内容」时才启用（`canRebuild`，否则退回整段 diff + 整体应用）；AI 路径的部分内容仍走同一套模板格式 + lint 闸门（`POST /api/ai/jobs/{id}/apply` 新增可选 `content`），预设路径经乐观锁写入。一致性核对表新增 3 行、修订 1 行 |
 
 ---
 
@@ -390,6 +393,7 @@
 | `F8` / `Shift + F8` | 跳到下一条 / 上一条 lint 警告 | 编辑器 |
 | `↑ / ↓`（文件树聚焦时） | 上下移动并打开文件；`Esc` 清空过滤 | 工作台 |
 | `Cmd/Ctrl + Shift + E` | 前往业务工具 → 跨 Agent 编辑 | 全局 |
+| `?` | 打开 / 关闭「键盘快捷键」帮助浮层（输入框 / 编辑器聚焦时不触发） | 全局 |
 | `Esc` | 关闭弹窗 / 命令面板 / 下拉菜单 | 全局 |
 
 > **快捷键冲突说明**
@@ -399,6 +403,7 @@
 
 - **字体**：`Inter`（主）+ `JetBrains Mono`（代码/路径）
 - **字号**：正文 14px（`--font-size-md`）/ 次要 12px（`--font-size-sm`）/ 区块标题 15px（`--font-size-lg`）/ 页面主标题 20px（`--font-size-xl`）
+- **排版工具类（内联样式收敛）**：高频、纯排版的字号与间距不再写成内联 `style` 魔法数，统一走工具类——`.text-xs`（11px）/ `.text-sm`（12px）/ `.ml-6` `.ml-8` `.ml-auto` / `.mt-6` `.mt-8` `.mt-12` / `.mb-8` / `.min-w-0`，值均绑定设计 token（定义见 `styles/global.css`「排版工具类」段）。含 `color`、`lineHeight`、`fontFamily` 或布局属性（`flex` / `display` / `gap` / 简写 `margin`）的复合样式仍保留内联或语义类，不做机械拆分。
 
 ---
 
@@ -416,7 +421,7 @@
 
 - **按钮文案**：用动词 + 名词（"保存"/"删除备份"/"跨 Agent 同步"）
 - **按钮文案长度上限**：**最多 4 个汉字**（英文/数字不计入，如「AI 整理」「管理模型」）；更长的说明一律放 `title` 悬浮提示，不堆在按钮上
-- **不用 emoji 按钮文案**（按钮上不用 emoji；导航/文件图标使用字符符号，如 `⌂ ⇄ ◇ ⚙`）
+- **不用 emoji 按钮文案**（按钮上不用 emoji；导航图标使用内联 SVG —— `SideNav.tsx` 的 `NavIcon`，`stroke="currentColor"` 继承文字色、`aria-hidden` 不干扰读屏；不用字符符号 `⌂ ⇄ ◇ ⚙`，避免各平台字体字形不一）
 - **错误信息**：说人话 + 给解决方案（"保存失败：权限不足 → 请检查 workspace 路径权限"）
 - **不堆技术 jargon**（不写 "500 Internal Server Error"，写 "保存失败：服务器内部错误"）
 - **同一指标只能有一个数据源与一个口径**：实时指标（如 lint 计数）不得从索引列推测，也不得在两个界面各算一次——必须取同一接口、按同一口径计数；数据未取到时显示「检查中…」，**不得用 0 冒充「无问题」**（否则等于谎报安全）
@@ -443,10 +448,13 @@
 | 中栏宽度 | 默认 280px，范围 200–400px | `App.tsx` `MID_WIDTH_RANGE` / `LAYOUT_DEFAULT` |
 | 折叠恢复条宽度 | 32px | `styles/global.css` `.pane-collapsed-bar` |
 | 编辑窗口上限 | 3 | `App.tsx` `MAX_WINDOWS` |
-| 命令面板索引动作数 | 15（4 导航 + 11 功能） | `App.tsx` `paletteItems` |
+| 命令面板索引动作数 | 16（4 导航 + 12 功能） | `App.tsx` `paletteItems` |
 | 命令面板最近使用上限 | 8 | `App.tsx` `MAX_RECENT_COMMANDS` |
 | 命令面板空查询每组上限 | 6 | `components/CommandPalette.tsx` `MAX_PER_GROUP` |
 | 命令面板文件检索防抖 | 220ms | `components/CommandPalette.tsx` |
+| 快捷键帮助浮层 | `?`（输入框 / 编辑器聚焦时不触发）或命令面板「键盘快捷键」打开；内容与 §七 快捷键表一致 | `components/ShortcutsModal.tsx` + `App.tsx`（`isTypingTarget` 守卫 / palette 项） |
+| 编辑器分包预取 | 首屏后空闲预取 Monaco 分包：`requestIdleCallback`（超时 4s），不支持则 2s 延时；失败静默 | `main.tsx` `prefetchEditor` |
+| 差异「按块接受」 | 仅当 `canRebuild(base, hunks, target)` 为真才启用（否则退回整段 diff + 整体应用）；默认全接受；AI 部分内容仍过格式 + lint 闸门，预设部分内容经乐观锁写入 | `utils/unifiedDiff.ts`、`components/DiffHunkPicker.tsx`、`ApplyPresetModal.tsx` / `ApplyAIModal.tsx`、`backend/app/services/ai_job_service.py` `apply(content=...)` |
 | CORE 下拉滚动容器高度 | `min(320px, 50vh)` | `styles/global.css` `.core-agent-list .dropdown-menu` |
 | 对比默认归一化口径 | `ignore_whitespace` | `backend/app/services/diff_service.py` `MODE_IGNORE_WHITESPACE` |
 | 对比噪声类型集合 | 8 种（bom / line_ending / invisible_char / space_like_char / trailing_whitespace / multiple_spaces / blank_lines / edge_blank_lines） | `diff_service.py` `_NOISE_STAGES` |
@@ -456,7 +464,8 @@
 | 编辑器默认视图模式 | `edit`（源码编辑） | `components/EditorPane.tsx` `loadViewMode` |
 | 文档 token 提示阈值 | 2000 | `EditorPane.tsx` `TOKEN_WARN_THRESHOLD` |
 | 编辑器工具栏折行阈值 | 780px（低于则隐藏 `Ctrl+B / Ctrl+I / Ctrl+S` 提示；按窗口宽度而非视口宽度判定） | `styles/global.css` `.editor-toolbar` 的 `@container` 块 + `.kbd-hint` |
-| lint 计数数据源 | `GET /api/lint/all`（唯一来源；按报告中列出的条数计，含 error 级） | `App.tsx`（状态栏 + Agent 角标）、`components/StatsModal.tsx`（统计面板卡片）、`components/GlobalLintModal.tsx`（检查报告） |
+| lint 计数数据源 | 逐 Agent `GET /api/lint/{agent_id}` 串行汇总（等价于 `GET /api/lint/all` 的循环，口径相同；按报告中列出的条数计，含 error 级） | `hooks/useLintScan.tsx`（唯一扫描入口）；`App.tsx`（状态栏 + Agent 角标）、`components/StatsModal.tsx`、`components/GlobalLintModal.tsx` 均取自同一 provider |
+| 全量 lint 扫描的进度 / 取消 | 单飞共享扫描；进度显示「已完成 N / 共 M 个 Agent」；可取消（当前 Agent 完成后停止），取消后结果须标注「不完整」，不得谎报「无警告」 | `hooks/useLintScan.tsx`、`components/StatusBar.tsx` `.statusbar-inline` / `.statusbar-action` |
 | `/api/stats` 是否含 lint 计数 | 否（索引列 `files.lint_warnings` 恒为 0，不得暴露） | `backend/app/models/schemas.py` `StatsResult` + `tests/test_misc_api.py` |
 | 统计面板 / 命令面板命名 | 「统计面板」 | `components/StatsModal.tsx` `title` / `App.tsx` `paletteItems` / `pages/DataPage.tsx` tab |
 | 大纲面板宽度 | 260px | `styles/global.css` `.outline-panel` |
@@ -478,6 +487,14 @@
 | 日志标准化界面的预设来源展示 | 徽章「大模型专用」+ 版本 + 来源（后端 `is_builtin`）+「查看 / 编辑」 | `components/DailyStandardizerPanel.tsx` `.daily-preset-info`；`preset_service.py` `BUILTIN_PRESET_IDS` |
 | 预设模板编辑口径 | 预设参考文档（Markdown + 预览）+ 修改要求（逐条文本），共用 `PresetTemplateEditor`；不出现 YAML、章节清单 / 排序 / 可选勾选，也不出现「高级格式规则」（章节层级 / frontmatter 开关） | `components/PresetTemplateEditor.tsx`、`PresetModal.tsx`、`DailyPresetEditor.tsx` |
 | 页内编辑器可改字段数 | 3 组（用途说明 / 预设参考文档 / 修改要求） | `components/DailyPresetEditor.tsx` |
+| 弹窗键盘可达性 | 所有模态走 `Modal`：`role="dialog"` + `aria-modal` + 焦点陷阱 + 打开聚焦 / 关闭归还焦点 + Esc 仅关最上层 | `components/Modal.tsx`（`ConfirmDialog.tsx` 复用） |
+| 工作台二次确认 | 统一 `ConfirmDialog`，不出现原生 `window.confirm` | `App.tsx` 的 `confirmAction()` / `components/ConfirmDialog.tsx` |
+| 通知可访问性 | Toast 用 `role="status"`（普通）/ `role="alert"`（错误），可手动关闭、悬停/聚焦暂停 | `hooks/useToast.tsx` |
+| 键盘焦点可见 / 减少动效 | `:focus-visible` 焦点环 + `prefers-reduced-motion` | `styles/global.css` |
+| 保存冲突（409）恢复路径 | 弹「重新加载 / 覆盖保存 / 取消」三选一，不得只弹死胡同 toast（`覆盖保存` 走强制写入，旧版自动备份；`重新加载` 丢弃本地改动） | `App.tsx` 的 `conflictAction()` / `components/ConfirmDialog.tsx`（`secondaryText` / `onSecondary`） |
+| 排版工具类 | `.text-xs` / `.text-sm` 绑定 `--font-size-xs/sm`；`.ml-6` `.ml-8` `.ml-auto` / `.mt-6` `.mt-8` `.mt-12` / `.mb-8` / `.min-w-0`；高频纯排版样式不得写内联魔法数 | `styles/global.css`「排版工具类」段 |
 | 状态栏版本号来源 | `GET /api/health` 的 `data.version` | `App.tsx` 初始加载 effect；`components/StatusBar.tsx` `.statusbar-version` |
+| 后端连通性判定 | 任意请求拿到 HTTP 响应（含 4xx / 5xx）= 在线；`fetch` 抛错 = 离线。唯一信号源，UI 不得自行另判 | `api/connection.ts` + `api/client.ts`（`reportOnline` / `reportOffline`）；`hooks/useBackendOnline.ts` 订阅 |
+| 断连恢复 | 断连时顶部横幅 + 状态栏「重连」；每 5s 自动探测 `/api/health`，恢复后自动重载（Agent 列表 / 统计 / lint）且**保留当前选中的 Agent**；断连期间的 lint 扫描立即中止并标失败 | `App.tsx`（`reconnect` / 重连探测 effect）、`hooks/useLintScan.tsx`、`styles/global.css` `.offline-banner` |
 | 运行时依赖数 | 7（零新增） | `package.json` `dependencies` |
 | localStorage 键全集 | `soulforge.settings`、`soulforge.editor.mode`、`soulforge.editor.view`、`soulforge.browse.mode`、`soulforge.intro-v3`、`soulforge.layout`、`soulforge.session`、`soulforge.drafts`、`soulforge.recent.files`、`soulforge.palette.recent`、`soulforge.filetree.collapsed`、`soulforge.filetree.warnOnly` | 各实现处 |

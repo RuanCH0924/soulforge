@@ -243,8 +243,11 @@ export const api = {
         Object.fromEntries(Object.entries(params ?? {}).map(([k, v]) => [k, String(v)])) as Record<string, string>,
       )}`,
     ),
-  applyAIJob: (jobId: string) =>
-    request<AIJobApplyResult>('POST', `/api/ai/jobs/${encodeURIComponent(jobId)}/apply`),
+  applyAIJob: (jobId: string, content?: string) =>
+    request<AIJobApplyResult>('POST', `/api/ai/jobs/${encodeURIComponent(jobId)}/apply`, {
+      // content 为空 = 应用 AI 完整输出；非空 = 「按块接受」的重建内容（后端仍走同一套闸门）
+      json: { content: content ?? null },
+    }),
   rejectAIJob: (jobId: string) =>
     request<AIJob>('POST', `/api/ai/jobs/${encodeURIComponent(jobId)}/reject`),
   regenerateAIJob: (jobId: string, extraInstructions: string) =>

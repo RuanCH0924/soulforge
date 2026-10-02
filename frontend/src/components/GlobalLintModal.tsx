@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
-import { useToast } from '../hooks/useToast';
+import { useLintScan } from '../hooks/useLintScan';
 import { Modal } from './Modal';
 import type { LintRuleInfo, LintWarning } from '../types';
 
@@ -12,33 +12,20 @@ interface GlobalLintModalProps {
 }
 
 export function GlobalLintModal({ onClose, onOpenResult, embedded }: GlobalLintModalProps) {
-  const { push: toast } = useToast();
-  const [warnings, setWarnings] = useState<LintWarning[]>([]);
-  const [checkedFiles, setCheckedFiles] = useState(0);
-  const [loading, setLoading] = useState(true);
+  // 全量扫描由共享的 LintScanProvider 持有：本弹窗只触发 / 展示进度 / 取消，不自己发全量请求
+  const lint = useLintScan();
+  const { start: startLintScan, cancel: cancelLintScan } = lint;
   const [rules, setRules] = useState<LintRuleInfo[]>([]);
   // null = 未手动干预：无警告时自动展开（「什么都没查到」时最需要知道查了什么）
   const [rulesOpen, setRulesOpen] = useState<boolean | null>(null);
-  const showRules = rulesOpen ?? (warnings.length === 0);
 
-  async function load() {
-    setLoading(true);
-    try {
-      const res = await api.lintAll();
-      const flat: LintWarning[] = [];
-      let files = 0;
-      res.results.forEach((r) => {
-        files += r.stats.files_checked;
-        r.warnings.forEach((w) => flat.push(w));
-      });
-      setWarnings(flat);
-      setCheckedFiles(files);
-    } catch (e) {
-      toast(`健康检查失败：${(e as Error).message}`, 'error');
-    } finally {
-      setLoading(false);
-    }
-  }
+  const warnings: LintWarning[] = useMemo(
+    () => lint.results.flatMap((r) => r.warnings),
+    [lint.results],
+  );
+  const checkedFiles = lint.checkedFiles;
+  const running = lint.status === 'running' || lint.status === 'idle';
+  const showRules = rulesOpen ?? (warnings.length === 0);
 
   /** 规则文案由后端下发，前端不写死 */
   async function loadRules() {
@@ -51,10 +38,10 @@ export function GlobalLintModal({ onClose, onOpenResult, embedded }: GlobalLintM
   }
 
   useEffect(() => {
-    load();
+    // 单飞：若已有一轮扫描在跑，直接复用其进度（不会重复全量扫描）
+    void startLintScan();
     void loadRules();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [startLintScan]);
 
   return (
     <Modal
@@ -64,10 +51,15 @@ export function GlobalLintModal({ onClose, onOpenResult, embedded }: GlobalLintM
       embedded={embedded}
       headerless={embedded}
       footer={
-        <button className="btn" onClick={load} disabled={loading}>
-          {loading && <span className="spinner" />}
-          重新检查
-        </button>
+        running ? (
+          <button className="btn" onClick={cancelLintScan} disabled={lint.status !== 'running'}>
+            取消检查
+          </button>
+        ) : (
+          <button className="btn" onClick={() => void startLintScan()}>
+            重新检查
+          </button>
+        )
       }
     >
       {rules.length > 0 && (
@@ -100,7 +92,7 @@ export function GlobalLintModal({ onClose, onOpenResult, embedded }: GlobalLintM
                     <tr key={r.rule_id}>
                       <td>
                         <div>{r.rule_name}</div>
-                        <div className="mono muted" style={{ fontSize: 11 }}>{r.rule_id}</div>
+                        <div className="mono muted text-xs">{r.rule_id}</div>
                       </td>
                       <td style={{ color: r.severity === 'error' ? 'var(--danger)' : 'var(--warning)' }}>
                         {r.severity === 'error' ? '错误' : '警告'}
@@ -111,7 +103,7 @@ export function GlobalLintModal({ onClose, onOpenResult, embedded }: GlobalLintM
                   ))}
                 </tbody>
               </table>
-              <div className="hint" style={{ marginTop: 8 }}>
+              <div className="hint mt-8">
                 默认只警告、不改动文件；打开「严格模式」（系统配置 → 常规设置）后违规会阻止保存。
               </div>
             </div>
@@ -119,18 +111,35 @@ export function GlobalLintModal({ onClose, onOpenResult, embedded }: GlobalLintM
         </div>
       )}
 
-      {loading ? (
+      {running ? (
         <div className="state-block">
           <div className="spinner-lg" />
-          <div>正在检查所有 Agent（遍历 {warnings.length ? '...' : ''}）...</div>
+          <div>
+            正在检查所有 Agent{lint.total > 0 ? `（${lint.done}/${lint.total}）` : ''}
+            {lint.currentAgent ? `，当前：${lint.currentAgent}` : ''}…
+          </div>
+          {lint.status === 'running' && (
+            <button className="btn btn-sm mt-8" onClick={cancelLintScan}>
+              取消
+            </button>
+          )}
+        </div>
+      ) : lint.status === 'error' ? (
+        <div className="state-block">
+          <div className="lint-empty">健康检查失败：{lint.error ?? '未知错误'}</div>
         </div>
       ) : warnings.length === 0 ? (
         <div className="state-block">
-          <div className="lint-empty">✓ 检查了 {checkedFiles} 个文件，没有发现 lint 警告</div>
+          {lint.status === 'cancelled' ? (
+            <div className="lint-empty">检查已取消，已完成 {lint.done}/{lint.total} 个 Agent</div>
+          ) : (
+            <div className="lint-empty">✓ 检查了 {checkedFiles} 个文件，没有发现 lint 警告</div>
+          )}
         </div>
       ) : (
         <>
           <div className="alert-banner warning">
+            {lint.status === 'cancelled' ? '检查已取消（结果不完整）。' : ''}
             共发现 {warnings.length} 条 lint 警告（检查 {checkedFiles} 个文件）。点击警告可跳转到对应文件。
           </div>
           <div className="item-list">

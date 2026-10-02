@@ -391,3 +391,38 @@ def test_style_rules_injected_into_prompt(client, monkeypatch):
     assert "【预设参考文档】" in user_prompt
     assert "## 核心行为准则" in user_prompt
     assert "「预设参考文档」与「修改要求」两项配置" in user_prompt
+
+
+# ---------- 按块接受（部分应用） ----------
+
+def test_apply_partial_content_written(client, monkeypatch):
+    """带 content 应用：写入选中的重建内容（而非 AI 完整输出）。"""
+    _setup(client)
+    monkeypatch.setattr("app.services.llm_registry.LLMClient.chat", _fake_chat_good)
+    job_id = _create_job(client)
+    _wait_job(client, job_id)
+
+    partial = GOOD_OUTPUT.replace("简洁、目标导向。", "简洁、目标导向（按块接受）。")
+    res = client.post(f"/api/ai/jobs/{job_id}/apply", json={"content": partial})
+    assert res.status_code == 200
+    assert res.json()["data"]["status"] == "applied"
+
+    content = client.get("/api/agents/alpha/files/SOUL.md").json()["data"]["content"]
+    assert "（按块接受）" in content
+
+
+def test_apply_partial_content_format_blocked(client, monkeypatch):
+    """带 content 应用时仍走格式闸门：不合规则拒绝写入并标记 failed。"""
+    _setup(client)
+    monkeypatch.setattr("app.services.llm_registry.LLMClient.chat", _fake_chat_good)
+    job_id = _create_job(client)
+    _wait_job(client, job_id)
+
+    before = client.get("/api/agents/alpha/files/SOUL.md").json()["data"]["content"]
+    res = client.post(f"/api/ai/jobs/{job_id}/apply", json={"content": FORMAT_BAD_OUTPUT})
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "FORMAT_VIOLATION"
+    assert client.get(f"/api/ai/jobs/{job_id}").json()["data"]["status"] == "failed"
+    # 文件未被写入
+    after = client.get("/api/agents/alpha/files/SOUL.md").json()["data"]["content"]
+    assert after == before

@@ -415,16 +415,15 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
               <span className="daily-only-badge">大模型专用</span>
               <span className="daily-preset-info-name">
                 {currentPreset.name}
-                <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+                <span className="muted text-xs ml-6">
                   v{currentPreset.version}
                 </span>
               </span>
-              <span className="muted" style={{ fontSize: 12 }}>
+              <span className="muted text-sm">
                 来源：{currentPreset.is_builtin ? '内置预设（随版本分发）' : '用户自建'}
               </span>
               <button
-                className="btn btn-sm"
-                style={{ marginLeft: 'auto' }}
+                className="btn btn-sm ml-auto"
                 onClick={() => setEditPresetId(currentPreset.id)}
               >
                 查看 / 编辑
@@ -456,10 +455,10 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
                   checked={presetId === p.id}
                   onChange={() => setPresetId(p.id)}
                 />
-                <span style={{ minWidth: 0 }}>
+                <span className="min-w-0">
                   <span className="daily-preset-name">
                     {p.name}
-                    <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+                    <span className="muted text-xs ml-6">
                       v{p.version}
                     </span>
                   </span>
@@ -488,9 +487,9 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
                   checked={providerId === p.id}
                   onChange={() => setProviderId(p.id)}
                 />
-                <span style={{ minWidth: 0 }}>
+                <span className="min-w-0">
                   {p.id}
-                  <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+                  <span className="muted text-xs ml-6">
                     {p.model}
                   </span>
                 </span>
@@ -499,7 +498,7 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
           </div>
         )}
 
-        <div className="field" style={{ marginTop: 12 }}>
+        <div className="field mt-12">
           <label>附加指令（可选）</label>
           <input
             className="input"
@@ -533,7 +532,7 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
                 <tbody>
                   {history.map((r) => (
                     <tr key={r.id} className="daily-history-row" onClick={() => void openRun(r.id)}>
-                      <td className="mono" style={{ fontSize: 12 }}>
+                      <td className="mono text-sm">
                         {r.date_from} ~ {r.date_to}
                       </td>
                       <td>
@@ -541,7 +540,7 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
                       </td>
                       <td>{r.days_total}</td>
                       <td>{r.tokens_used}</td>
-                      <td className="muted" style={{ fontSize: 12 }}>
+                      <td className="muted text-sm">
                         {new Date(r.created_at * 1000).toLocaleString('zh-CN', { hour12: false })}
                       </td>
                     </tr>
@@ -617,7 +616,7 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
                 <tbody>
                   {report.items.map((it) => (
                     <tr key={it.date}>
-                      <td className="mono" style={{ fontSize: 12 }}>
+                      <td className="mono text-sm">
                         {it.date}
                       </td>
                       <td>
@@ -633,7 +632,7 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
                       <td>
                         {it.delivered || it.empty ? <Check ok={it.fragments_gone} /> : '—'}
                       </td>
-                      <td className="muted" style={{ fontSize: 12 }}>
+                      <td className="muted text-sm">
                         {it.details.length > 0 ? it.details.join('；') : '—'}
                       </td>
                     </tr>
@@ -663,7 +662,7 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
             验收报告
           </button>
         )}
-        <span className="muted" style={{ fontSize: 12, marginLeft: 'auto' }}>
+        <span className="muted text-sm ml-auto">
           {run && `批次 ${run.id} · ${RUN_STATUS_LABEL[run.status]} · ${run.tokens_used} tokens`}
           {run?.token_budget ? ` / 预算 ${run.token_budget}` : ''}
           {/* 批次创建时绑定的预设版本（改预设不会重算已生成的计划，故在此如实标注） */}
@@ -718,7 +717,7 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
                   <span className="mono" style={{ fontWeight: 700 }}>
                     {item.date}
                   </span>
-                  <span className="muted mono" style={{ fontSize: 11 }}>
+                  <span className="muted mono text-xs">
                     {item.status === 'empty' ? (
                       '（本日不产出日文件）'
                     ) : (
@@ -755,10 +754,10 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
                         <span className={`daily-kind kind-${s.kind.toLowerCase()}`}>
                           {s.kind} · {KIND_LABEL[s.kind] ?? s.kind}
                         </span>
-                        <span className="mono" style={{ fontSize: 12, minWidth: 0 }} title={s.path}>
+                        <span className="mono text-sm min-w-0" title={s.path}>
                           {s.path}
                         </span>
-                        <span className="muted" style={{ fontSize: 11 }}>
+                        <span className="muted text-xs">
                           {formatBytes(s.raw_bytes)}
                           {s.clean_bytes !== s.raw_bytes && ` → ${formatBytes(s.clean_bytes)}`}
                           {s.removed_total > 0 && `（剥壳 ${s.removed_total} 行）`}
@@ -772,14 +771,14 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
                     <div className="daily-fragments">
                       {item.status === 'empty' ? '拟清理' : '归并后拟删除'}{' '}
                       {item.fragments_to_delete.length} 个碎片（移入回收站）：
-                      <span className="mono" style={{ fontSize: 12 }}>
+                      <span className="mono text-sm">
                         {item.fragments_to_delete.join('、')}
                       </span>
                     </div>
                   )}
 
                   {item.format_report.violations.length > 0 && (
-                    <div className="alert-banner danger" style={{ marginTop: 8 }}>
+                    <div className="alert-banner danger mt-8">
                       <b>强规则未通过（{item.format_report.violations.length} 项，该日不会被写入）</b>
                       <ul style={{ margin: '6px 0 0 18px', fontSize: 12 }}>
                         {item.format_report.violations.slice(0, 6).map((v, i) => (
@@ -793,7 +792,7 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
                   )}
 
                   {item.notes.length > 0 && (
-                    <div className="hint" style={{ marginTop: 8 }}>
+                    <div className="hint mt-8">
                       {item.notes.join('；')}
                     </div>
                   )}
@@ -802,7 +801,7 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
                   {item.status !== 'empty' && (
                     <>
                       {item.unified_diff && (
-                        <div style={{ marginTop: 8 }}>
+                        <div className="mt-8">
                           <button className="btn btn-ghost btn-sm" onClick={() => toggleRaw(item.date)}>
                             {rawDiff.has(item.date) ? '收起原始差异' : '查看原始差异'}
                           </button>
@@ -813,7 +812,7 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
                           {item.unified_diff || '（无差异）'}
                         </pre>
                       ) : (
-                        <div style={{ marginTop: 6 }}>
+                        <div className="mt-6">
                           <DiffView
                             htmlDiff={item.html_diff ?? ''}
                             identical={!item.unified_diff}
@@ -890,7 +889,7 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
                 {(applyAll ? applicable : applicable.filter((i) => checked.has(i.date))).map((i) => (
                   <li key={i.date}>
                     <span className="mono">{i.date}</span>
-                    <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
+                    <span className="muted ml-8 text-sm">
                       {willWrite(i)
                         ? `写入 ${i.target_path}，并清理 ${i.fragments_to_delete.length} 个碎片`
                         : `判定无可归档内容 → 不写日文件，只清理 ${i.fragments_to_delete.length} 个碎片`}

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
+import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { api } from './api';
 import { ApiError } from './api/client';
 import { AgentTree } from './components/AgentTree';
@@ -7,11 +7,13 @@ import { ApplyAIModal } from './components/ApplyAIModal';
 import { ApplyPresetModal } from './components/ApplyPresetModal';
 import { CommandPalette } from './components/CommandPalette';
 import type { CommandItem } from './components/CommandPalette';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { CoreAgentList, CoreCategoryList } from './components/CoreBrowser';
 import { FileTree } from './components/FileTree';
 import { HistoryModal } from './components/HistoryModal';
 import { SaveAsPresetModal } from './components/SaveAsPresetModal';
 import { SearchModal } from './components/SearchModal';
+import { ShortcutsModal } from './components/ShortcutsModal';
 import { StatusBar } from './components/StatusBar';
 import { TopBar } from './components/TopBar';
 import { SideNav } from './components/SideNav';
@@ -22,8 +24,10 @@ import type { DataTab } from './pages/DataPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ToolsPage } from './pages/ToolsPage';
 import { useHashRoute } from './hooks/useHashRoute';
+import { useBackendOnline } from './hooks/useBackendOnline';
 import { useCoreCatalog } from './hooks/useCoreCatalog';
 import { useSettings } from './hooks/useSettings';
+import { useLintScan } from './hooks/useLintScan';
 import { useToast } from './hooks/useToast';
 import type { AgentInfo, FileContent, FileInfo, StatsResult } from './types';
 
@@ -36,6 +40,7 @@ const EditorPane = lazy(() =>
 type ModalState =
   | null
   | 'search'
+  | 'shortcuts'
   | { type: 'history' | 'apply-preset' | 'ai-cleanup' | 'save-preset'; key: string };
 
 /** 编辑栏内最多允许同时打开的编辑窗口数（固定横向平铺） */
@@ -79,6 +84,14 @@ function startDrag(e: ReactMouseEvent, onMove: (dx: number) => void): void {
 
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
+}
+
+/** 事件目标是否为可输入元素（输入框 / 文本域 / 下拉 / 可编辑区，含 Monaco 内部隐藏 textarea） */
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || typeof el.tagName !== 'string') return false;
+  const tag = el.tagName.toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable;
 }
 
 /** ---- 布局持久化（M-03）：分栏宽度与折叠态，刷新后保持 ---- */
@@ -148,6 +161,18 @@ export interface RecentFile {
   at: number;
 }
 
+/** 通用确认对话框的请求参数（替代原生 window.confirm） */
+interface ConfirmRequest {
+  title: string;
+  message: ReactNode;
+  confirmText?: string;
+  cancelText?: string;
+  danger?: boolean;
+}
+
+/** 保存冲突（409：文件被编辑器外的程序改动）时的恢复选择 */
+type ConflictChoice = 'reload' | 'overwrite' | 'cancel';
+
 function loadJson<T>(key: string, fallback: T): T {
   try {
     const raw = window.localStorage.getItem(key);
@@ -184,11 +209,23 @@ export default function App() {
   // ---- 全局数据 ----
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
-  const [connected, setConnected] = useState(false);
+  // 后端连通性：由 api/client.ts 在每次请求时上报，见 api/connection.ts。
+  // 顶栏连接点、断连横幅、自动重连都以它为准（不再只在启动时探测一次）。
+  const connected = useBackendOnline();
   const [scanning, setScanning] = useState(false);
-  const [warningCounts, setWarningCounts] = useState<Record<string, number>>({});
-  // lint 警告总数：与「检查报告」同源（GET /api/lint/all），null = 还没跑完
-  const [lintWarningsTotal, setLintWarningsTotal] = useState<number | null>(null);
+  // 全量 lint 扫描的状态（进度 / 取消 / 结果）由 <LintScanProvider> 统一持有，
+  // 使状态栏、检查报告、统计面板三处共享同一轮扫描，避免重复全量扫描。见 hooks/useLintScan.tsx
+  const lint = useLintScan();
+  // start 为稳定引用（useCallback([])），单独取出以免进入 effect 依赖时造成重复触发
+  const startLintScan = lint.start;
+  // Agent 警告角标：由共享扫描结果派生（与状态栏 /「检查报告」同源同口径）
+  const warningCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    lint.results.forEach((x) => {
+      counts[x.agent_id] = x.warnings.length;
+    });
+    return counts;
+  }, [lint.results]);
   const [stats, setStats] = useState<StatsResult | null>(null);
   // 后端版本号（GET /api/health）：版本号链路末端展示，事实源见 backend/app/__init__.py
   const [version, setVersion] = useState<string>('');
@@ -204,6 +241,8 @@ export default function App() {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const tabsRef = useRef<EditorTab[]>([]);
   const activeKeyRef = useRef<string | null>(null);
+  /** 当前选中的 Agent（供「重连后恢复」读取，避免把 selectedAgentId 放进加载 effect 的依赖造成重复加载） */
+  const selectedAgentIdRef = useRef<string | null>(null);
   const [anyDirty, setAnyDirty] = useState(false);
   const anyDirtyRef = useRef(false);
 
@@ -228,11 +267,48 @@ export default function App() {
     activeKeyRef.current = activeKey;
   }, [activeKey]);
   useEffect(() => {
+    selectedAgentIdRef.current = selectedAgentId;
+  }, [selectedAgentId]);
+  useEffect(() => {
     anyDirtyRef.current = anyDirty;
   }, [anyDirty]);
   useEffect(() => {
     setAnyDirty(tabs.some((t) => t.dirty));
   }, [tabs]);
+
+  // ---- 通用确认对话框（替代原生 window.confirm：键盘可达、样式统一、受焦点陷阱管理） ----
+  const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
+  const confirmResolverRef = useRef<((ok: boolean) => void) | null>(null);
+  const confirmAction = useCallback(
+    (req: ConfirmRequest) =>
+      new Promise<boolean>((resolve) => {
+        confirmResolverRef.current = resolve;
+        setConfirmReq(req);
+      }),
+    [],
+  );
+  const settleConfirm = useCallback((ok: boolean) => {
+    confirmResolverRef.current?.(ok);
+    confirmResolverRef.current = null;
+    setConfirmReq(null);
+  }, []);
+
+  // ---- 保存冲突（409）恢复对话框：给出「重新加载 / 覆盖保存 / 取消」三条明确出路 ----
+  const [conflictPath, setConflictPath] = useState<string | null>(null);
+  const conflictResolverRef = useRef<((c: ConflictChoice) => void) | null>(null);
+  const conflictAction = useCallback(
+    (path: string) =>
+      new Promise<ConflictChoice>((resolve) => {
+        conflictResolverRef.current = resolve;
+        setConflictPath(path);
+      }),
+    [],
+  );
+  const settleConflict = useCallback((choice: ConflictChoice) => {
+    conflictResolverRef.current?.(choice);
+    conflictResolverRef.current = null;
+    setConflictPath(null);
+  }, []);
 
   // ---- 布局（M-03：全部持久化到 soulforge.layout，刷新后保持） ----
   const initialLayout = useMemo(loadLayout, []);
@@ -433,7 +509,17 @@ export default function App() {
           return;
         }
         const existing = tabsRef.current[0];
-        if (existing?.dirty && !window.confirm('当前文件有未保存的修改，确定切换？')) return;
+        if (
+          existing?.dirty &&
+          !(await confirmAction({
+            title: '未保存的修改',
+            message: '当前文件有未保存的修改，切换将丢弃这些修改。',
+            confirmText: '切换',
+            danger: true,
+          }))
+        ) {
+          return;
+        }
         if (filesAgentIdRef.current !== agentId) {
           await selectAgent(agentId);
         }
@@ -490,11 +576,11 @@ export default function App() {
         toast(`打开文件失败：${(e as Error).message}`, 'error');
       }
     },
-    [selectAgent, toast, markFileOpened],
+    [selectAgent, toast, markFileOpened, confirmAction],
   );
 
   /** 切换编辑器模式；多 → 单窗口时仅保留激活窗口（有未保存修改需确认） */
-  const switchEditorMode = useCallback((mode: 'single' | 'multi') => {
+  const switchEditorMode = useCallback(async (mode: 'single' | 'multi') => {
     if (mode === editorModeRef.current) return;
     if (mode === 'single') {
       const current = tabsRef.current;
@@ -504,7 +590,12 @@ export default function App() {
         const dirtyCount = others.filter((t) => t.dirty).length;
         if (
           dirtyCount > 0 &&
-          !window.confirm(`有 ${dirtyCount} 个窗口存在未保存的修改，切换到单窗口模式将关闭它们，确定切换？`)
+          !(await confirmAction({
+            title: '切换到单窗口模式',
+            message: `有 ${dirtyCount} 个窗口存在未保存的修改，切换将关闭它们并丢弃这些修改。`,
+            confirmText: '切换',
+            danger: true,
+          }))
         ) {
           return;
         }
@@ -518,12 +609,22 @@ export default function App() {
     } catch {
       // ignore
     }
-  }, []);
+  }, [confirmAction]);
 
   /** 关闭某个编辑窗口；存在未保存修改时需确认（仅影响该窗口） */
-  const closeTab = useCallback((key: string) => {
+  const closeTab = useCallback(async (key: string) => {
     const tab = tabsRef.current.find((t) => t.key === key);
-    if (tab?.dirty && !window.confirm('该文档有未保存的修改，确定关闭？')) return;
+    if (
+      tab?.dirty &&
+      !(await confirmAction({
+        title: '关闭文档',
+        message: '该文档有未保存的修改，关闭将丢弃这些修改。',
+        confirmText: '关闭',
+        danger: true,
+      }))
+    ) {
+      return;
+    }
     clearDrafts([key]);
     const remaining = tabsRef.current.filter((t) => t.key !== key);
     setTabs(remaining);
@@ -531,7 +632,7 @@ export default function App() {
       if (prev !== key) return prev;
       return remaining.length > 0 ? remaining[remaining.length - 1].key : null;
     });
-  }, []);
+  }, [confirmAction]);
 
   /** 保存某个窗口的文档（仅影响该窗口） */
   const saveTab = useCallback(
@@ -539,9 +640,25 @@ export default function App() {
       const tab = tabsRef.current.find((t) => t.key === key);
       if (!tab) return;
       if (tab.content.length === 0) {
-        if (!window.confirm('内容为空，将清空文件，确认保存？')) return;
+        if (
+          !(await confirmAction({
+            title: '保存空文件',
+            message: '内容为空，保存将清空该文件。',
+            confirmText: '仍然保存',
+            danger: true,
+          }))
+        ) {
+          return;
+        }
       }
-      if (tab.content.length > 50 * 1024 && !window.confirm('文件较大（超过 50KB），确认保存？')) {
+      if (
+        tab.content.length > 50 * 1024 &&
+        !(await confirmAction({
+          title: '保存大文件',
+          message: '文件较大（超过 50KB），确认保存？',
+          confirmText: '保存',
+        }))
+      ) {
         return;
       }
       setTabs((prev) =>
@@ -576,33 +693,92 @@ export default function App() {
         setTabs((prev) =>
           prev.map((t) => (t.key === key ? { ...t, saving: false } : t)),
         );
-        if (err.code === 'CONFLICT') {
-          toast('保存失败：文件已被外部修改，请刷新后再试', 'error');
-        } else {
+        if (err.code !== 'CONFLICT') {
           toast(`保存失败：${err.message}`, 'error');
+          return;
+        }
+        // 409：文件被编辑器外的程序改动过。给出明确恢复路径，而非死胡同提示。
+        const choice = await conflictAction(tab.file.path);
+        if (choice === 'cancel') {
+          toast('已保留本地改动（仍未保存）', 'info');
+          return;
+        }
+        if (choice === 'reload') {
+          try {
+            const fresh = await api.readFile(tab.agentId, tab.file.path);
+            setTabs((prev) =>
+              prev.map((t) =>
+                t.key === key
+                  ? { ...t, file: fresh, content: fresh.content, dirty: false, saving: false }
+                  : t,
+              ),
+            );
+            clearDrafts([key]);
+            toast('已加载磁盘上的最新版本，本地改动已丢弃', 'success');
+          } catch (e2) {
+            toast(`重新加载失败：${(e2 as Error).message}`, 'error');
+          }
+          return;
+        }
+        // overwrite：不传 expected_sha256，由后端强制覆盖（写入前会自动备份旧版本）
+        setTabs((prev) =>
+          prev.map((t) => (t.key === key ? { ...t, saving: true } : t)),
+        );
+        try {
+          const result = await api.writeFile(tab.agentId, tab.file.path, tab.content);
+          setTabs((prev) =>
+            prev.map((t) =>
+              t.key === key
+                ? {
+                    ...t,
+                    file: {
+                      ...t.file,
+                      size_bytes: result.size_bytes,
+                      mtime: result.mtime,
+                      sha256: result.sha256,
+                    },
+                    dirty: false,
+                    saving: false,
+                    savedAt: Math.floor(Date.now() / 1000),
+                  }
+                : t,
+            ),
+          );
+          toast(`已覆盖保存 ${tab.file.path}`, 'success');
+          clearDrafts([key]);
+          void refreshFiles(tab.agentId);
+          void refreshStats();
+        } catch (e3) {
+          setTabs((prev) =>
+            prev.map((t) => (t.key === key ? { ...t, saving: false } : t)),
+          );
+          toast(`保存失败：${(e3 as Error).message}`, 'error');
         }
       }
     },
-    [refreshFiles, refreshStats, toast],
+    [refreshFiles, refreshStats, toast, confirmAction, conflictAction],
   );
 
-  // 初始加载
+  // 初始加载 / 断线重连后的恢复：connected 由连通信道驱动，
+  // 「首次启动」与「后端重启后恢复」共用同一段加载逻辑（重连成功会自动重跑本 effect）。
   useEffect(() => {
+    if (!connected) return;
     let cancelled = false;
     (async () => {
       try {
         const list = await api.listAgents();
         if (cancelled) return;
         setAgents(list);
-        setConnected(true);
-        if (list.length > 0) {
+        // 首次加载：默认选中第一个 Agent（随后会话恢复可能改选到上次的 Agent）；
+        // 重连恢复：保留当前选中项并重新拉取其数据，不把用户拽回第一个 Agent。
+        const current = selectedAgentIdRef.current;
+        if (current && list.some((a) => a.id === current)) {
+          void selectAgent(current);
+        } else if (list.length > 0) {
           void selectAgent(list[0].id);
         }
-      } catch (e) {
-        if (!cancelled) {
-          setConnected(false);
-          toast(`连接失败：${(e as Error).message}`, 'error');
-        }
+      } catch {
+        // 断连由 useBackendOnline + 顶部断连横幅统一处理，这里不重复弹提示
       } finally {
         if (!cancelled) setAgentsLoading(false);
       }
@@ -615,24 +791,28 @@ export default function App() {
       .catch(() => {
         // 版本号获取失败时状态栏不显示
       });
-    // 后台跑 lint，填充 Agent 警告角标 + 状态栏警告总数（与「检查报告」同一数据源与口径）
-    api
-      .lintAll()
-      .then((r) => {
-        const counts: Record<string, number> = {};
-        r.results.forEach((x) => {
-          counts[x.agent_id] = x.warnings.length;
-        });
-        setWarningCounts(counts);
-        setLintWarningsTotal(r.results.reduce((n, x) => n + x.warnings.length, 0));
-      })
-      .catch(() => {
-        // lint 失败不阻塞界面；总数保持 null，状态栏显示「检查中…」而非谎报无警告
-      });
+    // 后台跑全量 lint，填充 Agent 警告角标 + 状态栏警告总数（与「检查报告」同一数据源与口径）；
+    // 进度 / 取消由 <LintScanProvider> 统一管理，这里只负责触发（start 为稳定引用，不会导致本 effect 重跑）
+    void startLintScan();
     return () => {
       cancelled = true;
     };
-  }, [selectAgent, refreshStats, toast]);
+  }, [connected, selectAgent, refreshStats, startLintScan]);
+
+  // 断连处理：提示一次 + 每 5s 自动探测重连（成功后由 client 上报在线 → connected 翻转 → 上面的加载 effect 重跑）
+  useEffect(() => {
+    if (connected) return;
+    toast('与后端的连接已断开，正在自动重连…', 'warning');
+    const timer = window.setInterval(() => {
+      void api.health().catch(() => undefined);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [connected, toast]);
+
+  /** 立即重连（不等下一次自动探测） */
+  const reconnect = useCallback(() => {
+    void api.health().catch(() => undefined);
+  }, []);
 
   // ---- 扫描 / 导出 ----
   const rescan = useCallback(async () => {
@@ -774,14 +954,17 @@ export default function App() {
     }
     const drafts = loadDrafts();
     const draftKeys = keys.filter((k) => drafts[k]);
-    let useDrafts = true;
-    if (draftKeys.length > 0) {
-      useDrafts = window.confirm(
-        `发现 ${draftKeys.length} 个未保存的草稿（上次未正常保存）。\n\n「确定」= 恢复草稿\n「取消」= 丢弃草稿，使用磁盘版本`,
-      );
-      if (!useDrafts) clearDrafts(draftKeys);
-    }
     void (async () => {
+      let useDrafts = true;
+      if (draftKeys.length > 0) {
+        useDrafts = await confirmAction({
+          title: '恢复未保存的草稿',
+          message: `发现 ${draftKeys.length} 个未保存的草稿（上次未正常保存）。恢复草稿可避免丢失修改；丢弃则改用磁盘上的版本。`,
+          confirmText: '恢复草稿',
+          cancelText: '丢弃草稿',
+        });
+        if (!useDrafts) clearDrafts(draftKeys);
+      }
       const restored: EditorTab[] = [];
       for (const key of keys.slice(0, MAX_WINDOWS)) {
         const idx = key.indexOf('/');
@@ -811,7 +994,7 @@ export default function App() {
       }
       draftsReadyRef.current = true;
     })();
-  }, [agents, selectAgent, toast]);
+  }, [agents, selectAgent, toast, confirmAction]);
 
   // ---- 文档级操作（重新加载 / 新建 / 删除） ----
   /** 放弃未保存修改，重新从磁盘加载该窗口 */
@@ -819,12 +1002,22 @@ export default function App() {
     async (key: string) => {
       const tab = tabsRef.current.find((t) => t.key === key);
       if (!tab) return;
-      if (tab.dirty && !window.confirm('放弃未保存的修改，重新从磁盘加载？')) return;
+      if (
+        tab.dirty &&
+        !(await confirmAction({
+          title: '重新加载',
+          message: '放弃未保存的修改，重新从磁盘加载？',
+          confirmText: '放弃并重新加载',
+          danger: true,
+        }))
+      ) {
+        return;
+      }
       clearDrafts([key]);
       await updateTabFromDisk(key);
       toast('已重新加载磁盘版本', 'success');
     },
-    [toast, updateTabFromDisk],
+    [toast, updateTabFromDisk, confirmAction],
   );
 
   /** 新建文档：复用 PUT 的创建能力（写入一个标题骨架后直接打开） */
@@ -857,7 +1050,16 @@ export default function App() {
         toast('该文档有未保存的修改，请先保存或关闭窗口', 'warning');
         return;
       }
-      if (!window.confirm(`删除「${path}」？\n\n文件会移入回收站，可从系统回收站恢复。`)) return;
+      if (
+        !(await confirmAction({
+          title: '删除文档',
+          message: `将删除「${path}」，文件会移入系统回收站，可从回收站恢复。`,
+          confirmText: '删除',
+          danger: true,
+        }))
+      ) {
+        return;
+      }
       try {
         await api.deleteFile(agentId, path);
         if (tab) {
@@ -875,7 +1077,7 @@ export default function App() {
         toast(`删除失败：${(e as Error).message}`, 'error');
       }
     },
-    [refreshFiles, refreshStats, toast],
+    [refreshFiles, refreshStats, toast, confirmAction],
   );
 
   /** 保存全部未保存窗口 */
@@ -920,7 +1122,7 @@ export default function App() {
         const k = activeKeyRef.current;
         if (k) {
           e.preventDefault();
-          closeTab(k);
+          void closeTab(k);
         }
       } else if (e.altKey && !mod && (key === '1' || key === '2')) {
         // M-03：布局折叠快捷键，仅工作台内生效（避免在 Tools/Data/Settings 页误触发）
@@ -931,11 +1133,15 @@ export default function App() {
       } else if (mod && e.shiftKey && key === 'e') {
         e.preventDefault();
         navigate('tools');
+      } else if (key === '?' && !isTypingTarget(e.target)) {
+        // 「?」打开快捷键帮助；输入框 / 编辑器聚焦时不触发（避免打断正常输入）
+        e.preventDefault();
+        setModal('shortcuts');
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [saveTab, saveAll, closeTab, route]);
+  }, [saveTab, saveAll, closeTab, route, navigate]);
 
   // 关闭页面前提示未保存
   useEffect(() => {
@@ -949,9 +1155,9 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', handler);
   }, []);
 
-  // 目标窗口被关闭时，同步关闭其关联的文件级弹窗
+  // 目标窗口被关闭时，同步关闭其关联的文件级弹窗（'search' / 'shortcuts' 为非文件级弹窗，不受此影响）
   useEffect(() => {
-    if (modal && modal !== 'search' && !tabs.some((t) => t.key === modal.key)) {
+    if (modal && modal !== 'search' && modal !== 'shortcuts' && !tabs.some((t) => t.key === modal.key)) {
       setModal(null);
     }
   }, [modal, tabs]);
@@ -1001,6 +1207,7 @@ export default function App() {
       { type: 'action', id: 'stats', label: '统计面板', group: '数据', onSelect: () => navigate('data') },
       { type: 'action', id: 'audit', label: '审计日志', group: '数据', onSelect: () => navigate('data') },
       { type: 'action', id: 'preset', label: '管理文档预设', group: '管理', onSelect: () => navigate('settings') },
+      { type: 'action', id: 'shortcuts', label: '键盘快捷键', keywords: 'shortcut key help', hint: '?', group: '管理', onSelect: () => setModal('shortcuts') },
       { type: 'action', id: 'settings', label: '打开系统设置', group: '管理', onSelect: () => navigate('settings') },
     ],
     // 回调均为稳定引用或空依赖动作，使用 eslint 豁免
@@ -1021,6 +1228,17 @@ export default function App() {
         onOpenSearch={() => setPaletteOpen(true)}
         onRescan={() => void rescan()}
       />
+
+      {!connected && (
+        <div className="offline-banner" role="alert">
+          <span>
+            与后端的连接已断开，正在每 5 秒自动重连…（请确认后端已在端口 8848 运行）
+          </span>
+          <button className="btn btn-ghost btn-sm" onClick={reconnect}>
+            立即重连
+          </button>
+        </div>
+      )}
 
       <div className="app-body">
         <SideNav route={route} onNavigate={navigate} />
@@ -1211,7 +1429,7 @@ export default function App() {
                             coreCatalog.setActiveCore(tab.file.path);
                           }
                         }}
-                        onClose={() => closeTab(tab.key)}
+                        onClose={() => void closeTab(tab.key)}
                         onSave={() => void saveTab(tab.key)}
                         onReload={() => void reloadTab(tab.key)}
                         onHistory={() => setModal({ type: 'history', key: tab.key })}
@@ -1266,7 +1484,12 @@ export default function App() {
         agentsTotal={agentsTotal}
         filesTotal={filesTotal}
         lastScanAt={stats?.last_scan_at}
-        warningsTotal={lintWarningsTotal}
+        lintStatus={lint.status}
+        lintDone={lint.done}
+        lintTotal={lint.total}
+        warningsTotal={lint.warningsTotal}
+        onCancelLint={lint.cancel}
+        onReconnect={reconnect}
         version={version}
       />
 
@@ -1281,7 +1504,8 @@ export default function App() {
           }}
         />
       )}
-      {modal && modal !== 'search' && (() => {
+      {modal === 'shortcuts' && <ShortcutsModal onClose={closeModal} />}
+      {modal && modal !== 'search' && modal !== 'shortcuts' && (() => {
         const tab = tabs.find((t) => t.key === modal.key);
         if (!tab) return null;
         const base = {
@@ -1340,6 +1564,45 @@ export default function App() {
           void openFile(a, p, line);
         }}
       />
+
+      {/* ---- 通用确认对话框（替代原生 window.confirm） ---- */}
+      {confirmReq && (
+        <ConfirmDialog
+          title={confirmReq.title}
+          message={confirmReq.message}
+          confirmText={confirmReq.confirmText}
+          cancelText={confirmReq.cancelText}
+          danger={confirmReq.danger}
+          onConfirm={() => settleConfirm(true)}
+          onCancel={() => settleConfirm(false)}
+        />
+      )}
+
+      {/* ---- 保存冲突（409）恢复对话框 ---- */}
+      {conflictPath && (
+        <ConfirmDialog
+          title="文件已被外部修改"
+          message={
+            <>
+              <div>
+                <span className="mono">{conflictPath}</span> 在编辑器外被其他程序改动过，
+                直接保存会覆盖掉那些改动。
+              </div>
+              <div style={{ marginTop: 8, color: 'var(--text-secondary)' }}>
+                可「重新加载」采用磁盘上的最新版本（本地改动将丢失），或「覆盖保存」以当前内容为准
+                （旧版本会自动备份，可回溯）。
+              </div>
+            </>
+          }
+          cancelText="取消"
+          secondaryText="重新加载"
+          confirmText="覆盖保存"
+          danger
+          onSecondary={() => settleConflict('reload')}
+          onConfirm={() => settleConflict('overwrite')}
+          onCancel={() => settleConflict('cancel')}
+        />
+      )}
     </div>
   );
 }

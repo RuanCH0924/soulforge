@@ -450,6 +450,16 @@ class AIRegenerateRequest(BaseModel):
     extra_instructions: str = Field(..., description="重新生成时的新指令")
 
 
+class AIJobApplyRequest(BaseModel):
+    """应用 AI 输出。
+
+    `content` 为空时使用 AI 的完整输出；「按块接受」时由前端按选中的 hunk 重建内容后传入，
+    后端仍会对该内容重新执行同一套格式校验与 lint 闸门，任一不通过都拒绝写入。
+    """
+
+    content: str | None = Field(None, description="应用内容覆盖（按块接受用）；为空则用 AI 完整输出")
+
+
 class AIJobDiffPlan(BaseModel):
     unified_diff: str
     lint_warnings: list[LintWarning] = Field(default_factory=list)

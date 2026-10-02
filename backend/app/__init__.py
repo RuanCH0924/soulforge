@@ -13,4 +13,4 @@
 → 在 CHANGELOG 追加条目 → 打 git tag `v<版本>` → 跑 `pytest` 确认版本校验通过。
 """
 
-__version__ = "0.5.3"
+__version__ = "0.5.4"

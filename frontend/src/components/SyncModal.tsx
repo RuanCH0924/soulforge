@@ -180,7 +180,7 @@ export function SyncModal({ agents, onClose, onDone, embedded }: SyncModalProps)
             {srcFiles.map((p) => (
               <label key={p} className="checkbox-row">
                 <input type="checkbox" checked={planFiles.has(p)} onChange={() => togglePlanFile(p)} />
-                <span className="mono" style={{ fontSize: 12 }} title={p}>
+                <span className="mono text-sm" title={p}>
                   {p}
                 </span>
               </label>
@@ -230,7 +230,7 @@ export function SyncModal({ agents, onClose, onDone, embedded }: SyncModalProps)
                     </div>
                     <span>{similarityPercent(f.similarity)}</span>
                   </span>
-                  <span className="muted" style={{ fontSize: 11 }}>
+                  <span className="muted text-xs">
                     {formatBytes(f.size_src)} → {formatBytes(f.size_dst)}
                   </span>
                 </label>

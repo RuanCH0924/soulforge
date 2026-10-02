@@ -4,7 +4,7 @@
 > 项目拥有者不需要懂代码，把本文档丢给 AI，它就能理解项目全貌并逐步生成代码。
 > 开发方式：Vibe Coding（自然语言描述 → AI 生成代码 → 老板验收）
 >
-> **版本号**：唯一事实源为 `backend/app/__init__.py` 的 `__version__`（当前 `0.5.3`），
+> **版本号**：唯一事实源为 `backend/app/__init__.py` 的 `__version__`（当前 `0.5.4`），
 > 版本历史与发版流程见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ---
@@ -158,6 +158,8 @@ Soulforge 内置一套 lint 检查，发现违规主动提示：
 | `GET /api/agents/{id}/files/{path}/history` | 文件详情 → 「历史」 | 备份历史列表 |
 
 **编辑器**：用 Monaco Editor（VSCode 同款内核），老板熟悉，markdown 实时预览。
+编辑器为**懒加载分包**（`React.lazy`），并在首屏渲染后**空闲时预取**（`main.tsx`：`requestIdleCallback`，超时 4s；不支持则 2s 延时），
+使首次打开文档无需再等分包下载；预取失败静默，真正打开时仍会正常加载。
 
 ### 模块 M3：跨 Agent 搜索
 
@@ -206,7 +208,8 @@ Diff 渲染用后端归一化 + 行级 diff（`diff_service`），前端 `DiffVi
 | 命令 | UI 入口 | 功能 |
 |---|---|---|
 | `GET /api/lint/{id}` | Agent 详情 → 「健康检查」按钮 | 对该 Agent 跑全部 lint 规则 |
-| `GET /api/lint/all` | 顶部 → 「全局健康检查」 | 全部 Agent |
+| `GET /api/lint/all` | （保留；UI 已不再调用） | 全部 Agent，一次同步返回 |
+| `GET /api/lint/{id}` 逐 Agent 串行 | 状态栏 / 数据中心 → 检查报告 / 统计面板 | 前端编排的**单飞共享扫描**：可显示「已完成 N / 共 M」进度并取消（`hooks/useLintScan.tsx`），与 `/api/lint/all` 同口径 |
 | `GET /api/lint/file/{agent}/{file}` | 文件编辑页 → 「检查」 | 单文件 lint（编辑器右侧实时提示） |
 | `GET /api/lint/rules` | 数据中心 → 检查报告 → 「检查规则」 | 规则清单（id / 名称 / 作用域 / 级别 / 说明），前端不写死文案 |
 
@@ -216,7 +219,7 @@ Diff 渲染用后端归一化 + 行级 diff（`diff_service`），前端 `DiffVi
 
 | 命令 | UI 入口 | 功能 |
 |---|---|---|
-| `GET /api/stats` | 首页仪表盘 | 汇总数据：Agent 数、文件数、最大文件、Lint 警告数等 |
+| `GET /api/stats` | 首页仪表盘 | 汇总数据：Agent 数、文件数、备份数、磁盘占用等（**不含 lint 警告数**，该指标另经 lint 扫描实时统计） |
 
 ---
 
@@ -334,8 +337,10 @@ class LLMProvider(Protocol):
    c. 调 LLM → output_content
    d. 计算 unified diff → diff_plan_json
    e. status: awaiting_confirm
-5. UI 收到通知 → 跳 diff plan 预览页
+5. UI 收到通知 → 跳 diff plan 预览页（支持**按块接受**：逐 hunk 勾选，默认全接受）
 6. 老板点「应用」→ POST /api/ai/jobs/{id}/apply → status: applied（写入 + 备份 + 审计）
+   - **按块接受**：只勾选部分 hunk 时，前端按选中的 hunk 重建内容并随请求体 `content` 提交；
+     后端对该内容**重新执行同一套模板格式校验 + lint 闸门**，不通过则拒绝写入（不会绕过安全闸门）
    老板点「拒绝」→ POST /api/ai/jobs/{id}/reject → status: rejected
    老板点「重新生成」→ 回到第 3 步，带新指令
 ```

@@ -73,6 +73,30 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ---------- 键盘可访问性 ---------- */
+/* 键盘导航时显示清晰焦点环；鼠标点击（:focus-visible 不匹配）不出现，避免视觉噪音。
+   输入类控件已有自己的聚焦样式，这里排除以防双重描边。 */
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* 尊重系统「减少动态效果」偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ---------- 布局 ---------- */
 .app {
   display: flex;
@@ -1436,6 +1460,41 @@ body {
   color: var(--text-tertiary);
 }
 
+/* 全量 lint 扫描的进度 + 取消 / 断连重连（状态栏内联小控件） */
+.statusbar-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.statusbar-action {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.statusbar-action:hover {
+  text-decoration: underline;
+}
+
+/* 断连横幅（铺满内容区宽度）：提示自动重连 + 手动重连入口 */
+.offline-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: rgba(245, 158, 11, 0.12);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+}
+
 /* ---------- Modal ---------- */
 .modal-overlay {
   position: fixed;
@@ -1668,6 +1727,81 @@ body {
   background: rgba(239, 68, 68, 0.12);
 }
 
+/* ---------- 差异「按块接受」视图（应用预设 / AI 整理） ---------- */
+.hunk-picker {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.hunk-picker-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-hover);
+  border-bottom: 1px solid var(--border);
+}
+
+.hunk-picker-bar .muted {
+  margin-right: auto;
+}
+
+.hunk-item {
+  border-bottom: 1px solid var(--border);
+  /* 被拒绝的块整体变淡，一眼可辨 */
+  opacity: 0.45;
+}
+
+.hunk-item.accepted {
+  opacity: 1;
+}
+
+.hunk-item:last-child {
+  border-bottom: none;
+}
+
+.hunk-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--bg-hover);
+  cursor: pointer;
+}
+
+.hunk-body {
+  padding: 6px 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.hunk-line {
+  display: block;
+  padding: 0 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.hunk-line.add {
+  color: var(--success);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.hunk-line.del {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.hunk-line.ctx {
+  color: var(--text-secondary);
+}
+
 .similarity-bar {
   display: flex;
   align-items: center;
@@ -1881,7 +2015,10 @@ table.audit-table {
 }
 
 .toast {
-  padding: 10px 18px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
   border-radius: 8px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
@@ -1889,7 +2026,37 @@ table.audit-table {
   font-size: 13px;
   animation: slideDown 0.2s ease;
   max-width: 520px;
-  text-align: center;
+  /* 容器为 pointer-events:none，这里恢复，以便悬停暂停计时与点击关闭 */
+  pointer-events: auto;
+}
+
+.toast-message {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  line-height: 1.6;
+}
+
+.toast-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.toast-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .toast.success {
@@ -1937,10 +2104,70 @@ table.audit-table {
   margin: 14px 0;
 }
 
+/* 快捷键帮助浮层 */
+.shortcut-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.shortcut-table td {
+  padding: 5px 0;
+  vertical-align: top;
+}
+
+.shortcut-keys {
+  width: 190px;
+  white-space: nowrap;
+}
+
+.shortcut-table kbd {
+  display: inline-block;
+  padding: 2px 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
 .hint {
   font-size: 12px;
   color: var(--text-secondary);
   margin-top: 6px;
+}
+
+/* ---------- 排版工具类（内联样式收敛：值绑定设计 token，避免散落魔法数） ---------- */
+.text-xs {
+  font-size: var(--font-size-xs);
+}
+.text-sm {
+  font-size: var(--font-size-sm);
+}
+.ml-6 {
+  margin-left: 6px;
+}
+.ml-8 {
+  margin-left: 8px;
+}
+.ml-auto {
+  margin-left: auto;
+}
+.mt-6 {
+  margin-top: 6px;
+}
+.mt-8 {
+  margin-top: 8px;
+}
+.mt-12 {
+  margin-top: 12px;
+}
+.mb-8 {
+  margin-bottom: 8px;
+}
+.min-w-0 {
+  min-width: 0;
 }
 
 .error-boundary {
@@ -2342,8 +2569,17 @@ table.audit-table {
 }
 
 .side-nav-icon {
-  font-size: 17px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+
+.side-nav-icon svg {
+  display: block;
+  width: 18px;
+  height: 18px;
 }
 
 .side-nav-label {

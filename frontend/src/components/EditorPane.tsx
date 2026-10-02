@@ -406,7 +406,7 @@ export function EditorPane({
               预览保存会规范化 Markdown 格式
             </span>
           ) : (
-            <span className="muted kbd-hint" style={{ fontSize: 11 }}>
+            <span className="muted kbd-hint text-xs">
               Ctrl+B 加粗 · Ctrl+I 斜体 · Ctrl+S 保存
             </span>
           )}

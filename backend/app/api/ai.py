@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.common import ok
 from app.deps import get_registry
-from app.models.schemas import AIJobCreate, AIRegenerateRequest
+from app.models.schemas import AIJobApplyRequest, AIJobCreate, AIRegenerateRequest
 from app.services.registry import Registry
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
@@ -36,9 +36,14 @@ def get_job(job_id: str, reg: Registry = Depends(get_registry)):
 
 
 @router.post("/jobs/{job_id}/apply")
-def apply_job(job_id: str, reg: Registry = Depends(get_registry)):
-    """应用 AI 输出（写入文件 + 自动备份 + 审计）。"""
-    return ok(reg.ai_jobs.apply(job_id).model_dump())
+def apply_job(job_id: str, body: AIJobApplyRequest | None = None, reg: Registry = Depends(get_registry)):
+    """应用 AI 输出（写入文件 + 自动备份 + 审计）。
+
+    请求体 `content` 为空 → 写入 AI 完整输出；非空 → 「按块接受」的部分内容，
+    仍走同一套格式 + lint 闸门（不通过则拒绝写入，任务标记失败）。
+    """
+    content = body.content if body else None
+    return ok(reg.ai_jobs.apply(job_id, content=content).model_dump())
 
 
 @router.post("/jobs/{job_id}/reject")

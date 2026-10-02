@@ -273,7 +273,7 @@ export function LLMProvidersModal({ onClose, embedded }: LLMProvidersModalProps)
                   <span className="badge-warn" style={{ background: p.enabled ? 'rgba(16,185,129,.15)' : 'var(--bg-hover)', color: p.enabled ? 'var(--success)' : 'var(--text-secondary)' }}>
                     {p.enabled ? '启用' : '禁用'}
                   </span>
-                  <span className="muted" style={{ fontSize: 11 }}>
+                  <span className="muted text-xs">
                     {p.protocol}
                   </span>
                 </div>

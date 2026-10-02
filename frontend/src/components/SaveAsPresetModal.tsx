@@ -131,9 +131,9 @@ export function SaveAsPresetModal({
 
       <div className="field">
         <label>来源文档</label>
-        <div className="mono" style={{ fontSize: 12 }}>
+        <div className="mono text-sm">
           {agentId}/{filePath}
-          <span className="muted" style={{ marginLeft: 8 }}>
+          <span className="muted ml-8">
             {size.toLocaleString()} 字节 · {level} 级标题 {detected.length} 个
           </span>
         </div>
@@ -201,7 +201,7 @@ export function SaveAsPresetModal({
         </div>
       )}
 
-      <div className="field" style={{ marginTop: 12 }}>
+      <div className="field mt-12">
         <label className="checkbox-row" style={{ fontWeight: 400 }}>
           <input
             type="checkbox"

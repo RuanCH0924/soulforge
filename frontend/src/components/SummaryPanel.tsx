@@ -309,7 +309,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
           <ul className="alert-points">
             <li>
               把该范围内的每日记录（主文件 / 会话导出 / 主题碎片）归纳为<b>一份</b>综述
-              <span className="mono" style={{ marginLeft: 6 }}>memory/&lt;范围&gt;-记忆归纳.md</span>
+              <span className="mono ml-6">memory/&lt;范围&gt;-记忆归纳.md</span>
               ：完成的工作 / 经验教训 / 重要决定 / 重要信息 / 待办事项（可选附录溯源表）。
             </li>
             <li>
@@ -365,16 +365,15 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
               <span className="daily-only-badge">大模型专用</span>
               <span className="daily-preset-info-name">
                 {currentPreset.name}
-                <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+                <span className="muted text-xs ml-6">
                   v{currentPreset.version}
                 </span>
               </span>
-              <span className="muted" style={{ fontSize: 12 }}>
+              <span className="muted text-sm">
                 来源：{currentPreset.is_builtin ? '内置预设（随版本分发）' : '用户自建'}
               </span>
               <button
-                className="btn btn-sm"
-                style={{ marginLeft: 'auto' }}
+                className="btn btn-sm ml-auto"
                 onClick={() => setEditPresetId(currentPreset.id)}
               >
                 查看 / 编辑
@@ -406,10 +405,10 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
                   checked={presetId === p.id}
                   onChange={() => setPresetId(p.id)}
                 />
-                <span style={{ minWidth: 0 }}>
+                <span className="min-w-0">
                   <span className="daily-preset-name">
                     {p.name}
-                    <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+                    <span className="muted text-xs ml-6">
                       v{p.version}
                     </span>
                   </span>
@@ -438,9 +437,9 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
                   checked={providerId === p.id}
                   onChange={() => setProviderId(p.id)}
                 />
-                <span style={{ minWidth: 0 }}>
+                <span className="min-w-0">
                   {p.id}
-                  <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+                  <span className="muted text-xs ml-6">
                     {p.model}
                   </span>
                 </span>
@@ -449,7 +448,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
           </div>
         )}
 
-        <div className="field" style={{ marginTop: 12 }}>
+        <div className="field mt-12">
           <label>附加指令（可选）</label>
           <input
             className="input"
@@ -483,7 +482,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
                 <tbody>
                   {history.map((r) => (
                     <tr key={r.id} className="daily-history-row" onClick={() => void openRun(r.id)}>
-                      <td className="mono" style={{ fontSize: 12 }}>
+                      <td className="mono text-sm">
                         {r.date_from} ~ {r.date_to}
                       </td>
                       <td>
@@ -491,7 +490,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
                       </td>
                       <td>{r.source_count}</td>
                       <td>{r.tokens_used}</td>
-                      <td className="muted" style={{ fontSize: 12 }}>
+                      <td className="muted text-sm">
                         {new Date(r.created_at * 1000).toLocaleString('zh-CN', { hour12: false })}
                       </td>
                     </tr>
@@ -589,7 +588,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
                       <td>
                         <Check ok={ok} />
                       </td>
-                      <td className="muted" style={{ fontSize: 12 }}>
+                      <td className="muted text-sm">
                         {hint}
                       </td>
                     </tr>
@@ -599,7 +598,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
             </div>
 
             {report.details.length > 0 && (
-              <div className="alert-banner danger" style={{ marginTop: 12 }}>
+              <div className="alert-banner danger mt-12">
                 <b>未达成项说明</b>
                 <ul style={{ margin: '6px 0 0 18px', fontSize: 12 }}>
                   {report.details.map((d, i) => (
@@ -620,7 +619,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
               </div>
             )}
             {run?.cleanup_at && (
-              <div className="alert-banner info" style={{ marginTop: 12 }}>
+              <div className="alert-banner info mt-12">
                 源文件已清理：{run.deleted_sources.length} 个已移入回收站
                 {run.failed_sources.length > 0 && `，${run.failed_sources.length} 个失败：${run.failed_sources.join('；')}`}
                 。产物 <span className="mono">{run.output_path}</span> 保持不动。
@@ -646,7 +645,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
                 <ul style={{ paddingLeft: 20, maxHeight: 220, overflow: 'auto' }}>
                   {(run?.sources ?? []).map((s) => (
                     <li key={s.path}>
-                      <span className="mono" style={{ fontSize: 12 }}>
+                      <span className="mono text-sm">
                         {s.path}
                       </span>
                     </li>
@@ -679,7 +678,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
             验收报告
           </button>
         )}
-        <span className="muted" style={{ fontSize: 12, marginLeft: 'auto' }}>
+        <span className="muted text-sm ml-auto">
           {run && `批次 ${run.id} · ${RUN_STATUS_LABEL[run.status]} · ${run.tokens_used} tokens`}
           {run?.token_budget ? ` / 预算 ${run.token_budget}` : ''}
           {/* 批次创建时绑定的预设版本（改预设不会重算已生成的计划，故在此如实标注） */}
@@ -718,7 +717,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
               <span className="mono" style={{ fontWeight: 700 }}>
                 {run.date_from} ~ {run.date_to}
               </span>
-              <span className="muted mono" style={{ fontSize: 11 }}>
+              <span className="muted mono text-xs">
                 → {run.output_path}
               </span>
               <span className={`daily-status ${run.status}`}>{RUN_STATUS_LABEL[run.status]}</span>
@@ -731,10 +730,10 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
                     <span className={`daily-kind kind-${s.kind.toLowerCase()}`}>
                       {s.kind} · {KIND_LABEL[s.kind] ?? s.kind}
                     </span>
-                    <span className="mono" style={{ fontSize: 12, minWidth: 0 }} title={s.path}>
+                    <span className="mono text-sm min-w-0" title={s.path}>
                       {s.path}
                     </span>
-                    <span className="muted" style={{ fontSize: 11 }}>
+                    <span className="muted text-xs">
                       {s.date} · {formatBytes(s.raw_bytes)}
                       {s.clean_bytes !== s.raw_bytes && ` → ${formatBytes(s.clean_bytes)}`}
                       {s.removed_total > 0 && `（剥壳 ${s.removed_total} 行）`}
@@ -745,7 +744,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
               </div>
 
               {run.format_report.violations.length > 0 && (
-                <div className="alert-banner danger" style={{ marginTop: 8 }}>
+                <div className="alert-banner danger mt-8">
                   <b>强规则未通过（{run.format_report.violations.length} 项，不会被写入）</b>
                   <ul style={{ margin: '6px 0 0 18px', fontSize: 12 }}>
                     {run.format_report.violations.slice(0, 6).map((v, i) => (
@@ -759,7 +758,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
               )}
 
               {run.notes.length > 0 && (
-                <div className="hint" style={{ marginTop: 8 }}>
+                <div className="hint mt-8">
                   {run.notes.join('；')}
                 </div>
               )}
@@ -767,7 +766,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
               {run.status !== 'empty' && (
                 <>
                   {run.unified_diff && (
-                    <div style={{ marginTop: 8 }}>
+                    <div className="mt-8">
                       <button className="btn btn-ghost btn-sm" onClick={() => setRawDiff((v) => !v)}>
                         {rawDiff ? '收起原始差异' : '查看原始差异'}
                       </button>
@@ -778,7 +777,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
                       {run.unified_diff || '（无差异）'}
                     </pre>
                   ) : (
-                    <div style={{ marginTop: 6 }}>
+                    <div className="mt-6">
                       <DiffView
                         htmlDiff={run.html_diff ?? ''}
                         identical={!run.unified_diff}
@@ -834,7 +833,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
               <ul style={{ paddingLeft: 20 }}>
                 <li>
                   <span className="mono">{run.output_path}</span>
-                  <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
+                  <span className="muted ml-8 text-sm">
                     （来源 {run.source_count} 个）
                   </span>
                 </li>
@@ -882,7 +881,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
               <ul style={{ paddingLeft: 20, maxHeight: 220, overflow: 'auto' }}>
                 {(run?.sources ?? []).map((s) => (
                   <li key={s.path}>
-                    <span className="mono" style={{ fontSize: 12 }}>
+                    <span className="mono text-sm">
                       {s.path}
                     </span>
                   </li>

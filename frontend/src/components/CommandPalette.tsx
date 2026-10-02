@@ -151,6 +151,8 @@ export function CommandPalette({
 
   const flat = useMemo<Row[]>(() => groups.flatMap((g) => g.rows), [groups]);
   const total = flat.length;
+  /** 供 combobox 的 aria-activedescendant 指向当前高亮项 */
+  const activeId = total > 0 ? `cmd-opt-${active}` : undefined;
 
   if (!open) return null;
 
@@ -172,11 +174,24 @@ export function CommandPalette({
 
   return (
     <div className="command-overlay" onMouseDown={onClose}>
-      <div className="command-palette" onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        className="command-palette"
+        onMouseDown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="命令面板"
+      >
         <input
           ref={inputRef}
           className="command-input"
           placeholder="输入命令、功能、设置或搜索文件内容…"
+          role="combobox"
+          aria-expanded={true}
+          aria-haspopup="listbox"
+          aria-controls="command-listbox"
+          aria-activedescendant={activeId}
+          aria-autocomplete="list"
+          aria-label="搜索命令、功能、设置或文件内容"
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -195,14 +210,14 @@ export function CommandPalette({
             }
           }}
         />
-        <div className="command-body">
+        <div className="command-body" id="command-listbox" role="listbox" aria-label="候选结果">
           {total === 0 && !searching && (
             <div className="command-empty">
               {q ? `没有匹配「${q}」的功能或文件` : '输入关键词开始搜索'}
             </div>
           )}
           {groups.map((g) => (
-            <div key={g.name} className="command-group">
+            <div key={g.name} className="command-group" role="group" aria-label={g.name}>
               <div className="command-group-title">
                 {g.name}
                 {g.name === '文件' && searching ? '（搜索中…）' : ''}
@@ -213,6 +228,9 @@ export function CommandPalette({
                   return (
                     <div
                       key={`recent-${it.agentId}-${it.path}`}
+                      id={`cmd-opt-${idx}`}
+                      role="option"
+                      aria-selected={idx === active}
                       className={`command-item${idx === active ? ' active' : ''}`}
                       onMouseEnter={() => setActive(idx)}
                       onClick={() => selectAt(idx)}
@@ -228,6 +246,9 @@ export function CommandPalette({
                   return (
                     <div
                       key={`${it.hit.agent_id}-${it.hit.file_path}-${it.hit.line_number}-${i}`}
+                      id={`cmd-opt-${idx}`}
+                      role="option"
+                      aria-selected={idx === active}
                       className={`command-item${idx === active ? ' active' : ''}`}
                       onMouseEnter={() => setActive(idx)}
                       onClick={() => selectAt(idx)}
@@ -244,6 +265,9 @@ export function CommandPalette({
                 return (
                   <div
                     key={it.id}
+                    id={`cmd-opt-${idx}`}
+                    role="option"
+                    aria-selected={idx === active}
                     className={`command-item${idx === active ? ' active' : ''}${it.danger ? ' danger' : ''}`}
                     onMouseEnter={() => setActive(idx)}
                     onClick={() => selectAt(idx)}

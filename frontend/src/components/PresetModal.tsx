@@ -373,7 +373,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="item-title">
                     <span className="mono">v{v.version}</span>
-                    <span className="muted" style={{ fontSize: 11 }}>
+                    <span className="muted text-xs">
                       {formatTime(v.created_at)} · {v.user}
                     </span>
                   </div>
@@ -391,7 +391,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
                 </button>
               </div>
             ))}
-            <div className="hint" style={{ marginTop: 8 }}>
+            <div className="hint mt-8">
               回溯会用该版本覆盖当前预设，并另存一份新快照。
             </div>
           </div>
@@ -412,7 +412,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
               <div style={{ flex: 1, minWidth: 0 }} onClick={() => openEdit(p)}>
                 <div className="item-title">
                   <span className="mono">{p.name}</span>
-                  <span className="muted" style={{ fontSize: 11 }}>
+                  <span className="muted text-xs">
                     v{p.version}
                   </span>
                 </div>

@@ -289,47 +289,55 @@ class AIJobService:
 
     # ---------- 确认动作 ----------
 
-    def apply(self, job_id: str) -> AIJobApplyResult:
-        """老板点应用：格式校验 + lint 拦截 → 备份原文件 → 写入 → applied + 审计。"""
+    def apply(self, job_id: str, content: str | None = None) -> AIJobApplyResult:
+        """老板点应用：格式校验 + lint 拦截 → 备份原文件 → 写入 → applied + 审计。
+
+        `content` 为空 → 写入 AI 完整输出（沿用 plan 生成时的格式校验结果）；
+        非空 → 「按块接受」的重建内容，会按同一套模板规则重新做格式校验，
+        lint 闸门对两条路径一致生效。任一闸门不通过都拒绝写入并标记任务失败。
+        """
         with self.db.session() as s:
             row = self._get_row(s, job_id)
             if row.status != "awaiting_confirm":
                 raise AIJobStatusError(
                     f"仅 awaiting_confirm 状态可应用，当前为 {row.status}",
                     details={"job_id": job_id, "status": row.status})
-            output = row.output_content or ""
+            output = content if content is not None else (row.output_content or "")
             agent_id, file_path, provider_id = row.agent_id, row.file_path, row.provider_id
+            preset_id = row.preset_id
             diff_plan_json = row.diff_plan_json
+            total_tokens, cost_estimate_usd = row.total_tokens, row.cost_estimate_usd
 
-        # 输出必须 100% 符合模板格式规范，否则拒绝写入
-        try:
-            diff_plan = AIJobDiffPlan(**json.loads(diff_plan_json or "{}"))
-        except (json.JSONDecodeError, TypeError):
-            diff_plan = None
-        if diff_plan is not None and not diff_plan.format_report.ok:
-            with self.db.session() as s:
-                row = self._get_row(s, job_id)
-                row.status = "failed"
-                row.error = "AI 输出未通过模板格式校验，拒绝写入"
-                row.finished_at = int(time.time())
-                row.updated_at = int(time.time())
-                s.commit()
-            raise FormatViolationError(
-                "AI 输出未通过模板格式校验，拒绝写入",
-                details={"job_id": job_id, "violations": [v.model_dump() for v in diff_plan.format_report.violations]})
+        if content is None:
+            # 完整输出：沿用 plan 生成时的格式校验结果
+            try:
+                diff_plan = AIJobDiffPlan(**json.loads(diff_plan_json or "{}"))
+            except (json.JSONDecodeError, TypeError):
+                diff_plan = None
+            if diff_plan is not None and not diff_plan.format_report.ok:
+                self._fail(job_id, "AI 输出未通过模板格式校验，拒绝写入")
+                raise FormatViolationError(
+                    "AI 输出未通过模板格式校验，拒绝写入",
+                    details={"job_id": job_id,
+                             "violations": [v.model_dump() for v in diff_plan.format_report.violations]})
+        else:
+            # 按块接受：对重建后的内容重新跑同一套模板格式校验
+            rules = self._rules_for(self.presets.get(preset_id))
+            _, format_report = FormatValidator().validate_and_fix(output, rules)
+            if not format_report.ok:
+                self._fail(job_id, "按块接受的输出未通过模板格式校验，拒绝写入")
+                raise FormatViolationError(
+                    "按块接受的输出未通过模板格式校验，拒绝写入",
+                    details={"job_id": job_id,
+                             "violations": [v.model_dump() for v in format_report.violations]})
 
         # 输出过 lint，违规拒绝写入
         warnings = self.lint.lint_file(agent_id, file_path, output)
         if warnings:
-            with self.db.session() as s:
-                row = self._get_row(s, job_id)
-                row.status = "failed"
-                row.error = "AI 输出未通过 lint 检查，拒绝写入"
-                row.finished_at = int(time.time())
-                row.updated_at = int(time.time())
-                s.commit()
+            self._fail(job_id, "AI 输出未通过 lint 检查，拒绝写入")
             raise AILintBlockedError(
-                "AI 输出未通过 lint 检查，拒绝写入", details={"job_id": job_id, "warnings": [w.model_dump() for w in warnings]})
+                "AI 输出未通过 lint 检查，拒绝写入",
+                details={"job_id": job_id, "warnings": [w.model_dump() for w in warnings]})
 
         agent = self.file_manager.require_agent(agent_id)
         full = _safe_join(Path(agent.workspace), file_path)
@@ -346,9 +354,20 @@ class AIJobService:
             s.commit()
         self.audit.record("ai_apply", agent_id, file_path, {
             "job_id": job_id, "backup_id": backup_id, "provider_id": provider_id,
-            "total_tokens": row.total_tokens, "cost_estimate_usd": row.cost_estimate_usd,
+            "total_tokens": total_tokens, "cost_estimate_usd": cost_estimate_usd,
+            "partial": content is not None,
         })
         return AIJobApplyResult(job_id=job_id, status="applied", backup_id=backup_id, file_size=result.size_bytes)
+
+    def _fail(self, job_id: str, error: str) -> None:
+        """把任务标记为 failed（闸门拦截 / 应用失败时统一入口）。"""
+        with self.db.session() as s:
+            row = self._get_row(s, job_id)
+            row.status = "failed"
+            row.error = error
+            row.finished_at = int(time.time())
+            row.updated_at = int(time.time())
+            s.commit()
 
     def reject(self, job_id: str) -> AIJob:
         """老板点拒绝：不写入。"""

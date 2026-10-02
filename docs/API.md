@@ -23,7 +23,7 @@
 ```json
 {
   "data": { ... },
-  "meta": { "timestamp": 1754478710, "version": "0.5.3" }
+  "meta": { "timestamp": 1754478710, "version": "0.5.4" }
 }
 ```
 
@@ -608,7 +608,11 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 
 #### `GET /api/lint/all`
 
-对所有 Agent 跑 lint。
+对所有 Agent 跑 lint（一次同步返回）。
+
+> UI 已改用逐 Agent 的 `GET /api/lint/{agent_id}` 串行汇总（本接口保留，二者口径一致）：
+> 这样前端才能显示「已完成 N / 共 M 个 Agent」进度并支持在 Agent 之间取消。
+> 见 `frontend/src/hooks/useLintScan.tsx`。
 
 ---
 
@@ -620,7 +624,8 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 
 > **不含 lint 警告数**：该指标必须实时跑 lint 才能得到。此前用索引列 `files.lint_warnings` 求和，
 > 但该列从不被扫描填充（`FileInfo.lint_warnings` 恒为默认 0），返回的一直是**假数据**。
-> UI 的 lint 计数统一取自 `GET /api/lint/all`（与「检查报告」同源同口径），
+> UI 的 lint 计数统一取自逐 Agent 的 `GET /api/lint/{agent_id}` 串行汇总（与「检查报告」「状态栏」
+> 同源同口径，由前端 `hooks/useLintScan.tsx` 单飞共享，支持进度与取消），
 > 见「统计面板」的 lint 卡片与底部状态栏。
 
 **响应**：
@@ -1004,9 +1009,20 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 
 应用 AI 输出（写入文件 + 自动备份 + 审计）。
 
+**请求体（可选）**：
+
+```json
+{ "content": "string | null" }
+```
+
+- `content` 为空 → 写入 AI 的完整输出；
+- `content` 非空 → **「按块接受」**：由前端按选中的 hunk 重建后的部分内容。
+  后端仍会对该内容重新执行同一套**模板格式校验**与 **lint 闸门**，任一不通过都拒绝写入。
+
 **约束**：
 - `status` 必须是 `awaiting_confirm`，否则 `409 Conflict`
-- 输出必须通过 lint 规则，否则 `422 Unprocessable Entity`
+- 输出（含按块接受的重建内容）必须符合模板格式，否则 `422` / `FORMAT_VIOLATION`
+- 输出必须通过 lint 规则，否则 `422 Unprocessable Entity` / `AI_LINT_BLOCKED`
 
 #### `POST /api/ai/jobs/{id}/reject`
 
@@ -1158,7 +1174,7 @@ python super_sync.py --once        # 只执行一轮（自检）
 
 ```json
 {
-  "data": { "status": "ok", "version": "0.5.3" }
+  "data": { "status": "ok", "version": "0.5.4" }
 }
 ```
 

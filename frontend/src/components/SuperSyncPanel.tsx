@@ -336,7 +336,7 @@ export function SuperSyncPanel({ agents }: SuperSyncPanelProps) {
             <span className={`ss-dot ${stateClass}`} />
             <div style={{ flex: 1 }}>
               <div className="ss-status-title">{STATE_LABEL[stateClass] ?? stateClass}</div>
-              <div className="muted" style={{ fontSize: 12 }}>
+              <div className="muted text-sm">
                 独立脚本进程，即使关闭 Soulforge 主进程仍会持续运行
               </div>
             </div>
@@ -447,7 +447,7 @@ export function SuperSyncPanel({ agents }: SuperSyncPanelProps) {
                   />
                 </div>
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                  {dirty && <span className="muted" style={{ fontSize: 12 }}>有未保存修改</span>}
+                  {dirty && <span className="muted text-sm">有未保存修改</span>}
                   <button
                     className="btn btn-primary"
                     disabled={!dirty || saving}
@@ -547,7 +547,7 @@ export function SuperSyncPanel({ agents }: SuperSyncPanelProps) {
                       </tbody>
                     </table>
                   </div>
-                  <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                  <div className="muted text-sm mt-8">
                     共 {columns.length} 个文档 × {allAgentIds.length} 个 Agent；已勾选{' '}
                     {config.agents.length} 个 Agent /{' '}
                     {Object.values(config.files).reduce((sum, arr) => sum + arr.length, 0)} 个单元格。
@@ -564,14 +564,14 @@ export function SuperSyncPanel({ agents }: SuperSyncPanelProps) {
       {sub === 'logs' && (
         <div>
           <div className="ss-toolbar">
-            <span className="muted" style={{ fontSize: 12 }}>级别：</span>
+            <span className="muted text-sm">级别：</span>
             {LEVELS.map((lv) => (
               <label key={lv} className="checkbox-row" style={{ padding: '0 6px 0 0' }}>
                 <input type="checkbox" checked={levels.has(lv)} onChange={() => toggleLevel(lv)} />
-                <span style={{ fontSize: 12 }}>{lv}</span>
+                <span className="text-sm">{lv}</span>
               </label>
             ))}
-            <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>时间：</span>
+            <span className="muted text-sm ml-8">时间：</span>
             <input
               className="input"
               type="datetime-local"
@@ -608,7 +608,7 @@ export function SuperSyncPanel({ agents }: SuperSyncPanelProps) {
             </button>
           </div>
 
-          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+          <div className="muted text-sm mb-8">
             共 {logTotal} 条（日志留存 ≥ 30 天，可导出为 .jsonl）
           </div>
 
@@ -647,21 +647,21 @@ export function SuperSyncPanel({ agents }: SuperSyncPanelProps) {
                           });
                         }}
                       >
-                        <td className="mono" style={{ fontSize: 12 }}>
+                        <td className="mono text-sm">
                           {new Date(row.ts_unix * 1000).toLocaleString('zh-CN', { hour12: false })}
                         </td>
                         <td>
                           <span className={`ss-level ss-level-${row.level.toLowerCase()}`}>{row.level}</span>
                         </td>
-                        <td style={{ fontSize: 12 }}>{row.event}</td>
-                        <td className="mono" style={{ fontSize: 12 }}>
+                        <td className="text-sm">{row.event}</td>
+                        <td className="mono text-sm">
                           {row.path ?? row.message ?? '—'}
                           {isOpen && detail && <pre className="ss-log-diff">{detail}</pre>}
                         </td>
-                        <td className="mono" style={{ fontSize: 12 }}>
+                        <td className="mono text-sm">
                           {row.source_agent ? `${row.source_agent} → ${row.target_agent}` : '—'}
                         </td>
-                        <td style={{ fontSize: 12 }}>{row.result ?? '—'}</td>
+                        <td className="text-sm">{row.result ?? '—'}</td>
                       </tr>
                     );
                   })}

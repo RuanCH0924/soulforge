@@ -1,5 +1,7 @@
 /** 统一 fetch 封装：解包 {data, meta}，错误抛 ApiError {code, message, details} */
 
+import { reportOffline, reportOnline } from './connection';
+
 export class ApiError extends Error {
   code: string;
   details?: unknown;
@@ -42,8 +44,11 @@ export async function request<T>(method: string, url: string, opts?: RequestOpti
       body: opts?.form ? opts.form : opts?.json !== undefined ? JSON.stringify(opts.json) : undefined,
     });
   } catch {
+    reportOffline();
     throw new ApiError('NETWORK_ERROR', '无法连接服务器，请确认后端已启动（端口 8848）');
   }
+  // 拿到了 HTTP 响应（含 4xx/5xx）说明后端在线，只是本次请求业务失败
+  reportOnline();
 
   let json: unknown = null;
   try {
@@ -69,8 +74,10 @@ export async function downloadFile(url: string, fallbackName: string): Promise<v
   try {
     res = await fetch(url);
   } catch {
+    reportOffline();
     throw new ApiError('NETWORK_ERROR', '无法连接服务器，请确认后端已启动（端口 8848）');
   }
+  reportOnline();
   if (!res.ok) {
     throw new ApiError('HTTP_ERROR', `下载失败（HTTP ${res.status}）`);
   }

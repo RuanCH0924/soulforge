@@ -8,6 +8,10 @@ interface ConfirmDialogProps {
   cancelText?: string;
   danger?: boolean;
   busy?: boolean;
+  /** 可选的第三个按钮（位于「取消」与主按钮之间），用于需要「两条出路」的确认场景 */
+  secondaryText?: string;
+  secondaryDanger?: boolean;
+  onSecondary?: () => void;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -20,6 +24,9 @@ export function ConfirmDialog({
   cancelText = '取消',
   danger = false,
   busy = false,
+  secondaryText,
+  secondaryDanger = false,
+  onSecondary,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -33,6 +40,15 @@ export function ConfirmDialog({
           <button className="btn" onClick={onCancel} disabled={busy}>
             {cancelText}
           </button>
+          {secondaryText && onSecondary && (
+            <button
+              className={secondaryDanger ? 'btn btn-danger' : 'btn'}
+              onClick={onSecondary}
+              disabled={busy}
+            >
+              {secondaryText}
+            </button>
+          )}
           <button
             className={danger ? 'btn btn-danger' : 'btn btn-primary'}
             onClick={onConfirm}
