@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useToast } from '../hooks/useToast';
-import type { LLMProtocol, LLMProvider } from '../types';
+import type { LLMProtocol, LLMProvider, LLMReasoningEffort } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Modal } from './Modal';
 
@@ -26,11 +26,21 @@ interface FormState {
   max_tokens: number;
   temperature: number;
   timeout_seconds: number;
+  token_budget: number;
+  reasoning_effort: LLMReasoningEffort;
 }
+
+const REASONING_OPTIONS: { value: LLMReasoningEffort; label: string }[] = [
+  { value: '', label: '不设置' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+];
 
 const EMPTY_FORM: FormState = {
   id: '', base_url: '', api_key: '', model: '', protocol: 'openai-completions',
   enabled: true, max_tokens: 4096, temperature: 0.3, timeout_seconds: 60,
+  token_budget: 500_000, reasoning_effort: '',
 };
 
 /** LLM Provider 管理页（Step 2 UI）：列表 + 新增/编辑/删除 + 测试连通性，key 永远掩码 */
@@ -67,7 +77,9 @@ export function LLMProvidersModal({ onClose, embedded }: LLMProvidersModalProps)
   const openEdit = (p: LLMProvider) => {
     setForm({
       id: p.id, base_url: p.base_url, api_key: '', model: p.model, protocol: p.protocol,
-      enabled: p.enabled, max_tokens: p.max_tokens, temperature: p.temperature, timeout_seconds: p.timeout_seconds,
+      enabled: p.enabled, max_tokens: p.max_tokens, temperature: p.temperature,
+      timeout_seconds: p.timeout_seconds, token_budget: p.token_budget,
+      reasoning_effort: p.reasoning_effort,
     });
     setEditing(p.id);
   };
@@ -87,7 +99,9 @@ export function LLMProvidersModal({ onClose, embedded }: LLMProvidersModalProps)
         await api.createLLMProvider({
           id: form.id.trim(), base_url: form.base_url.trim(), api_key: form.api_key.trim(),
           model: form.model.trim(), protocol: form.protocol, enabled: form.enabled,
-          max_tokens: form.max_tokens, temperature: form.temperature, timeout_seconds: form.timeout_seconds,
+          max_tokens: form.max_tokens, temperature: form.temperature,
+          timeout_seconds: form.timeout_seconds, token_budget: form.token_budget,
+          reasoning_effort: form.reasoning_effort,
         });
         toast('Provider 已创建（已热加载）', 'success');
       } else if (editing) {
@@ -100,6 +114,8 @@ export function LLMProvidersModal({ onClose, embedded }: LLMProvidersModalProps)
           max_tokens: form.max_tokens,
           temperature: form.temperature,
           timeout_seconds: form.timeout_seconds,
+          token_budget: form.token_budget,
+          reasoning_effort: form.reasoning_effort,
         });
         toast('Provider 已更新（已热加载）', 'success');
       }
@@ -247,6 +263,34 @@ export function LLMProvidersModal({ onClose, embedded }: LLMProvidersModalProps)
                 value={form.timeout_seconds}
                 onChange={(e) => set('timeout_seconds', Number(e.target.value) || 60)}
               />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div className="field" style={{ flex: 1 }}>
+              <label title="日志标准化 / 记忆归纳「单批」的 token 上限；0 = 不限；建批次时快照进该批次">
+                单批 Token 预算
+              </label>
+              <input
+                type="number" className="input" min={0}
+                value={form.token_budget}
+                onChange={(e) => set('token_budget', Math.max(0, Number(e.target.value) || 0))}
+              />
+            </div>
+            <div className="field" style={{ flex: 1 }}>
+              <label title="映射为 OpenAI 兼容请求的 reasoning_effort；Anthropic 协议不生效">
+                思考强度（OpenAI 兼容）
+              </label>
+              <select
+                className="select"
+                value={form.reasoning_effort}
+                onChange={(e) => set('reasoning_effort', e.target.value as LLMReasoningEffort)}
+              >
+                {REASONING_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
           <label className="checkbox-row">

@@ -15,7 +15,7 @@ import type {
 import { formatBytes } from '../utils/format';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DailyPresetEditor } from './DailyPresetEditor';
-import { DiffView } from './DiffView';
+import { RichDiffView } from './RichDiffView';
 
 interface SummaryPanelProps {
   agents: AgentInfo[];
@@ -95,7 +95,6 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
   const [run, setRun] = useState<SummaryRun | null>(null);
   const [report, setReport] = useState<SummaryRunReport | null>(null);
   const [history, setHistory] = useState<SummaryRunSummary[]>([]);
-  const [rawDiff, setRawDiff] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmApply, setConfirmApply] = useState(false);
   const [confirmReject, setConfirmReject] = useState(false);
@@ -161,7 +160,6 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
     async (id: string) => {
       setBusy(true);
       setReport(null);
-      setRawDiff(false);
       setRunId(id);
       await loadRun(id);
       setStage('plan');
@@ -199,7 +197,6 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
         extra_instructions: extra.trim() || undefined,
       });
       setReport(null);
-      setRawDiff(false);
       setRunId(r.run_id);
       setStage('plan');
       await loadRun(r.run_id);
@@ -764,28 +761,14 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
               )}
 
               {run.status !== 'empty' && (
-                <>
-                  {run.unified_diff && (
-                    <div className="mt-8">
-                      <button className="btn btn-ghost btn-sm" onClick={() => setRawDiff((v) => !v)}>
-                        {rawDiff ? '收起原始差异' : '查看原始差异'}
-                      </button>
-                    </div>
-                  )}
-                  {rawDiff ? (
-                    <pre className="diff-view" style={{ maxHeight: 360 }}>
-                      {run.unified_diff || '（无差异）'}
-                    </pre>
-                  ) : (
-                    <div className="mt-6">
-                      <DiffView
-                        htmlDiff={run.html_diff ?? ''}
-                        identical={!run.unified_diff}
-                        identicalText="归纳结果与现有产物一致"
-                      />
-                    </div>
-                  )}
-                </>
+                <div className="mt-6">
+                  <RichDiffView
+                    unifiedDiff={run.unified_diff ?? ''}
+                    identical={!run.unified_diff}
+                    identicalText="归纳结果与现有产物一致"
+                    maxHeight="360px"
+                  />
+                </div>
               )}
             </div>
           </div>

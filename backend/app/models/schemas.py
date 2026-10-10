@@ -116,6 +116,8 @@ class SyncFilePlan(BaseModel):
     path: str
     similarity: float
     html_diff: str
+    #: 与 html_diff 同源；前端按 Markdown 渲染为「富文本差异」（见 RichDiffView）
+    unified_diff: str = ""
     size_src: int
     size_dst: int
     #: 有效内容是否一致（一致时该文件无需同步）
@@ -359,6 +361,8 @@ class PresetVersionInfo(BaseModel):
 # ---------- Phase 2.5 · M12 LLM Provider 接入 ----------
 
 LLMProtocol = Literal["openai-completions", "anthropic-messages"]
+#: 思考强度："" = 不发送该参数；其余映射到 OpenAI 兼容协议的 `reasoning_effort`
+ReasoningEffort = Literal["", "low", "medium", "high"]
 
 
 class LLMProviderCreate(BaseModel):
@@ -371,6 +375,10 @@ class LLMProviderCreate(BaseModel):
     max_tokens: int = Field(4096, ge=1, le=1_000_000)
     temperature: float = Field(0.3, ge=0.0, le=2.0)
     timeout_seconds: int = Field(60, ge=1, le=600)
+    token_budget: int = Field(500_000, ge=0, le=100_000_000,
+                              description="单批 token 预算（日志标准化 / 记忆归纳共用），0 = 不限")
+    reasoning_effort: ReasoningEffort = Field(
+        "", description="思考强度：'' = 不发送；仅 OpenAI 兼容协议生效")
 
 
 class LLMProviderUpdate(BaseModel):
@@ -382,6 +390,8 @@ class LLMProviderUpdate(BaseModel):
     max_tokens: int | None = Field(None, ge=1, le=1_000_000)
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     timeout_seconds: int | None = Field(None, ge=1, le=600)
+    token_budget: int | None = Field(None, ge=0, le=100_000_000)
+    reasoning_effort: ReasoningEffort | None = Field(None, description="'' = 清除（不发送）")
 
 
 class LLMProviderOut(BaseModel):
@@ -396,6 +406,8 @@ class LLMProviderOut(BaseModel):
     max_tokens: int
     temperature: float
     timeout_seconds: int
+    token_budget: int
+    reasoning_effort: str
     created_at: int
     updated_at: int
 

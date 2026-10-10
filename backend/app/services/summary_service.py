@@ -286,7 +286,7 @@ class SummaryService:
             raise BadRequestError("date_from 不能晚于 date_to",
                                   details={"date_from": date_from, "date_to": date_to})
         preset = self.presets.get(payload.preset_id)          # 不存在 → 404
-        self.llm.get_provider(payload.provider_id)            # 不存在/禁用 → 404
+        provider = self.llm.get_provider(payload.provider_id)  # 不存在/禁用 → 404
 
         cfg = self.config.summarizer
         span_days = (_date.fromisoformat(date_to) - _date.fromisoformat(date_from)).days + 1
@@ -324,7 +324,7 @@ class SummaryService:
                 output_path=output_path, source_count=len(entries),
                 source_hashes_json=json.dumps(hashes, ensure_ascii=False),
                 sources_json=json.dumps(entries, ensure_ascii=False),
-                token_budget=cfg.token_budget,
+                token_budget=provider.token_budget,
                 error=None if entries else "该日期范围内没有可归纳的记录（memory/ 顶层没有符合日文件名模式的 .md）",
                 created_at=now, updated_at=now, finished_at=None if entries else now,
             ))
@@ -333,7 +333,7 @@ class SummaryService:
         self.audit.record("summary_run_create", agent_id, output_path, {
             "run_id": run_id, "sources": len(entries), "date_from": date_from, "date_to": date_to,
             "preset_id": preset.id, "preset_version": preset.version, "provider_id": payload.provider_id,
-            "output_path": output_path, "token_budget": cfg.token_budget,
+            "output_path": output_path, "token_budget": provider.token_budget,
         })
         if entries:
             asyncio.create_task(self.execute(run_id))

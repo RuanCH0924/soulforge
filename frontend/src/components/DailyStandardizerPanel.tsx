@@ -16,7 +16,7 @@ import type {
 import { formatBytes } from '../utils/format';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DailyPresetEditor } from './DailyPresetEditor';
-import { DiffView } from './DiffView';
+import { RichDiffView } from './RichDiffView';
 
 interface DailyStandardizerPanelProps {
   agents: AgentInfo[];
@@ -105,11 +105,11 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
   const [report, setReport] = useState<DailyRunReport | null>(null);
   const [history, setHistory] = useState<DailyRunSummary[]>([]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [rawDiff, setRawDiff] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [confirmApply, setConfirmApply] = useState(false);
   const [applyAll, setApplyAll] = useState(false);
   const [confirmReject, setConfirmReject] = useState(false);
+  const [confirmRebuild, setConfirmRebuild] = useState(false);
   /** 正在页内编辑的工作日志预设 id（null = 未打开编辑器） */
   const [editPresetId, setEditPresetId] = useState<string | null>(null);
 
@@ -312,6 +312,51 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
     }
   }, [runId, loadHistory, agentId, toast]);
 
+  /** 重试失败 / 被写前验收拦下的日子（同一批次内重新生成计划） */
+  const doRetry = useCallback(async () => {
+    if (!runId) return;
+    setBusy(true);
+    try {
+      setRun(await api.retryDailyRun(runId));
+      toast('已重试失败 / 被拦下的日子，正在重新生成计划…', 'info');
+      void loadHistory(agentId);
+    } catch (e) {
+      toast(`重试失败：${(e as Error).message}`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }, [runId, loadHistory, agentId, toast]);
+
+  /** 作废当前批次 + 用同参数新建一个批次重跑（同内容会命中幂等键复用，故必须先作废） */
+  const doRebuild = useCallback(async () => {
+    if (!run) return;
+    setBusy(true);
+    try {
+      if (!TERMINAL_RUNS.includes(run.status)) {
+        await api.rejectDailyRun(run.id);
+      }
+      const r = await api.createDailyRun({
+        agent_id: run.agent_id,
+        date_from: run.date_from,
+        date_to: run.date_to,
+        preset_id: run.preset_id,
+        provider_id: run.provider_id,
+        extra_instructions: run.extra_instructions ?? undefined,
+      });
+      setReport(null);
+      setChecked(new Set());
+      setRunId(r.run_id);
+      await loadRun(r.run_id);
+      void loadHistory(run.agent_id);
+      toast(`已重建批次（可执行 ${r.days_total} 天）`, 'success');
+    } catch (e) {
+      toast(`重建批次失败：${(e as Error).message}`, 'error');
+    } finally {
+      setBusy(false);
+      setConfirmRebuild(false);
+    }
+  }, [run, loadRun, loadHistory, toast]);
+
   const toggleChecked = (date: string) => {
     setChecked((prev) => {
       const next = new Set(prev);
@@ -321,17 +366,13 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
     });
   };
 
-  const toggleRaw = (date: string) => {
-    setRawDiff((prev) => {
-      const next = new Set(prev);
-      if (next.has(date)) next.delete(date);
-      else next.add(date);
-      return next;
-    });
-  };
-
   const generating = run?.status === 'planned';
   const applicable = useMemo(() => (run?.items ?? []).filter(isApplicable), [run?.items]);
+  /** 可重试的日子：生成失败 / 写前验收不过 */
+  const retryable = useMemo(
+    () => (run?.items ?? []).filter((i) => i.status === 'failed' || i.status === 'blocked'),
+    [run?.items],
+  );
   const hasDelivered = useMemo(
     () =>
       (run?.items ?? []).some(
@@ -799,28 +840,14 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
 
                   {/* 空日没有归并结果，不展示 diff（否则会误显示「与当前文件一致」） */}
                   {item.status !== 'empty' && (
-                    <>
-                      {item.unified_diff && (
-                        <div className="mt-8">
-                          <button className="btn btn-ghost btn-sm" onClick={() => toggleRaw(item.date)}>
-                            {rawDiff.has(item.date) ? '收起原始差异' : '查看原始差异'}
-                          </button>
-                        </div>
-                      )}
-                      {rawDiff.has(item.date) ? (
-                        <pre className="diff-view" style={{ maxHeight: 320 }}>
-                          {item.unified_diff || '（无差异）'}
-                        </pre>
-                      ) : (
-                        <div className="mt-6">
-                          <DiffView
-                            htmlDiff={item.html_diff ?? ''}
-                            identical={!item.unified_diff}
-                            identicalText="归并结果与当前文件一致"
-                          />
-                        </div>
-                      )}
-                    </>
+                    <div className="mt-6">
+                      <RichDiffView
+                        unifiedDiff={item.unified_diff ?? ''}
+                        identical={!item.unified_diff}
+                        identicalText="归并结果与当前文件一致"
+                        maxHeight="320px"
+                      />
+                    </div>
                   )}
                 </div>
               </div>
@@ -858,6 +885,26 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
               title="跳过已勾选的日期（不改写这些天）"
             >
               跳过选中
+            </button>
+            <button
+              className="btn"
+              disabled={!run || busy || generating || retryable.length === 0}
+              onClick={() => void doRetry()}
+              title={
+                retryable.length > 0
+                  ? `重新生成 ${retryable.length} 个失败 / 被拦下的日子`
+                  : '本批没有可重试的日子'
+              }
+            >
+              重试失败的天{retryable.length > 0 ? `（${retryable.length}）` : ''}
+            </button>
+            <button
+              className="btn"
+              disabled={!run || busy || generating}
+              onClick={() => setConfirmRebuild(true)}
+              title="作废当前批次，并用同一 Agent / 范围 / 预设 / Provider 新建批次重跑"
+            >
+              拒绝并重建
             </button>
             <button
               className="btn btn-danger"
@@ -920,6 +967,31 @@ export function DailyStandardizerPanel({ agents }: DailyStandardizerPanelProps) 
             <p>
               拒绝后该批次作废，<b>不会写入或删除任何文件</b>。
             </p>
+          }
+        />
+      )}
+
+      {confirmRebuild && run && (
+        <ConfirmDialog
+          title="拒绝并重建批次"
+          danger
+          busy={busy}
+          confirmText="确认重建"
+          cancelText="取消"
+          onConfirm={() => void doRebuild()}
+          onCancel={() => setConfirmRebuild(false)}
+          message={
+            <>
+              <p>
+                将先作废当前批次 {run.status === 'applied' || run.status === 'partially_applied'
+                  ? '（已写入的文件不会回滚）'
+                  : '（未写入任何文件）'}
+                ，再用同一 Agent / 范围 / 预设 / Provider 新建一个批次重跑。
+              </p>
+              <p className="hint">
+                用途：批次里已有部分日子成功、剩下的想整体重来时；只想补跑失败的日子，用「重试失败的天」更省 token。
+              </p>
+            </>
           }
         />
       )}

@@ -103,14 +103,12 @@ class Registry:
             "openclaw": {"dir": str(c.openclaw_dir)},
             "daily_standardizer": {
                 "max_days_per_run": c.daily_standardizer.max_days_per_run,
-                "token_budget": c.daily_standardizer.token_budget,
                 "provider_id": c.daily_standardizer.provider_id,
                 "dry_run_only": c.daily_standardizer.dry_run_only,
                 "auto_delete_meaningless_logs": c.daily_standardizer.auto_delete_meaningless_logs,
             },
             "summarizer": {
                 "max_days_per_run": c.summarizer.max_days_per_run,
-                "token_budget": c.summarizer.token_budget,
                 "provider_id": c.summarizer.provider_id,
                 "dry_run_only": c.summarizer.dry_run_only,
             },
@@ -152,12 +150,12 @@ class Registry:
             if "show_other" in patch["advanced"]:
                 c.advanced.show_other = patch["advanced"]["show_other"]
         if "daily_standardizer" in patch:
-            for key in ("max_days_per_run", "token_budget", "provider_id", "dry_run_only",
+            for key in ("max_days_per_run", "provider_id", "dry_run_only",
                         "auto_delete_meaningless_logs"):
                 if key in patch["daily_standardizer"]:
                     setattr(c.daily_standardizer, key, patch["daily_standardizer"][key])
         if "summarizer" in patch:
-            for key in ("max_days_per_run", "token_budget", "provider_id", "dry_run_only"):
+            for key in ("max_days_per_run", "provider_id", "dry_run_only"):
                 if key in patch["summarizer"]:
                     setattr(c.summarizer, key, patch["summarizer"][key])
 

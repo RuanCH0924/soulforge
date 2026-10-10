@@ -3,7 +3,7 @@ import { api } from '../api';
 import { isRoleVisible, useSettings } from '../hooks/useSettings';
 import { useToast } from '../hooks/useToast';
 import { ConfirmDialog } from './ConfirmDialog';
-import { DiffView } from './DiffView';
+import { RichDiffView } from './RichDiffView';
 import { Modal } from './Modal';
 import type { AgentInfo, SyncPlanResult } from '../types';
 import { formatBytes, similarityColor, similarityPercent } from '../utils/format';
@@ -235,8 +235,8 @@ export function SyncModal({ agents, onClose, onDone, embedded }: SyncModalProps)
                   </span>
                 </label>
                 <div style={{ padding: '0 10px 10px' }}>
-                  <DiffView
-                    htmlDiff={f.html_diff}
+                  <RichDiffView
+                    unifiedDiff={f.unified_diff}
                     identical={f.identical}
                     noiseKinds={f.noise_kinds}
                     identicalText="有效内容一致，同步不会改变业务内容"

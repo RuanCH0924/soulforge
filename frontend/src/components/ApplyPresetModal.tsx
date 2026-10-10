@@ -7,6 +7,7 @@ import type { DiffHunk } from '../utils/unifiedDiff';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DiffHunkPicker } from './DiffHunkPicker';
 import { Modal } from './Modal';
+import { RichDiffView } from './RichDiffView';
 
 interface ApplyPresetModalProps {
   agentId: string;
@@ -220,9 +221,11 @@ export function ApplyPresetModal({ agentId, filePath, onClose, onDone }: ApplyPr
               />
             </>
           ) : (
-            <pre className="diff-view" style={{ maxHeight: '55vh' }}>
-              {plan.unified_diff || '（内容已符合预设结构，无需改动）'}
-            </pre>
+            <RichDiffView
+              unifiedDiff={plan.unified_diff}
+              emptyText="（内容已符合预设结构，无需改动）"
+              maxHeight="55vh"
+            />
           )}
         </>
       )}

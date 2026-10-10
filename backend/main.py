@@ -124,7 +124,10 @@ def create_app(registry: Registry | None = None) -> FastAPI:
         file = FRONTEND_DIST / path
         if path and file.is_file():
             return FileResponse(file)
-        return FileResponse(FRONTEND_DIST / "index.html")
+        # index.html 必须每次回源校验：否则浏览器会拿启发式缓存里的旧 index.html
+        # （其引用的 assets 哈希已随构建变化）→ 前端重新构建后「刷新看不到变化」。
+        # 带内容哈希的 /assets/* 仍可长期缓存，不受影响。
+        return FileResponse(FRONTEND_DIST / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app
 

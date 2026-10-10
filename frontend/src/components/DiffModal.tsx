@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { isRoleVisible, useSettings } from '../hooks/useSettings';
 import { useToast } from '../hooks/useToast';
-import { DiffView } from './DiffView';
 import { Modal } from './Modal';
+import { RichDiffView } from './RichDiffView';
 import type { AgentInfo, DiffMode, DiffResult, FileInfo } from '../types';
 import { similarityColor, similarityPercent } from '../utils/format';
 
@@ -224,8 +224,8 @@ export function DiffModal({ agents, initialAgent, onClose, embedded }: DiffModal
             </div>
             <span>{similarityPercent(diff.similarity)}</span>
           </div>
-          <DiffView
-            htmlDiff={diff.html_diff}
+          <RichDiffView
+            unifiedDiff={diff.unified_diff}
             identical={diff.identical}
             noiseKinds={diff.noise_kinds}
           />

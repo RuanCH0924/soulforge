@@ -240,6 +240,8 @@ CREATE TABLE llm_providers (
     max_tokens          INTEGER NOT NULL DEFAULT 4096,
     temperature         REAL NOT NULL DEFAULT 0.3,
     timeout_seconds     INTEGER NOT NULL DEFAULT 60,
+    token_budget        INTEGER NOT NULL DEFAULT 500000,  -- 单批 token 预算（M15/M16 共用），0 = 不限
+    reasoning_effort    TEXT NOT NULL DEFAULT '',         -- 思考强度 '' | low | medium | high（OpenAI 兼容协议）
     created_at          INTEGER NOT NULL,
     updated_at          INTEGER NOT NULL
 );
@@ -625,11 +627,12 @@ dir = ""                              # 空 = 使用自动探测结果
 
 [daily_standardizer]                  # M15 工作日志标准化（手动批次，无定时字段）
 max_days_per_run = 31                 # 单批天数上限，超过则创建批次直接 400
-token_budget = 200000                 # 单批 token 预算，越限即中止（0 = 不限）
 provider_id = ""                      # 默认 provider（UI 可覆盖）
 dry_run_only = false                  # true = 全局「只出计划」：apply 直接 403
 auto_delete_meaningless_logs = false  # true = 启用大模型无意义日志自动删除（删除前备份 7 天）
 ```
+> 单批 `token_budget` 已迁到 LLM Provider（`llm_providers.token_budget`，默认 500000，`0` = 不限）：
+> 建批次时按所选 Provider 快照进 `daily_runs.token_budget` / `summary_runs.token_budget`。
 
 ### 7.1 无意义日志归档（文件存储，不进 DB）
 

@@ -34,6 +34,8 @@
 | v1.18 | 2026-10-02 | **可访问性与交互一致性（P0/P1）**：① 模态统一走 `Modal` 的 dialog 语义 + 焦点陷阱 + 打开聚焦 / 关闭归还焦点，Esc 只关最上层（修复「弹窗内再开确认框会被一起关掉」）；② Toast 增加 `role="status"/"alert"`、手动关闭、悬停/聚焦暂停、错误停留更久；③ 命令面板补齐 combobox / listbox / option 与 `aria-activedescendant`；④ 新增 `:focus-visible` 焦点环与 `prefers-reduced-motion`；⑤ 工作台原生 `window.confirm` 全部替换为 `ConfirmDialog`（`App.tsx` 的 `confirmAction()`）；⑥ 侧边导航图标由字符字形（`⌂ ⇄ ◇ ⚙`）改为内联 SVG（`SideNav.tsx` 的 `NavIcon`），并补 `aria-current="page"` 标记当前页；⑦ 保存冲突（409）由死胡同 toast 改为「重新加载 / 覆盖保存 / 取消」恢复对话框（`ConfirmDialog` 新增可选第三按钮 `secondaryText` / `onSecondary`）；⑧ 内联样式收敛：高频纯排版的字号 / 间距改为绑定 token 的排版工具类（`.text-xs` / `.text-sm` / `.ml-*` / `.mt-*` / `.mb-8` / `.min-w-0`），共迁移 85 处、内联 `style` 由 254 降至 169；⑨ 全量 lint 扫描改为前端编排的「单飞共享扫描」（逐 Agent 串行调用 `GET /api/lint/{agent_id}`，与 `/api/lint/all` 同口径），状态栏 / 检查报告 / 统计面板共用同一轮扫描，新增「已完成 N / 共 M」进度与取消（取消后标注结果不完整）。一致性核对表新增 7 行、修订 1 行 |
 | v1.19 | 2026-10-02 | **断连恢复（P2）**：后端连通性改为「由每次请求上报」的单一信号（`api/connection.ts`：拿到 HTTP 响应即在线，`fetch` 抛错即离线），不再只在启动时探测一次；断连时顶部出现横幅、状态栏连接点变灰并提供「重连」，每 5s 自动探测 `/api/health`，恢复后自动重载 Agent 列表 / 统计 / lint 并保留当前选中的 Agent；断连期间进行中的 lint 扫描立即中止并标记失败，不把残缺结果当成功 |
 | v1.20 | 2026-10-02 | **P2 收尾三项**：① **快捷键帮助浮层**——按 `?`（输入框 / 编辑器聚焦时不触发）或经命令面板「键盘快捷键」打开，列出完整快捷键表（与 §七 一致），命令面板索引动作数 15 → 16；② **编辑器分包预取**——首屏渲染后在空闲时预取 Monaco 分包（`requestIdleCallback`，超时 4s；不支持则 2s 延时），缩短首次打开文档的等待；③ **差异「按块接受」**——应用预设 / AI 整理 的差异预览改为逐 hunk 勾选（默认全接受，可全选 / 全不选），只有「全部接受能精确重建目标内容」时才启用（`canRebuild`，否则退回整段 diff + 整体应用）；AI 路径的部分内容仍走同一套模板格式 + lint 闸门（`POST /api/ai/jobs/{id}/apply` 新增可选 `content`），预设路径经乐观锁写入。一致性核对表新增 3 行、修订 1 行 |
+| v1.21 | 2026-10-10 | **差异展示改为「富文本对比」**：全项目差异视图（对比 / 回滚 / 同步 / 应用预设 / AI 整理 / 日志标准化 / 日志总结）由「统一 diff 上色（`+++` / `---` / `@@` + 单栏 `+/-`）」改为**渲染后富文本对比**——新增 `utils/markdownDiff.ts` + `components/RichDiffView.tsx`，按 hunk 拆成「新增绿 / 删除红 / 上下文」块并逐块 Markdown 渲染，diff 记法折叠进「原始差异」；删除旧 `components/DiffView.tsx`，`DiffHunkPicker` 同步改富文本块渲染（保留逐块勾选）；`SyncFilePlan` 新增 `unified_diff` 字段。一致性核对表修订 1 行、新增 1 行 |
+| v1.22 | 2026-10-10 | **LLM Provider 增强 + 批次重试**：① Provider 表/表单新增「单批 Token 预算」（默认 50 万，`0`=不限；批次预算改由所选 Provider 快照，全局 `config` 的 `token_budget` 移除）与「思考强度 reasoning_effort」（`不设置/低/中/高`，仅 OpenAI 兼容协议生效）；② 日志标准化计划页新增「重试失败的天」（`POST /api/daily-runs/{id}/retry`，同批次内重跑 failed/blocked 的日子、token 累计，且**预算按最新 Provider 配置刷新**）与「拒绝并重建」（作废当前批次 + 同参数新建） |
 
 ---
 
@@ -287,7 +289,7 @@
 
 - `identical = true`（有效内容一致）→ **不再显示空的差异框**，改为显示绿色结论「内容完全一致，无差异」；
   若原始字节不同，追加一行说明「原始文件仅存在格式噪声差异（已忽略）：<噪声类型>」，**判定过程不静默**；
-- `identical = false` → 显示行内高亮差异（`diff-add` / `diff-del` / `diff-hunk`）；
+- `identical = false` → **富文本差异视图**（`RichDiffView`）：把 unified diff 按 hunk 拆成「新增（绿）/ 删除（红）/ 上下文（原样）」块，**每块按 Markdown 渲染**（复用 `utils/markdown.ts` 的 `marked + DOMPurify`），不再直接展示 `--- / +++ / @@ / +/-` 记法；diff 记法收进「原始差异」折叠。同一组件覆盖对比 / 回滚 / 同步 / 应用预设 / AI 整理 / 日志标准化 / 日志总结；「按块接受」视图（`DiffHunkPicker`）同样改为富文本块渲染，保留逐块勾选语义；
 - 相似度在归一化文本上计算，**内容一致时恒为 100%**，不会再出现「看起来一样却显示 99%」；
 - 默认 Agent A / B 自动选择为**两个不同 Agent**，不会出现「自己和自己比」。
 
@@ -460,6 +462,7 @@
 | 对比噪声类型集合 | 8 种（bom / line_ending / invisible_char / space_like_char / trailing_whitespace / multiple_spaces / blank_lines / edge_blank_lines） | `diff_service.py` `_NOISE_STAGES` |
 | 相似度行级降级阈值 | 20000 字符 | `diff_service.py` `LINE_SIMILARITY_THRESHOLD` |
 | 差异视图渲染口径 | `display_text`（保留空行与缩进） | `diff_service.py` `display_text` |
+| 差异**展示**形态 | 「富文本对比」：按 hunk 拆块 + 逐块 Markdown 渲染（不再展示 `+++/---/@@/+/-`）；原始 diff 折叠可见；一致态显示绿色结论 | `utils/markdownDiff.ts`、`components/RichDiffView.tsx`、`components/DiffHunkPicker.tsx` |
 | 自动保存防抖 | 2s | `App.tsx` 自动保存 effect |
 | 编辑器默认视图模式 | `edit`（源码编辑） | `components/EditorPane.tsx` `loadViewMode` |
 | 文档 token 提示阈值 | 2000 | `EditorPane.tsx` `TOKEN_WARN_THRESHOLD` |

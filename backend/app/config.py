@@ -69,7 +69,6 @@ class DailyStandardizerConfig:
     """工作日志标准化（M15）护栏。触发方式是手动批次，**不含任何定时字段**。
 
     - `max_days_per_run`：单批天数上限（防失控）
-    - `token_budget`：单批 token 预算，0 = 不限；越限即中止该批次且不写入任何文件
     - `provider_id`：默认 LLM provider（UI 可覆盖）
     - `dry_run_only`：全局「关闭执行（只出计划）」开关，异常时一键降级为 dry-run
     - `auto_delete_meaningless_logs`：是否启用「大模型无意义日志自动删除」。
@@ -80,7 +79,6 @@ class DailyStandardizerConfig:
     """
 
     max_days_per_run: int = 31
-    token_budget: int = 200_000
     provider_id: str = ""
     dry_run_only: bool = False
     auto_delete_meaningless_logs: bool = False
@@ -91,13 +89,11 @@ class SummarizerConfig:
     """工作日志总结（记忆归纳，M16）护栏。触发方式同样是手动批次，**不含任何定时字段**。
 
     - `max_days_per_run`：单次归纳的日期跨度上限（天）
-    - `token_budget`：单次 token 预算，0 = 不限
     - `provider_id`：默认 LLM provider（UI 可覆盖）
     - `dry_run_only`：全局「关闭执行（只出计划）」开关
     """
 
     max_days_per_run: int = 62
-    token_budget: int = 300_000
     provider_id: str = ""
     dry_run_only: bool = False
 
@@ -189,7 +185,6 @@ def load_config() -> Config:
         openclaw=OpenClawConfig(dir=str(openclaw_dir)),
         daily_standardizer=DailyStandardizerConfig(
             max_days_per_run=int(daily_raw.get("max_days_per_run", 31)),
-            token_budget=int(daily_raw.get("token_budget", 200_000)),
             provider_id=str(daily_raw.get("provider_id", "")),
             dry_run_only=bool(daily_raw.get("dry_run_only", False)),
             auto_delete_meaningless_logs=bool(
@@ -197,7 +192,6 @@ def load_config() -> Config:
         ),
         summarizer=SummarizerConfig(
             max_days_per_run=int(summary_raw.get("max_days_per_run", 62)),
-            token_budget=int(summary_raw.get("token_budget", 300_000)),
             provider_id=str(summary_raw.get("provider_id", "")),
             dry_run_only=bool(summary_raw.get("dry_run_only", False)),
         ),

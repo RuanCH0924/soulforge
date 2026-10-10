@@ -31,6 +31,8 @@ CALLS: list[list[dict]] = []
 OUTPUT_OVERRIDE: list[str | None] = [None]
 # 按日期指定输出（多日批次里需要逐日不同输出时用），优先级高于 OUTPUT_OVERRIDE
 OUTPUT_OVERRIDE_BY_DAY: dict[str, str] = {}
+# 按日期让 LLM 调用抛错（用于构造「生成失败」的日期，测试重试）
+FAIL_BY_DAY: dict[str, str] = {}
 _PROMPT_DATE_RE = re.compile(r"把 (\d{4}-\d{2}-\d{2}) 这一天")
 
 
@@ -61,6 +63,8 @@ async def _fake_chat(self, messages, max_tokens=None, temperature=None):
     user = messages[-1]["content"]
     match = _PROMPT_DATE_RE.search(user)
     date = match.group(1) if match else _CURRENT_DATE[0]
+    if date in FAIL_BY_DAY:
+        raise RuntimeError(FAIL_BY_DAY[date])
     if date in OUTPUT_OVERRIDE_BY_DAY:
         content = OUTPUT_OVERRIDE_BY_DAY[date]
     elif OUTPUT_OVERRIDE[0] is not None:
@@ -84,6 +88,7 @@ def prepared(client, registry, monkeypatch):
     CALLS.clear()
     OUTPUT_OVERRIDE[0] = None
     OUTPUT_OVERRIDE_BY_DAY.clear()
+    FAIL_BY_DAY.clear()
     return client, registry
 
 
@@ -372,9 +377,10 @@ def test_max_days_per_run_is_enforced(prepared, monkeypatch):
     assert "超过单批上限" in res.json()["error"]["message"]
 
 
-def test_token_budget_stops_batch_and_writes_nothing(prepared, monkeypatch):
+def test_token_budget_stops_batch_and_writes_nothing(prepared):
     client, registry = prepared
-    monkeypatch.setattr(registry.config.daily_standardizer, "token_budget", 200)
+    # 预算挂在 Provider 上（M15 / M16 共用），建批次时快照进 run
+    client.put(f"/api/llm/providers/{PROVIDER['id']}", json={"token_budget": 200})
     _seed_multi_source_day(registry, "2026-11-14")
     _seed_multi_source_day(registry, "2026-11-15")
     _seed_multi_source_day(registry, "2026-11-16")
@@ -410,6 +416,85 @@ def test_dry_run_only_blocks_apply(prepared, monkeypatch):
     assert res.status_code == 403
     assert res.json()["error"]["code"] == "DAILY_RUN_DISABLED"
     assert (_root(registry) / "memory/2026-11-16-1415.md").exists()
+
+
+# ---------- 重试：批次内重跑失败 / 被拦下的日子 ----------
+
+def test_retry_regenerates_failed_days_only(prepared):
+    client, registry = prepared
+    _seed_multi_source_day(registry, "2026-11-17")
+    _seed_multi_source_day(registry, "2026-11-18")
+    _CURRENT_DATE[0] = "2026-11-17"
+    FAIL_BY_DAY["2026-11-17"] = "上游 500"          # 17 日生成失败
+    run_id = _create(client, "2026-11-17", "2026-11-18").json()["data"]["run_id"]
+    run = _wait_run(client, run_id)
+    by_date = {i["date"]: i for i in run["items"]}
+    assert by_date["2026-11-17"]["status"] == drs.ITEM_FAILED
+    assert by_date["2026-11-18"]["status"] == drs.ITEM_PLANNED
+    assert run["tokens_used"] == 150                # 只有 18 日成功那一次计入
+
+    # 上游恢复后重试：只重跑 17 日，18 日不动
+    calls_before = len(CALLS)
+    FAIL_BY_DAY.clear()
+    res = client.post(f"/api/daily-runs/{run_id}/retry")
+    assert res.status_code == 200
+    assert res.json()["data"]["status"] == drs.RUN_PLANNED     # 立即进入生成中
+    run2 = _wait_run(client, run_id)
+    by_date = {i["date"]: i for i in run2["items"]}
+    assert by_date["2026-11-17"]["status"] == drs.ITEM_PLANNED
+    assert len(CALLS) - calls_before == 1           # 只重跑了失败的那一天
+    assert run2["tokens_used"] == 300               # 150 + 150：用量累计、预算不重置
+    assert run2["status"] == drs.RUN_AWAITING
+
+
+def test_retry_refreshes_budget_from_provider(prepared):
+    """重试按最新 Provider 配置刷新批次预算，而不是沿用建批次时的旧快照。"""
+    client, registry = prepared
+    client.put(f"/api/llm/providers/{PROVIDER['id']}", json={"token_budget": 200})
+    _seed_multi_source_day(registry, "2026-11-25")
+    _seed_multi_source_day(registry, "2026-11-26")
+    _CURRENT_DATE[0] = "2026-11-25"
+    FAIL_BY_DAY["2026-11-25"] = "上游 500"
+    run_id = _create(client, "2026-11-25", "2026-11-26").json()["data"]["run_id"]
+    run = _wait_run(client, run_id)
+    assert run["token_budget"] == 200                       # 建批次时快照的旧预算
+
+    # 在设置里把预算调大后重试：批次预算要立即取到最新值
+    FAIL_BY_DAY.clear()
+    client.put(f"/api/llm/providers/{PROVIDER['id']}", json={"token_budget": 500_000})
+    res = client.post(f"/api/daily-runs/{run_id}/retry")
+    assert res.status_code == 200
+    assert res.json()["data"]["token_budget"] == 500_000
+    run2 = _wait_run(client, run_id)
+    assert run2["token_budget"] == 500_000
+
+
+def test_retry_without_failed_days_is_bad_request(prepared):
+    client, registry = prepared
+    _seed_multi_source_day(registry, "2026-11-19")
+    _CURRENT_DATE[0] = "2026-11-19"
+    run_id = _create(client, "2026-11-19", "2026-11-19").json()["data"]["run_id"]
+    _wait_run(client, run_id)
+    res = client.post(f"/api/daily-runs/{run_id}/retry")
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "BAD_REQUEST"
+
+
+def test_retry_blocked_days_after_apply(prepared):
+    """写前验收拦下的日子（blocked）也可重试。"""
+    client, registry = prepared
+    _seed_multi_source_day(registry, "2026-11-20")
+    _CURRENT_DATE[0] = "2026-11-20"
+    OUTPUT_OVERRIDE[0] = _doc("2026-11-20", extra="\n- **Session Key**: agent:alpha:main\n")
+    run_id = _create(client, "2026-11-20", "2026-11-20").json()["data"]["run_id"]
+    _wait_run(client, run_id)
+    client.post(f"/api/daily-runs/{run_id}/apply", json={"apply_all": True})
+
+    res = client.post(f"/api/daily-runs/{run_id}/retry")
+    assert res.status_code == 200
+    run = _wait_run(client, run_id)
+    assert run["items"][0]["status"] == drs.ITEM_PLANNED     # 重新生成计划，blocked 状态被清除
+    assert run["status"] == drs.RUN_AWAITING
 
 
 # ---------- 「本日无可归档内容」：模型决策不产出日文件 ----------

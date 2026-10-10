@@ -44,6 +44,10 @@ class LLMProvider:
     max_tokens: int = 4096
     temperature: float = 0.3
     timeout_seconds: int = 60
+    #: 单批 token 预算（M15 / M16 共用）；0 = 不限
+    token_budget: int = 500_000
+    #: 思考强度（"" = 不发送；low / medium / high）
+    reasoning_effort: str = ""
 
 
 @dataclass
@@ -138,6 +142,9 @@ class LLMClient:
             "max_tokens": max_tokens or self.provider.max_tokens,
             "temperature": temperature if temperature is not None else self.provider.temperature,
         }
+        if self.provider.reasoning_effort:
+            # 仅 OpenAI 兼容协议；空值不发送，避免不支持该字段的上游返回 400
+            payload["reasoning_effort"] = self.provider.reasoning_effort
         headers = {"Authorization": f"Bearer {self.provider.api_key}", "Content-Type": "application/json"}
         data = await self._post(url, headers, payload)
         choice = data["choices"][0]
@@ -183,8 +190,22 @@ class LLMClient:
         try:
             async with httpx.AsyncClient(timeout=self.provider.timeout_seconds) as client:
                 resp = await client.post(url, headers=headers, json=payload)
+        except httpx.TimeoutException as e:
+            # 超时异常（httpcore.TimeoutException 无消息）的 str 常为空，只拼 {e} 会得到
+            # 「…失败：」这种没有原因的报错；这里显式补上类型与超时上限，便于定位。
+            raise LLMRequestError(
+                f"请求 {url} 超时（{self.provider.timeout_seconds}s 内未完成，{type(e).__name__}）；"
+                f"可在「设置 → LLM Provider」调大该 provider 的 timeout_seconds 后重试",
+                details={"provider": self.provider.id, "kind": type(e).__name__,
+                         "timeout_seconds": self.provider.timeout_seconds},
+            ) from e
         except httpx.HTTPError as e:
-            raise LLMRequestError(f"请求 {url} 失败：{e}", details={"provider": self.provider.id}) from e
+            # 部分网络异常的 str 也可能为空 → 退化为异常类型名，绝不给出「无原因」的报错。
+            reason = str(e) or type(e).__name__
+            raise LLMRequestError(
+                f"请求 {url} 失败：{reason}",
+                details={"provider": self.provider.id, "kind": type(e).__name__},
+            ) from e
         if resp.status_code >= 400:
             raise LLMRequestError(
                 f"{self.provider.protocol} 调用失败（HTTP {resp.status_code}）：{resp.text[:300]}",
@@ -209,6 +230,8 @@ class LLMRegistry:
             id=row.id, base_url=row.base_url, api_key=self.key_vault.decrypt(row.api_key_encrypted),
             model=row.model, protocol=row.protocol, enabled=bool(row.enabled),
             max_tokens=row.max_tokens, temperature=row.temperature, timeout_seconds=row.timeout_seconds,
+            token_budget=row.token_budget if row.token_budget is not None else 500_000,
+            reasoning_effort=row.reasoning_effort or "",
         )
 
     @staticmethod
@@ -222,6 +245,8 @@ class LLMRegistry:
             id=row.id, base_url=row.base_url, api_key_masked=self._mask_key(self.key_vault.decrypt(row.api_key_encrypted)),
             model=row.model, protocol=row.protocol, enabled=bool(row.enabled),
             max_tokens=row.max_tokens, temperature=row.temperature, timeout_seconds=row.timeout_seconds,
+            token_budget=row.token_budget if row.token_budget is not None else 500_000,
+            reasoning_effort=row.reasoning_effort or "",
             created_at=row.created_at, updated_at=row.updated_at,
         )
 
@@ -268,7 +293,9 @@ class LLMRegistry:
                 api_key_encrypted=self.key_vault.encrypt(payload.api_key),
                 model=payload.model, protocol=payload.protocol, enabled=int(payload.enabled),
                 max_tokens=payload.max_tokens, temperature=payload.temperature,
-                timeout_seconds=payload.timeout_seconds, created_at=now, updated_at=now,
+                timeout_seconds=payload.timeout_seconds,
+                token_budget=payload.token_budget, reasoning_effort=payload.reasoning_effort,
+                created_at=now, updated_at=now,
             )
             s.add(row)
             s.commit()
@@ -295,6 +322,10 @@ class LLMRegistry:
                 row.temperature = payload.temperature
             if payload.timeout_seconds is not None:
                 row.timeout_seconds = payload.timeout_seconds
+            if payload.token_budget is not None:
+                row.token_budget = payload.token_budget
+            if payload.reasoning_effort is not None:
+                row.reasoning_effort = payload.reasoning_effort
             row.updated_at = int(time.time())
             s.commit()
             out = self._row_to_out(row)

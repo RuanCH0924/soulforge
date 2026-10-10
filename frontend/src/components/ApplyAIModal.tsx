@@ -8,6 +8,7 @@ import type { DiffHunk } from '../utils/unifiedDiff';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DiffHunkPicker } from './DiffHunkPicker';
 import { Modal } from './Modal';
+import { RichDiffView } from './RichDiffView';
 
 interface ApplyAIModalProps {
   agentId: string;
@@ -328,9 +329,11 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
                 />
               </>
             ) : (
-              <pre className="diff-view" style={{ maxHeight: '50vh' }}>
-                {job.diff_plan_json?.unified_diff || '（AI 输出与原内容一致）'}
-              </pre>
+              <RichDiffView
+                unifiedDiff={job.diff_plan_json?.unified_diff ?? ''}
+                emptyText="（AI 输出与原内容一致）"
+                maxHeight="50vh"
+              />
             )
           ) : (
             <div

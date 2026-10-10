@@ -240,7 +240,7 @@ class DailyRunService:
             raise BadRequestError("date_from 不能晚于 date_to",
                                   details={"date_from": date_from, "date_to": date_to})
         preset = self.presets.get(payload.preset_id)          # 不存在 → 404
-        self.llm.get_provider(payload.provider_id)            # 不存在/禁用 → 404
+        provider = self.llm.get_provider(payload.provider_id)  # 不存在/禁用 → 404
 
         # 只处理「需要整理」的日子：同日多来源，或唯一来源质量差（方案坑 1：不能只看文件数）
         days = [g for g in self.scanner.scan_range(agent_id, date_from, date_to) if g.needs_rework]
@@ -268,7 +268,7 @@ class DailyRunService:
                 id=run_id, agent_id=agent_id, date_from=date_from, date_to=date_to,
                 preset_id=preset.id, preset_version=preset.version, provider_id=payload.provider_id,
                 status=status, idempotency_key=key, extra_instructions=payload.extra_instructions,
-                days_total=len(days), token_budget=cfg.token_budget,
+                days_total=len(days), token_budget=provider.token_budget,
                 error=None if days else "该日期范围内没有需要整理的日子（无同日多来源，且无质量差的单来源）",
                 created_at=now, updated_at=now, finished_at=None if days else now,
             ))
@@ -285,7 +285,7 @@ class DailyRunService:
         self.audit.record("daily_run_create", agent_id, None, {
             "run_id": run_id, "days": len(days), "date_from": date_from, "date_to": date_to,
             "preset_id": preset.id, "preset_version": preset.version, "provider_id": payload.provider_id,
-            "token_budget": cfg.token_budget,
+            "token_budget": provider.token_budget,
         })
         if days:
             asyncio.create_task(self.execute(run_id))
@@ -325,15 +325,22 @@ class DailyRunService:
             total_tokens=plan.total_tokens, cost_estimate_usd=plan.cost_estimate_usd,
         )
 
-    async def execute(self, run_id: str) -> None:
-        """后台逐日生成计划：单日失败不中断整批；token 预算越限即中止剩余日期。"""
+    async def execute(self, run_id: str, dates: list[str] | None = None) -> None:
+        """后台逐日生成计划：单日失败不中断整批；token 预算越限即中止剩余日期。
+
+        `dates=None` = 首次生成（处理全部条目）；非 None = 重试，只重跑这些日期，
+        且 token 用量在批次既有基础上累加（预算按批次累计判断）。
+        """
+        is_retry = dates is not None
         with self.db.session() as s:
             run = self._get_row(s, run_id)
             if run.status != RUN_PLANNED:
                 return
             agent_id, preset_id, provider_id = run.agent_id, run.preset_id, run.provider_id
             extra, budget = run.extra_instructions, run.token_budget
-            dates = [i.date for i in self._items_of(s, run_id)]
+            base_tokens, base_cost = run.tokens_used, run.cost_estimate_usd
+            if dates is None:
+                dates = [i.date for i in self._items_of(s, run_id)]
 
         # 无意义日志自动删除开关：开启时才在计划阶段触发大模型筛选（见 §M15 扩展）
         screen = self.config.daily_standardizer.auto_delete_meaningless_logs
@@ -359,11 +366,11 @@ class DailyRunService:
                 self._save_item_plan(
                     run_id, plan, ITEM_PLANNED if ok else ITEM_FAILED,
                     None if ok else "强规则校验未通过（章节缺失/顺序错误/禁项），该日不写入")
-            if budget and tokens_used > budget:
+            if budget and base_tokens + tokens_used > budget:
                 # 预算越限：不再发起任何 LLM 调用，剩余日期一律标 failed。
                 # 已生成的计划**保留可确认**——写入本来就要人工逐个确认，因此不违反
                 # 「越限不写入任何文件」；这里不浪费已经付过费的 token。
-                stopped = (f"超出单批 token 预算（已用 {tokens_used} > 预算 {budget}），"
+                stopped = (f"超出单批 token 预算（已用 {base_tokens + tokens_used} > 预算 {budget}），"
                            "已中止剩余日期且未写入任何文件")
                 break
 
@@ -383,10 +390,16 @@ class DailyRunService:
             # 「无可归档内容」且仍有碎片待清的日子也是可执行的（确认后清碎片）
             has_cleanup = any(i.item_status == ITEM_EMPTY and self._fragments_of(i) for i in items)
             has_empty = any(i.item_status == ITEM_EMPTY for i in items)
-            run.tokens_used = tokens_used
-            run.cost_estimate_usd = round(cost, 6)
+            run.tokens_used = base_tokens + tokens_used
+            run.cost_estimate_usd = round(base_cost + cost, 6)
             run.error = stopped or run.error
-            if has_planned or has_cleanup:
+            if is_retry:
+                # 重试：批次里可能已有早先成功 / 跳过的日子，用统一状态推导，避免误判成 failed
+                run.status = self._final_status(items)
+                if run.status in (RUN_APPLIED, RUN_PARTIAL, RUN_NEEDS_REVIEW,
+                                  RUN_REJECTED, RUN_EMPTY):
+                    run.finished_at = int(time.time())
+            elif has_planned or has_cleanup:
                 run.status = RUN_AWAITING
             elif has_empty:
                 # 全部判定无可归档内容且没有碎片要清：本批没有需要写入的文件
@@ -441,6 +454,45 @@ class DailyRunService:
             run.updated_at = int(time.time())
             s.commit()
         self.audit.record("daily_run_skip", None, None, {"run_id": run_id, "dates": sorted(wanted)})
+        return self.get(run_id)
+
+    async def retry(self, run_id: str) -> DailyRun:
+        """重试失败 / 被写前验收拦下的日子：重置这些条目并在同一批次内重新生成计划。
+
+        只动 `failed` / `blocked` 的条目；已应用、已跳过、已成「无可归档内容」的日子保持不动。
+        token 用量按批次累计（不会因重试而重置预算）。
+        """
+        with self.db.session() as s:
+            run = self._get_row(s, run_id)
+            if run.status == RUN_PLANNED:
+                raise DailyRunStatusError(
+                    "该批次正在生成计划，请等它跑完再重试",
+                    details={"run_id": run_id, "status": run.status})
+            items = self._items_of(s, run_id)
+            retryable = [i for i in items if i.item_status in (ITEM_FAILED, ITEM_BLOCKED)]
+            if not retryable:
+                raise BadRequestError(
+                    "该批次没有可重试的日子（只有「生成失败」或「写前验收不过」的日期可重试）",
+                    details={"run_id": run_id})
+            dates = [i.date for i in retryable]
+            agent_id = run.agent_id
+            # 重试按**当前** Provider 配置刷新批次预算：run.token_budget 只是建批次时的快照，
+            # 用户在「设置 → LLM Provider」调大后，重试应当用新值，而不是继续用旧快照。
+            provider = self.llm.get_provider(run.provider_id)
+            now = int(time.time())
+            for item in retryable:
+                item.item_status = ITEM_PENDING
+                item.decision = "pending"
+                item.error = None
+            run.token_budget = provider.token_budget
+            run.status = RUN_PLANNED
+            run.error = None
+            run.finished_at = None
+            run.updated_at = now
+            s.commit()
+        self.audit.record("daily_run_retry", agent_id, None,
+                          {"run_id": run_id, "dates": sorted(dates)})
+        asyncio.create_task(self.execute(run_id, dates=dates))
         return self.get(run_id)
 
     @staticmethod

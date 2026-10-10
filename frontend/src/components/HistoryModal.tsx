@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useToast } from '../hooks/useToast';
 import { ConfirmDialog } from './ConfirmDialog';
-import { DiffView } from './DiffView';
 import { Modal } from './Modal';
+import { RichDiffView } from './RichDiffView';
 import type { BackupEntry } from '../types';
 import { formatBytes, formatTime } from '../utils/format';
 
@@ -21,7 +21,7 @@ export function HistoryModal({ agentId, path, onClose, onRolledBack }: HistoryMo
   const [pending, setPending] = useState<BackupEntry | null>(null);
   const [rolling, setRolling] = useState(false);
   /** 回滚前的「当前 vs 该备份」差异（后端已提供 /api/diff/history） */
-  const [diffHtml, setDiffHtml] = useState<string | null>(null);
+  const [diffUnified, setDiffUnified] = useState<string | null>(null);
   const [diffIdentical, setDiffIdentical] = useState(false);
   const [diffNoise, setDiffNoise] = useState<string[]>([]);
   const [diffLoading, setDiffLoading] = useState(false);
@@ -47,14 +47,14 @@ export function HistoryModal({ agentId, path, onClose, onRolledBack }: HistoryMo
   /** 打开回滚确认，并先加载「当前 vs 该备份」的差异供确认 */
   async function openRollback(b: BackupEntry) {
     setPending(b);
-    setDiffHtml(null);
+    setDiffUnified(null);
     setDiffIdentical(false);
     setDiffNoise([]);
     setDiffError(null);
     setDiffLoading(true);
     try {
       const res = await api.diffHistory(agentId, path, b.backup_id);
-      setDiffHtml(res.html_diff);
+      setDiffUnified(res.unified_diff);
       setDiffIdentical(res.identical);
       setDiffNoise(res.noise_kinds);
     } catch (e) {
@@ -138,15 +138,15 @@ export function HistoryModal({ agentId, path, onClose, onRolledBack }: HistoryMo
                 </div>
               ) : diffError ? (
                 <div className="hint">差异加载失败（{diffError}）；确认后将按该备份整篇覆盖。</div>
-              ) : diffHtml !== null ? (
-                <div className="rollback-diff">
-                  <DiffView
-                    htmlDiff={diffHtml}
-                    identical={diffIdentical}
-                    noiseKinds={diffNoise}
-                    identicalText="该备份与当前内容一致，回滚不会改变业务内容"
-                  />
-                </div>
+              ) : diffUnified !== null ? (
+                <RichDiffView
+                  unifiedDiff={diffUnified}
+                  identical={diffIdentical}
+                  noiseKinds={diffNoise}
+                  identicalText="该备份与当前内容一致，回滚不会改变业务内容"
+                  maxHeight="260px"
+                  hideRaw
+                />
               ) : null}
             </>
           }

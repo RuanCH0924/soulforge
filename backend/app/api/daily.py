@@ -60,6 +60,12 @@ def skip_days(run_id: str, body: DailyRunSkipRequest, reg: Registry = Depends(ge
     return ok(reg.daily_runs.skip(run_id, body.dates).model_dump())
 
 
+@router.post("/{run_id}/retry")
+async def retry_run(run_id: str, reg: Registry = Depends(get_registry)):
+    """重试失败 / 被写前验收拦下的日子（同一批次内重新生成计划，token 用量累计）。"""
+    return ok((await reg.daily_runs.retry(run_id)).model_dump())
+
+
 @router.get("/{run_id}/report")
 def run_report(run_id: str, reg: Registry = Depends(get_registry)):
     """验收报告（对磁盘上的真实文件核对，只读、可重复跑）。"""

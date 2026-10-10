@@ -9,6 +9,48 @@
 > `backend/pyproject.toml` 与 `frontend/package.json` 为静态字段，需手工同步，
 > 由 [backend/tests/test_version.py](backend/tests/test_version.py) 自动校验防漂移。
 
+## [0.5.5] - 2026-10-10
+
+> 差异展示改版（渲染后富文本对比）+ LLM Provider 参数增强（单批 Token 预算 / 思考强度）+
+> 日志标准化批次重试。不含对外 API 破坏性变更（`LLMProvider*` 与 `SyncFilePlan` 仅新增字段；
+> 全局 `config.daily_standardizer/summarizer.token_budget` 移除并迁移到 Provider）。
+
+### 新增
+
+- **富文本差异对比**：全项目差异视图由「统一 diff 上色（`+++` / `---` / `@@` + 单栏 `+/-`）」改为
+  **渲染后富文本对比** —— 新增 `frontend/src/utils/markdownDiff.ts` + `components/RichDiffView.tsx`：
+  按 hunk 拆成「新增（绿）/ 删除（红）/ 上下文」块并**逐块按 Markdown 渲染**（复用 `marked + DOMPurify`），
+  diff 记法收进「原始差异」折叠；一致态仍显示绿色结论 + 噪声说明。覆盖对比 / 回滚 / 同步 / 应用预设 /
+  AI 整理 / 日志标准化 / 日志总结；「按块接受」（`DiffHunkPicker`）同步改富文本块渲染，保留逐块勾选语义。
+  删除旧 `components/DiffView.tsx` 及其专属 CSS。`SyncFilePlan` 新增 `unified_diff`（供同步页渲染）。
+- **LLM Provider 新增两个参数**（设置 → LLM Provider 管理表单可编辑，热加载生效）：
+  - `token_budget`：**单批 Token 预算**，默认 `500000`，`0` = 不限。M15 日志标准化 / M16 记忆归纳
+    建批次时**按所选 Provider 快照**进 `daily_runs.token_budget` / `summary_runs.token_budget`，越限即中止该批次。
+  - `reasoning_effort`：**思考强度**（`'' | low | medium | high`，`''` = 不发送）；**仅 `openai-completions`
+    协议生效**，映射为请求体 `reasoning_effort`，Anthropic 协议忽略。
+- **日志标准化批次重试**：新增 `POST /api/daily-runs/{run_id}/retry` —— 把批次内 `failed` / `blocked`
+  的日子重置并在**同一批次内**重新生成计划（已应用 / 已跳过 / 已判「无可归档内容」的日子不动）；
+  token 用量按批次累计，且**批次预算按最新 Provider 配置刷新**（不再沿用建批次时的旧快照）。
+  计划页新增「重试失败的天（N）」与「拒绝并重建」（作废当前批次 + 同参数新建）两个入口。
+
+### 变更
+
+- 全局 `config.daily_standardizer.token_budget` / `config.summarizer.token_budget` **移除**，改为按 Provider
+  取值（见上）。存量库启动时自动迁移：`llm_providers` 新增 `token_budget`（回填 `500000`）与 `reasoning_effort`。
+- LLM 调用失败的报错文案补全：超时（`httpx.ReadTimeout` 等）此前 `str(e)` 为空、只显示「请求 … 失败：」，
+  现在显示超时上限与异常类型，并在 `details` 带 `kind` / `timeout_seconds`；其他网络异常亦退化为异常类型名。
+
+### 修复
+
+- 后端托管的 `index.html` 加 `Cache-Control: no-cache`：前端重新构建后**普通刷新即可生效**，
+  不再被浏览器启发式缓存卡在旧 SPA（此前需硬刷新）。
+
+### 文档
+
+- [UI-SPECS.md](docs/UI-SPECS.md) 升至 v1.22（差异展示口径、LLM Provider 表单字段、批次重试）；
+  [API.md](docs/API.md) 同步 Provider 字段 / `PUT /api/config` 示例 / retry 端点；
+  [DATA-MODEL.md](docs/DATA-MODEL.md) 同步 `llm_providers` 表结构与 `config.toml` 示例。
+
 ## [0.5.4] - 2026-10-02
 
 > 0.5.3 之后的 UI / 交互专项：可访问性（P0）、交互一致性（P1）、体验增强（P2）。

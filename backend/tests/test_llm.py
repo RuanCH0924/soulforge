@@ -6,10 +6,11 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 import pytest
 from sqlalchemy import text
 
-from app.core.errors import LLMOutputTruncatedError
+from app.core.errors import LLMOutputTruncatedError, LLMRequestError
 from app.models.db import LLMProviderRow
 from app.services.llm_registry import LLMClient, LLMProvider, LLMResponse, LLMTokenUsage
 
@@ -245,3 +246,35 @@ def test_chat_endpoint_maps_truncation_to_422(client, monkeypatch):
     })
     assert res.status_code == 422
     assert res.json()["error"]["code"] == "LLM_OUTPUT_TRUNCATED"
+
+
+# ---------- 网络层异常的报错文案（部分 httpx 异常的 str 为空，必须兜底） ----------
+
+def test_read_timeout_error_message_is_not_empty(monkeypatch):
+    """回归：httpx 超时的 str 为空 → 曾只显示「请求 … 失败：」。现在必须自带可读原因。"""
+
+    async def fake_post(self, url, headers=None, json=None):
+        raise httpx.ReadTimeout("")   # 这正是真实超时的 str
+
+    monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
+    with pytest.raises(LLMRequestError) as excinfo:
+        asyncio.run(_client(64).chat([{"role": "user", "content": "x"}]))
+    msg = str(excinfo.value)
+    assert not msg.endswith("：")          # 不再出现「无原因」的空冒号结尾
+    assert "超时" in msg and "ReadTimeout" in msg
+    assert excinfo.value.details["kind"] == "ReadTimeout"
+    assert excinfo.value.details["timeout_seconds"] == 60
+
+
+def test_generic_http_error_with_empty_message_falls_back_to_type(monkeypatch):
+    """非超时的网络异常若 str 为空，也退化为异常类型名，不给出空原因。"""
+
+    async def fake_post(self, url, headers=None, json=None):
+        raise httpx.ConnectError("")
+
+    monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
+    with pytest.raises(LLMRequestError) as excinfo:
+        asyncio.run(_client(64).chat([{"role": "user", "content": "x"}]))
+    assert "ConnectError" in str(excinfo.value)
+    assert excinfo.value.details["kind"] == "ConnectError"
+

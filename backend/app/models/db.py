@@ -151,6 +151,10 @@ class LLMProviderRow(Base):
     max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=4096)
     temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.3)
     timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    #: 单批 token 预算（M15 日志标准化 / M16 记忆归纳共用）：建批次时快照进 run；0 = 不限
+    token_budget: Mapped[int] = mapped_column(Integer, nullable=False, default=500_000)
+    #: 思考强度（"" = 不发送；low / medium / high）→ OpenAI 兼容协议的 `reasoning_effort`
+    reasoning_effort: Mapped[str] = mapped_column(String, nullable=False, default="")
     created_at: Mapped[int] = mapped_column(Integer, nullable=False, default=_now)
     updated_at: Mapped[int] = mapped_column(Integer, nullable=False, default=_now, onupdate=_now)
 
@@ -352,6 +356,9 @@ class Database:
             "presets": [("template_md", "TEXT"), ("retired_at", "INTEGER"),
                         ("format_rules_json", "TEXT")],
             "daily_run_items": [("empty_reason", "TEXT"), ("meaningless_json", "TEXT")],
+            # 带 DEFAULT 的 NOT NULL 列：SQLite 会自动把存量行回填为默认值，无需额外 UPDATE
+            "llm_providers": [("token_budget", "INTEGER NOT NULL DEFAULT 500000"),
+                              ("reasoning_effort", "TEXT NOT NULL DEFAULT ''")],
         }
         with self.engine.connect() as conn:
             for table, adds in columns.items():

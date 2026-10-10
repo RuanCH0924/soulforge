@@ -23,7 +23,7 @@
 ```json
 {
   "data": { ... },
-  "meta": { "timestamp": 1754478710, "version": "0.5.4" }
+  "meta": { "timestamp": 1754478710, "version": "0.5.5" }
 }
 ```
 
@@ -868,7 +868,9 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
       "enabled": true,
       "max_tokens": 4096,
       "temperature": 0.3,
-      "timeout_seconds": 60
+      "timeout_seconds": 60,
+      "token_budget": 500000,
+      "reasoning_effort": ""
     }
   ]
 }
@@ -886,13 +888,20 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
   "model": "gpt-4o",
   "protocol": "openai-completions",
   "max_tokens": 4096,
-  "temperature": 0.3
+  "temperature": 0.3,
+  "timeout_seconds": 60,
+  "token_budget": 500000,
+  "reasoning_effort": ""
 }
 ```
 
 **约束**：
 - `protocol` ∈ `{openai-completions, anthropic-messages}`
 - `api_key` 加密存储，**永不回显明文**
+- `token_budget`：**单批** token 预算（M15 日志标准化 / M16 记忆归纳共用），`0` = 不限；建批次时快照进
+  `daily_runs.token_budget` / `summary_runs.token_budget`，越限即中止该批次。默认 `500000`。
+- `reasoning_effort` ∈ `{"" , low, medium, high}`：思考强度，`""` = 不发送该参数；
+  **仅 `openai-completions` 协议生效**（映射为请求体 `reasoning_effort`），Anthropic 协议忽略。
 
 #### `PUT /api/llm/providers/{id}`
 
@@ -1174,7 +1183,7 @@ python super_sync.py --once        # 只执行一轮（自检）
 
 ```json
 {
-  "data": { "status": "ok", "version": "0.5.4" }
+  "data": { "status": "ok", "version": "0.5.5" }
 }
 ```
 
@@ -1228,13 +1237,21 @@ python super_sync.py --once        # 只执行一轮（自检）
   "openclaw":  { "dir": "" },
   "daily_standardizer": {
     "max_days_per_run": 31,
-    "token_budget": 200000,
     "provider_id": "",
     "dry_run_only": false,
     "auto_delete_meaningless_logs": false
+  },
+  "summarizer": {
+    "max_days_per_run": 62,
+    "provider_id": "",
+    "dry_run_only": false
   }
 }
 ```
+
+> **单批 token 预算（`token_budget`）已从全局配置迁到 LLM Provider 上**（默认 500000，`0` = 不限）：
+> 建批次时按所选 Provider 快照进 `daily_runs.token_budget` / `summary_runs.token_budget`。
+> 见 §3.11 的 Provider 字段与「设置 → LLM Provider 管理」的「单批 Token 预算」。
 
 `auto_delete_meaningless_logs`：是否启用「大模型无意义日志自动删除」。默认 `false`；
 开启后日志标准化批次会在计划阶段额外调一次大模型判定无意义碎片，并在删除前做 7 天备份归档，
@@ -1386,6 +1403,21 @@ python super_sync.py --once        # 只执行一轮（自检）
 
 跳过若干日（人工决策，不改写这些天）。请求 `{"dates": ["2026-08-04"]}`；
 所选日期没有可跳过的条目 → `400 BAD_REQUEST`。
+
+#### `POST /api/daily-runs/{run_id}/retry`
+
+重试批次内**生成失败**（`failed`）或**写前验收不过**（`blocked`）的日子：把这些条目重置为 `pending`，
+在**同一批次内**重新生成计划（已应用 / 已跳过 / 已判「无可归档内容」的日子保持不动）。
+token 用量按批次累计；**批次预算按当前 Provider 配置刷新**（不沿用建批次时的旧快照，
+即「设置 → LLM Provider」调大 `token_budget` 后重试会立即生效）。无请求体；立即返回 `planned` 状态的批次详情。
+
+**错误**：
+
+| 场景 | HTTP | code |
+|---|---|---|
+| 没有可重试的日子（无 failed / blocked 条目） | `400` | `BAD_REQUEST` |
+| 批次正在生成计划（`planned`） | `409` | `DAILY_RUN_STATUS` |
+| 批次不存在 | `404` | `DAILY_RUN_NOT_FOUND` |
 
 #### `GET /api/daily-runs/{run_id}/report`
 

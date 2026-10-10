@@ -1,4 +1,6 @@
+import { hunkBlocks } from '../utils/markdownDiff';
 import type { DiffHunk } from '../utils/unifiedDiff';
+import { RichDiffBlocks } from './RichDiffView';
 
 interface DiffHunkPickerProps {
   hunks: DiffHunk[];
@@ -12,7 +14,7 @@ interface DiffHunkPickerProps {
 
 /**
  * 差异「按块接受」视图：每个 hunk 一个复选框，可整块接受 / 拒绝。
- * 视觉上被拒绝的块整体降低不透明度，便于一眼区分。
+ * 视觉上被拒绝的块整体降低不透明度；每个块的内容按 Markdown 渲染（不展示 @@ 记法）。
  */
 export function DiffHunkPicker({
   hunks,
@@ -22,7 +24,11 @@ export function DiffHunkPicker({
   maxHeight = '55vh',
 }: DiffHunkPickerProps) {
   if (hunks.length === 0) {
-    return <pre className="diff-view">{emptyText}</pre>;
+    return (
+      <div className="diff-identical">
+        <span className="hint">{emptyText}</span>
+      </div>
+    );
   }
 
   const acceptedCount = accepted.filter(Boolean).length;
@@ -50,17 +56,10 @@ export function DiffHunkPicker({
         <div key={i} className={`hunk-item${accepted[i] ? ' accepted' : ''}`}>
           <label className="hunk-head">
             <input type="checkbox" checked={accepted[i]} onChange={() => toggle(i)} />
-            <span className="mono muted text-xs">{h.header}</span>
+            <span className="muted text-xs">第 {h.oldStart} 行起</span>
           </label>
           <div className="hunk-body">
-            {h.lines.map((l, j) => (
-              <div
-                key={j}
-                className={`hunk-line ${l[0] === '+' ? 'add' : l[0] === '-' ? 'del' : 'ctx'}`}
-              >
-                {l || ' '}
-              </div>
-            ))}
+            <RichDiffBlocks blocks={hunkBlocks(h)} />
           </div>
         </div>
       ))}

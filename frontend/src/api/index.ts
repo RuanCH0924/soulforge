@@ -29,6 +29,7 @@ import type {
   LintRulesResult,
   LLMProtocol,
   LLMProvider,
+  LLMReasoningEffort,
   LLMResponseOut,
   LLMTestResult,
   Preset,
@@ -210,6 +211,8 @@ export const api = {
     max_tokens?: number;
     temperature?: number;
     timeout_seconds?: number;
+    token_budget?: number;
+    reasoning_effort?: LLMReasoningEffort;
   }) => request<LLMProvider>('POST', '/api/llm/providers', { json: body }),
   updateLLMProvider: (id: string, body: Record<string, unknown>) =>
     request<LLMProvider>('PUT', `/api/llm/providers/${encodeURIComponent(id)}`, { json: body }),
@@ -283,6 +286,9 @@ export const api = {
     request<DailyRun>('POST', `/api/daily-runs/${encodeURIComponent(runId)}/reject`),
   skipDailyRun: (runId: string, dates: string[]) =>
     request<DailyRun>('POST', `/api/daily-runs/${encodeURIComponent(runId)}/skip`, { json: { dates } }),
+  /** 重试失败 / 被写前验收拦下的日子（同一批次内重新生成计划） */
+  retryDailyRun: (runId: string) =>
+    request<DailyRun>('POST', `/api/daily-runs/${encodeURIComponent(runId)}/retry`),
   /** 验收报告（对磁盘真实文件核对，只读可重复跑） */
   dailyRunReport: (runId: string) =>
     request<DailyRunReport>('GET', `/api/daily-runs/${encodeURIComponent(runId)}/report`),

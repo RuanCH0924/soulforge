@@ -93,6 +93,8 @@ export interface SyncFilePlan {
   path: string;
   similarity: number;
   html_diff: string;
+  /** 与 html_diff 同源，供前端渲染「富文本差异」 */
+  unified_diff: string;
   size_src: number;
   size_dst: number;
   /** 有效内容是否一致（一致时不建议同步） */
@@ -228,7 +230,6 @@ export interface ConfigSnapshot {
   /** M15 日志标准化护栏（配置中心下发的只读快照） */
   daily_standardizer?: {
     max_days_per_run: number;
-    token_budget: number;
     provider_id: string;
     dry_run_only: boolean;
     /** 是否启用大模型无意义日志自动删除（删除前备份 7 天） */
@@ -237,7 +238,6 @@ export interface ConfigSnapshot {
   /** M16 记忆归纳护栏（配置中心下发的只读快照） */
   summarizer?: {
     max_days_per_run: number;
-    token_budget: number;
     provider_id: string;
     dry_run_only: boolean;
   };
@@ -356,9 +356,16 @@ export interface LLMProvider {
   max_tokens: number;
   temperature: number;
   timeout_seconds: number;
+  /** 单批 token 预算（日志标准化 / 记忆归纳共用），0 = 不限 */
+  token_budget: number;
+  /** 思考强度：'' = 不发送；仅 OpenAI 兼容协议生效 */
+  reasoning_effort: LLMReasoningEffort;
   created_at: number;
   updated_at: number;
 }
+
+/** 思考强度（与后端 ReasoningEffort 对齐） */
+export type LLMReasoningEffort = '' | 'low' | 'medium' | 'high';
 
 export interface LLMTestResult {
   ok: boolean;

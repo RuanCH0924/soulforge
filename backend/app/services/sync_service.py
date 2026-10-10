@@ -49,6 +49,7 @@ class SyncService:
                 path=f,
                 similarity=outcome.similarity,
                 html_diff=outcome.html_diff,
+                unified_diff=outcome.unified_diff,
                 size_src=len(src_content.encode("utf-8")),
                 size_dst=len(dst_content.encode("utf-8")),
                 identical=outcome.identical,
