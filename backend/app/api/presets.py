@@ -86,8 +86,13 @@ def restore_preset_version(preset_id: str, version_id: int, reg: Registry = Depe
 
 @router.post("/{preset_id}/apply")
 def apply_preset(preset_id: str, body: PresetApplyRequest, reg: Registry = Depends(get_registry)):
-    """应用预设到指定 Agent + 文件，生成 diff plan（不写入文件）。"""
-    plan = reg.presets.apply_plan(preset_id, body.agent_id, body.file_path, body.extra_instructions)
+    """应用预设到指定 Agent + 文件，生成 diff plan（不写入文件）。
+
+    `preset_override` 非空 = 「仅本次生效」：按覆盖内容生成 plan，不改动预设本身。
+    """
+    override = body.preset_override.model_dump() if body.preset_override else None
+    plan = reg.presets.apply_plan(
+        preset_id, body.agent_id, body.file_path, body.extra_instructions, override)
     return ok(plan.model_dump())
 
 

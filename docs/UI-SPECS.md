@@ -36,6 +36,8 @@
 | v1.20 | 2026-10-02 | **P2 收尾三项**：① **快捷键帮助浮层**——按 `?`（输入框 / 编辑器聚焦时不触发）或经命令面板「键盘快捷键」打开，列出完整快捷键表（与 §七 一致），命令面板索引动作数 15 → 16；② **编辑器分包预取**——首屏渲染后在空闲时预取 Monaco 分包（`requestIdleCallback`，超时 4s；不支持则 2s 延时），缩短首次打开文档的等待；③ **差异「按块接受」**——应用预设 / AI 整理 的差异预览改为逐 hunk 勾选（默认全接受，可全选 / 全不选），只有「全部接受能精确重建目标内容」时才启用（`canRebuild`，否则退回整段 diff + 整体应用）；AI 路径的部分内容仍走同一套模板格式 + lint 闸门（`POST /api/ai/jobs/{id}/apply` 新增可选 `content`），预设路径经乐观锁写入。一致性核对表新增 3 行、修订 1 行 |
 | v1.21 | 2026-10-10 | **差异展示改为「富文本对比」**：全项目差异视图（对比 / 回滚 / 同步 / 应用预设 / AI 整理 / 日志标准化 / 日志总结）由「统一 diff 上色（`+++` / `---` / `@@` + 单栏 `+/-`）」改为**渲染后富文本对比**——新增 `utils/markdownDiff.ts` + `components/RichDiffView.tsx`，按 hunk 拆成「新增绿 / 删除红 / 上下文」块并逐块 Markdown 渲染，diff 记法折叠进「原始差异」；删除旧 `components/DiffView.tsx`，`DiffHunkPicker` 同步改富文本块渲染（保留逐块勾选）；`SyncFilePlan` 新增 `unified_diff` 字段。一致性核对表修订 1 行、新增 1 行 |
 | v1.22 | 2026-10-10 | **LLM Provider 增强 + 批次重试**：① Provider 表/表单新增「单批 Token 预算」（默认 50 万，`0`=不限；批次预算改由所选 Provider 快照，全局 `config` 的 `token_budget` 移除）与「思考强度 reasoning_effort」（`不设置/低/中/高`，仅 OpenAI 兼容协议生效）；② 日志标准化计划页新增「重试失败的天」（`POST /api/daily-runs/{id}/retry`，同批次内重跑 failed/blocked 的日子、token 累计，且**预算按最新 Provider 配置刷新**）与「拒绝并重建」（作废当前批次 + 同参数新建） |
+| v1.23 | 2026-10-10 | **一级导航 IA 调整**：① **「日志标准化 / 日志总结」从业务工具提级为独立一级「记忆加工」**（新增 `pages/MemoryPage.tsx`，路由 `#/memory`；理由：它们属「大模型加工文档」族，与「同步 / 对比」这类确定性文件操作不是一族，平铺在第 5/6 个 tab 会被淹没）；② 业务工具内**「同步 / 超级同步」由两个并列 tab 合并为一个「同步」入口 + 模式切换**（普通同步 / 超级同步，`.sync-mode-bar`），消除同级近似项；③ **「文档预设」从系统配置迁到业务工具**（它是业务内容、不是系统配置），编辑器「应用预设」弹窗新增「管理预设」直达入口；④ **「导出全部」从业务工具 tab 栏移到顶栏**（回归全局动作）。SideNav 4 项 → 5 项；命令面板补「前往记忆加工 / 工作日志标准化 / 工作日志总结」，且「管理文档预设 / 统计面板 / 检查报告 / 审计日志」跳转改为落到对应 tab |
+| v1.24 | 2026-10-11 | **预设体系统一 + 调用前确认窗**：① **文档预设页统一承载全部预设**（含 WORKLOG / SUMMARY 这类大模型专用预设），并统一为 **5 个类目**：预设名 / 使用文件类别 / 用途说明 / 预设参考文档 / 预设修改要求；② **日志标准化 / 日志总结只负责「调用」预设**，移除页内编辑器（删除 `DailyPresetEditor.tsx`），编辑一律在「业务工具 → 文档预设」；③ 新增**共享「预设确认与编辑」窗** `PresetConfirmModal`：所有调用预设的功能（应用预设 / AI 整理 / 日志标准化 / 日志总结）在开始任务前都必须经它再次确认 + 现场编辑，编辑后可选 **「仅本次生效」/「更新预设」/「设为新预设」**（「仅本次生效」走后端 `preset_override` 快照，不落库）；④ 主工作台「应用预设 / AI 整理」的预设下拉改为**列出全部**（不再排除 WORKLOG / SUMMARY）。一致性核对表修订 3 行、新增 3 行 |
 
 ---
 
@@ -45,16 +47,16 @@
 
 ```
 ┌──────┬───────────────────────────────────────────────────────────────────────┐
-│      │ TopBar   Soulforge · 8 个 Agent      [搜索或执行命令… Ctrl K] [重新扫描]│
+│      │ TopBar   Soulforge · 8 个 Agent   [搜索或执行命令… Ctrl K] [导出全部] [扫描]│
 │ Side ├────────────┬──────────────────────────┬───────────────────────────────┤
 │ Nav  │            │                          │                               │
 │ 64px │  Agent 树  │  文件树 / CORE 二级列表   │  编辑器 / 预览（1–3 个窗口）   │
 │      │            │                          │                               │
 │ ⌂ 主 │  ▾ main    │  ▾ CORE                  │  ┌─────────────────────────┐  │
 │ ⇄ 业务│   • SOUL   │    SOUL.md              │  │  # SOUL.md              │  │
-│ ◇ 数据│   • USER   │    AGENTS.md            │  │  [Monaco Editor]        │  │
-│ ⚙ 配置│  ▸ xiaowei │  ▾ MEMORY                │  └─────────────────────────┘  │
-│      │  ▸ caicai  │    2026-08-05.md        │  [保存][历史][应用预设][检查] │
+│ ✦ 记忆│   • USER   │    AGENTS.md            │  │  [Monaco Editor]        │  │
+│ ◇ 数据│  ▸ xiaowei │  ▾ MEMORY                │  └─────────────────────────┘  │
+│ ⚙ 配置│  ▸ caicai  │    2026-08-05.md        │  [保存][历史][应用预设][检查] │
 ├──────┴────────────┴──────────────────────────┴───────────────────────────────┤
 │ StatusBar  ● 已连接到 8 个 Agent · 索引 2461 个文件 · 上次扫描：2 分钟前      │
 └───────────────────────────────────────────────────────────────────────────────┘
@@ -64,11 +66,11 @@
 
 | 区域 | 说明 |
 |---|---|
-| SideNav（64px） | 固定 4 项全局导航：主工作台 / 业务工具 / 数据中心 / 系统配置。**跨页导航的唯一入口** |
-| TopBar（48px） | **仅全局动作**：品牌 + Agent 计数 + 命令面板入口 + 重新扫描。**不承载导航类按钮** |
+| SideNav（64px） | 固定 5 项全局导航：主工作台 / 业务工具 / 记忆加工 / 数据中心 / 系统配置。**跨页导航的唯一入口** |
+| TopBar（48px） | **仅全局动作**：品牌 + Agent 计数 + 命令面板入口 + 导出全部 + 重新扫描。**不承载导航类按钮** |
 | 三栏 | 左栏（Agent 树 / CORE 一级分类）+ 中栏（文件树 / CORE 二级列表）+ 编辑器；左右栏均可拖拽与折叠 |
 | StatusBar（28px） | 连接态 + 索引文件数 + 上次扫描 + lint 警告数 + 后端版本号；≤1280px 隐藏中间两项（索引文件数 / 上次扫描） |
-| 页面路由 | `#/workbench`、`#/tools`、`#/data`、`#/settings`（hash 路由，刷新保持） |
+| 页面路由 | `#/workbench`、`#/tools`、`#/memory`、`#/data`、`#/settings`（hash 路由，刷新保持） |
 
 ### 1.2 响应式断点
 
@@ -173,8 +175,8 @@
 
 | 组件 | 位置 | 职责 |
 |---|---|---|
-| `SideNav` | `components/SideNav.tsx` | 左侧 4 项全局导航（跨页导航唯一入口） |
-| `TopBar` | `components/TopBar.tsx` | 品牌 + Agent 计数 + 命令面板入口 + 重新扫描 |
+| `SideNav` | `components/SideNav.tsx` | 左侧 5 项全局导航（跨页导航唯一入口） |
+| `TopBar` | `components/TopBar.tsx` | 品牌 + Agent 计数 + 命令面板入口 + 导出全部 + 重新扫描 |
 | `StatusBar` | `components/StatusBar.tsx` | 底部状态栏；次要指标带 `metric-secondary` 语义 class；右端显示后端版本号（`v<版本>`，取自 `GET /api/health`） |
 | `ViewToggle` | `components/ViewToggle.tsx` | 浏览模式切换（Agent / CORE 分类） |
 | `AgentTree` / `FileTree` | `components/` | Agent 树 / 文件树 |
@@ -185,11 +187,12 @@
 
 | 页面组件 | 承载内容 | 路由 |
 |---|---|---|
-| `pages/ToolsPage.tsx` | 同步 / 超级同步 / 跨Agent编辑 / 对比 / 日志标准化 | `#/tools` |
+| `pages/ToolsPage.tsx` | 同步（普通同步 / 超级同步）/ 对比 / 跨Agent编辑 / 文档预设 | `#/tools` |
+| `pages/MemoryPage.tsx` | 日志标准化 / 日志总结 | `#/memory` |
 | `pages/DataPage.tsx` | 统计面板 / 检查报告 / 审计日志 | `#/data` |
-| `pages/SettingsPage.tsx` | 常规设置 / LLM Provider / 文档预设 | `#/settings` |
+| `pages/SettingsPage.tsx` | 常规设置 / LLM Provider | `#/settings` |
 
-> 功能面板（`SyncModal` / `SuperSyncPanel` / `CrossEditModal` / `DiffModal` / `DailyStandardizerPanel` / `StatsModal` / `GlobalLintModal` / `AuditModal` / `SettingsModal` / `LLMProvidersModal` / `PresetModal`）在上述三页内以 `Modal embedded + headerless` 形式渲染，页面内**不出现第二层标题栏与「返回」按钮**（`SuperSyncPanel` / `DailyStandardizerPanel` 为普通面板，无 Modal 外壳）。
+> 功能面板（`SyncModal` / `SuperSyncPanel` / `CrossEditModal` / `DiffModal` / `PresetModal` / `PresetConfirmModal` / `DailyStandardizerPanel` / `SummaryPanel` / `StatsModal` / `GlobalLintModal` / `AuditModal` / `SettingsModal` / `LLMProvidersModal`）在上述四页内以 `Modal embedded + headerless` 形式渲染，页面内**不出现第二层标题栏与「返回」按钮**（`SuperSyncPanel` / `DailyStandardizerPanel` / `SummaryPanel` 为普通面板，无 Modal 外壳）。「同步」tab 内以模式切换（普通 / 超级）承载原先并列的两个 tab；「文档预设」由系统配置迁入业务工具。`PresetConfirmModal` 是**跨页共用的「预设确认与编辑」窗**（非页面内嵌），由「应用预设 / AI 整理 / 日志标准化 / 日志总结」在开始任务前弹出。
 
 ---
 
@@ -223,9 +226,9 @@
   - 来源区展示 `Agent/文件路径` + 字节数 + 当前层级标题数；标题由文档实时扫描得出（跳过围栏代码块内 `#`）；
     该层级的标题构成预设的章节结构（由参考文档派生，供「应用预设」机械补齐）
   - 文档超过 **30KB** 时提示并禁用保存（参考文档全文会注入 AI 提示词）
-  - 保存成功后提示「已保存预设『X』（N 个章节）」，可在「系统配置 → 文档预设」查看、编辑与回溯
+  - 保存成功后提示「已保存预设『X』（N 个章节）」，可在「业务工具 → 文档预设」查看、编辑与回溯
 - **文档整理动作**：工具栏一级按钮「应用预设」（按预设补齐缺失章节）、「AI 整理」（LLM 重写）、「导出文件」——三者平铺于一行，**不再有「整理 ▾」下拉层级**
-- **主工作台不出现日志预设**：「应用预设」与「AI 整理」的预设列表都取 `scope=workbench`（`GET /api/presets?scope=workbench`），因此**不含** WORKLOG 类（大模型专用）预设；列表为空时提示「没有可用于主工作台的预设」并指向「业务工具 → 日志标准化」
+- **主工作台列出全部预设**（v1.24）：`GET /api/presets`（不传 `scope`）——「应用预设」与「AI 整理」的预设下拉**列出全部预设**（含 WORKLOG / SUMMARY）。选中预设后点「生成计划 / 生成」会**先弹「预设确认与编辑」窗**（`PresetConfirmModal`）再次确认与现场编辑，编辑后可选「仅本次生效 / 更新预设 / 设为新预设」
 - **工具栏折行**：按钮既不收缩也不横向滚动；窗口可用宽度不足时**按行折行**，工具栏高度自适应（`min-height: 40px`）。窗口宽度 < **780px** 时隐藏源码编辑模式下的快捷键提示（`Ctrl+B / Ctrl+I / Ctrl+S`），优先保证动作按钮可见——
   折行阈值按**窗口宽度**判定（`@container` 容器查询），因为多窗口平铺时单个窗口的可用宽度远小于视口宽度
 
@@ -265,8 +268,8 @@
 
 **命令面板**（`Cmd/Ctrl + K`，顶栏搜索框点击亦可）：
 
-- 单个输入框同时检索：页面导航（4 项） + 功能动作（11 项） + 文件内容
-- 空查询时展示分组列表：**「最近使用」置顶**（MRU，上限 8 条，持久化到 `soulforge.palette.recent`），随后为 导航 / 操作 / 数据 / 管理，每组最多显示 6 条，底部提示可检索总量
+- 单个输入框同时检索：页面导航（5 项） + 功能动作（14 项） + 文件内容
+- 空查询时展示分组列表：**「最近使用」置顶**（MRU，上限 8 条，持久化到 `soulforge.palette.recent`），随后为 导航 / 操作 / 数据 / 记忆 / 管理，每组最多显示 6 条，底部提示可检索总量
 - 文件检索为防抖 220ms 的异步查询，命中显示：`文件路径 · Agent ID · 行号 · 匹配内容摘要`
 - 结果列表显示：`Agent ID · 文件路径 · 匹配行（高亮）`
 - 点击结果 → 跳到对应文件 + 滚动到匹配行
@@ -299,13 +302,13 @@
 - 执行确认弹窗中，若所选文件包含内容一致者会再次提示「同步只会改写其格式，业务内容不变」；
 - 铁律不变：默认全部不勾选，绝不整文件覆盖，写入前自动备份目标 Agent。
 
-### 5.7 日志标准化（业务工具页 · M15）
+### 5.7 日志标准化（记忆加工页 · M15）
 
 **三阶段单页流程**（`DailyStandardizerPanel`，内部 `stage` 切换，不跳页、不叠弹窗）：
 
 | 阶段 | 内容 | 出口 |
 |---|---|---|
-| **参数** | Agent + 日期范围 + WORKLOG 预设 + provider + 附加指令；预设区自上而下 = **信息栏**（徽章「大模型专用」+ 预设名 + 版本 + 来源 +「查看 / 编辑」）→ 预设单选列表（**每个选项在名称下方显示一行功能简介**，文案取自后端 `presets.description`，前端不硬编码）→ 页内编辑弹窗；下方是该 Agent 的批次历史（行可点开复核，含状态 / 天数 / tokens / 创建时间） | 「生成计划」 |
+| **参数** | Agent + 日期范围 + WORKLOG 预设 + provider + 附加指令；预设区自上而下 = **信息栏**（徽章「大模型专用」+ 预设名 + 版本 + 来源，**只读、无编辑入口**）→ 预设单选列表（**每个选项在名称下方显示一行功能简介**，文案取自后端 `presets.description`，前端不硬编码）；下方是该 Agent 的批次历史（行可点开复核，含状态 / 天数 / tokens / 创建时间） | 「生成计划」（→ 先弹**预设确认与编辑窗** `PresetConfirmModal`） |
 | **逐日确认** | 每日一张卡片：来源 A/B/C 与剥壳前后体积、拟删碎片清单、强规则违规、备注、diff（默认可视化预览 + 可切「查看原始差异」）；生成中按 **1.5s** 轮询并显示进度。判定「无可归档内容」的日期改显示**判定理由 + 不产出文件 / 只清碎片的说明**，**不展示 diff** | 「执行选中 N 天」/「全部执行」/「跳过选中」/「拒绝整批」 |
 | **验收报告** | 5 项核对（单文件 / 命名 / 章节 / 无残留壳 / 碎片已清）+ 逐日说明 + 汇总（已交付天数、tokens、成本） | 「返回计划」/「新建批次」/「重新核对」 |
 
@@ -331,17 +334,16 @@
 - **同一用途不出现两个并列选项**（v1.11 收口）：WORKLOG 只有 `preset-wlog-daily-std` 一项。
   若将来还有语义相近的预设，应合并或明确区分「什么时候用哪个」，不得靠用户自己猜；
   已退役的内置预设由后端 `retired_at` 过滤，前端不参与判断
-- **预设来源必须在本界面标明**（v1.14）：预设选择区上方必须有预设信息栏 —— 徽章「大模型专用」+
-  预设名 + 版本 + 来源（`is_builtin` ? 「内置预设（随版本分发）」: 「用户自建」）+「查看 / 编辑」按钮，
-  并说明「专供大模型处理工作日志」「不出现在文档预设页与主工作台」「修改后重新生成批次即生效」。
-  这类预设按边界在主工作台看不到，不在这里标明身份与来源，用户就无处确认「当前生效的是哪个、从哪来、去哪改」
-- **页内编辑器必须能改全部三类内容**（v1.16 起为「预设参考文档 + 修改要求 + 高级格式规则」）：用途说明 /
-  **预设参考文档**（Markdown + 预览，含示例与表格）/ **修改要求**（每行一条，空行忽略）/
-  高级格式规则（章节标题层级 / frontmatter）；保存走 `PUT /api/presets/{id}`（version +1），
-  保存后提示「已保存为 vN」并刷新界面上的版本号 —— 但**不得**暗示会重算已生成的计划（只有新批次才用新规则）；
-  预设参考文档必须含至少一个 `## ` 章节标题（章节结构由它派生；不再有独立的章节清单 / 顺序 / 可选配置）
-- **批量执行信息必须带上预设版本**（v1.14）：逐日确认页的信息条显示 `预设 v{N}`（= 批次创建时记录的
-  `preset_version`），让用户知道这批用的是哪一版规则 —— 改预设不会回写已生成的计划
+- **本界面只「调用」预设，编辑统一在文档预设**（v1.24）：预设信息栏仅展示身份与来源（徽章「大模型专用」+
+  预设名 + 版本 + 来源 `is_builtin`），**不再提供「查看 / 编辑」按钮**；预设的编辑一律在「业务工具 → 文档预设」
+- **开始任务前必须经「预设确认与编辑」窗**（v1.24）：点「生成计划」先弹 `PresetConfirmModal`，
+  展示并允许现场编辑 **5 个类目**（预设名 / 使用文件类别 / 用途说明 / 预设参考文档 / 预设修改要求）；
+  未编辑 → 「确认并生成计划」；编辑后 → 三选一：**仅本次生效**（后端 `preset_override` 快照，不落库）/
+  **更新预设**（`PUT /api/presets/{id}`，version +1）/ **设为新预设**（`POST /api/presets`，v1）。
+  预设参考文档必须含至少一个（层级 = 格式规则的 `section_heading_level`）章标题，否则不允许落库
+- **批量信息必须带预设版本或「本次自定义」**（v1.24）：逐日确认页的信息条显示 `预设 v{N}`
+  （批次创建时记录的 `preset_version`）或 `预设：本次自定义`（该批次用了「仅本次生效」覆盖）——
+  改预设不会回写已生成的计划
 
 ---
 
@@ -441,8 +443,8 @@
 | 断点集合 | 1440 / 1280 / 1024 / 768 | `styles/global.css` 的 `@media` 块 |
 | 最小支持宽度 | 320px | `styles/global.css` `body { min-width: 320px }` |
 | SideNav 宽度 | 64 / 56（≤1024）/ 48（≤768）px | `styles/global.css` `.side-nav` 及其媒体查询 |
-| SideNav 导航项数 | 4（固定） | `components/SideNav.tsx` `NAV` 常量 |
-| 顶栏常驻可点击入口数 | 2（命令面板入口 + 重新扫描） | `components/TopBar.tsx` JSX |
+| SideNav 导航项数 | 5（固定） | `components/SideNav.tsx` `NAV` 常量 |
+| 顶栏常驻可点击入口数 | 3（命令面板入口 + 导出全部 + 重新扫描） | `components/TopBar.tsx` JSX |
 | 顶栏导航类按钮数 | 0 | `components/TopBar.tsx`（不得新增） |
 | TopBar / StatusBar 高度 | 48px / 28px | `styles/global.css` `--topbar-height` / `--statusbar-height` |
 | 状态栏隐藏项（≤1280px） | 索引文件数、上次扫描 | `components/StatusBar.tsx` `.metric-secondary` + `global.css` |
@@ -450,7 +452,7 @@
 | 中栏宽度 | 默认 280px，范围 200–400px | `App.tsx` `MID_WIDTH_RANGE` / `LAYOUT_DEFAULT` |
 | 折叠恢复条宽度 | 32px | `styles/global.css` `.pane-collapsed-bar` |
 | 编辑窗口上限 | 3 | `App.tsx` `MAX_WINDOWS` |
-| 命令面板索引动作数 | 16（4 导航 + 12 功能） | `App.tsx` `paletteItems` |
+| 命令面板索引动作数 | 19（5 导航 + 14 功能） | `App.tsx` `paletteItems` |
 | 命令面板最近使用上限 | 8 | `App.tsx` `MAX_RECENT_COMMANDS` |
 | 命令面板空查询每组上限 | 6 | `components/CommandPalette.tsx` `MAX_PER_GROUP` |
 | 命令面板文件检索防抖 | 220ms | `components/CommandPalette.tsx` |
@@ -476,8 +478,10 @@
 | 草稿单条体积上限 | 200KB | `App.tsx` `DRAFT_MAX_BYTES` |
 | 会话恢复窗口上限 | 3（同 `MAX_WINDOWS`） | `App.tsx` 会话恢复 effect |
 | 最近打开文件上限 | 8 | `App.tsx` `MAX_RECENT_FILES` |
-| 页面级内嵌面板数（需 `headerless`） | 9（Tools 3 + Data 3 + Settings 3） | `pages/ToolsPage.tsx` / `DataPage.tsx` / `SettingsPage.tsx` |
-| 业务工具页 tab 数 | 5（同步 / 超级同步 / 跨Agent编辑 / 对比 / 日志标准化） | `pages/ToolsPage.tsx` `Tab` 联合类型 + tab 数组 |
+| 页面级内嵌面板数（需 `headerless`） | 9（Tools 4 + Data 3 + Settings 2） | `pages/ToolsPage.tsx` / `DataPage.tsx` / `SettingsPage.tsx` |
+| 业务工具页 tab 数 | 4（同步 / 对比 / 跨Agent编辑 / 文档预设） | `pages/ToolsPage.tsx` `ToolsTab` 联合类型 + tab 数组 |
+| 记忆加工页 tab 数 | 2（日志标准化 / 日志总结） | `pages/MemoryPage.tsx` `MemoryTab` 联合类型 + tab 数组 |
+| 「同步」tab 内的模式数 | 2（普通同步 / 超级同步，`sync-mode-bar` 切换，不再并列 tab） | `pages/ToolsPage.tsx` `SyncMode` 联合类型 + `.sync-mode-bar` |
 | 日志标准化默认勾选数 | 0（铁律：默认全部不勾选，与同步一致） | `components/DailyStandardizerPanel.tsx` `checked` 初值 + 「全部执行」是否走显式 `applyAll` |
 | 日志标准化生成期轮询间隔 | 1500ms（仅在 `status === 'planned'` 时轮询） | `components/DailyStandardizerPanel.tsx` 轮询 effect |
 | 日志标准化预设简介文案来源 | 后端 `presets.description`（前端只渲染，不硬编码；空则显示「（该预设未填写说明）」） | `components/DailyStandardizerPanel.tsx` `.daily-preset-desc` + `api.listPresets('WORKLOG')` |
@@ -486,10 +490,13 @@
 | 残留壳检测口径 | 真壳规则 M01~M10（`SHELL_RULES`；M11/M12 归一不计入），文案用规则名 | `backend/app/services/daily_preprocessor.py` `SHELL_RULES` / `detect_residual_shells()` / `describe_shells()` |
 | 截断自动重试次数 | 1 次（预算翻倍，封顶 32768），仍截断则 `422` / `LLM_OUTPUT_TRUNCATED` | `backend/app/services/llm_registry.py` `_TRUNCATION_RETRY_CEILING` + `LLMClient.chat()` |
 | 「大模型专用」预设的判据 | `target_file_type = WORKLOG`（不加额外开关字段） | `backend/app/services/preset_service.py` `DAILY_PRESET_TYPE` |
-| 文档预设页 / 主工作台取预设的范围 | `scope=workbench`（排除 WORKLOG 类） | `PresetModal.tsx` `load()`、`ApplyPresetModal.tsx`、`ApplyAIModal.tsx` 的 `api.listPresets(undefined, 'workbench')`；`preset_service.py` `SCOPE_WORKBENCH` |
-| 日志标准化界面的预设来源展示 | 徽章「大模型专用」+ 版本 + 来源（后端 `is_builtin`）+「查看 / 编辑」 | `components/DailyStandardizerPanel.tsx` `.daily-preset-info`；`preset_service.py` `BUILTIN_PRESET_IDS` |
-| 预设模板编辑口径 | 预设参考文档（Markdown + 预览）+ 修改要求（逐条文本），共用 `PresetTemplateEditor`；不出现 YAML、章节清单 / 排序 / 可选勾选，也不出现「高级格式规则」（章节层级 / frontmatter 开关） | `components/PresetTemplateEditor.tsx`、`PresetModal.tsx`、`DailyPresetEditor.tsx` |
-| 页内编辑器可改字段数 | 3 组（用途说明 / 预设参考文档 / 修改要求） | `components/DailyPresetEditor.tsx` |
+| 文档预设页 / 主工作台取预设的范围 | **全部**（不传 `scope`）——文档预设页统一承载全部预设（含 WORKLOG / SUMMARY）；主工作台「应用预设 / AI 整理」也列全部（v1.24 起） | `PresetModal.tsx` / `ApplyPresetModal.tsx` / `ApplyAIModal.tsx` 的 `api.listPresets()` |
+| 日志标准化 / 总结的预设来源展示 | 徽章「大模型专用」+ 版本 + 来源（后端 `is_builtin`）；**只读、无编辑入口**（编辑在文档预设页） | `components/DailyStandardizerPanel.tsx` / `SummaryPanel.tsx` `.daily-preset-info`；`preset_service.py` `BUILTIN_PRESET_IDS` |
+| 预设模板编辑口径 | 预设参考文档（Markdown + 预览）+ 修改要求（逐条文本），共用 `PresetTemplateEditor`；不出现 YAML、章节清单 / 排序 / 可选勾选 | `components/PresetTemplateEditor.tsx`、`PresetModal.tsx`、`PresetConfirmModal.tsx` |
+| 预设编辑器可改类目数 | **5**（预设名 / 使用文件类别 / 用途说明 / 预设参考文档 / 预设修改要求） | `components/PresetModal.tsx`、`components/PresetConfirmModal.tsx` |
+| 「预设确认与编辑」窗的调用点 | **4**（应用预设 / AI 整理 / 日志标准化 / 日志总结），均在开始任务前弹出 | `components/PresetConfirmModal.tsx` + 4 个调用组件 |
+| 确认窗编辑后的去向 | 未编辑 → 「确认并开始」；编辑后 → 三选一（仅本次生效 / 更新预设 / 设为新预设） | `components/PresetConfirmModal.tsx` |
+| 「仅本次生效」的实现 | 后端 `preset_override`（`PresetOverride`）快照，存 `ai_jobs` / `daily_runs` / `summary_runs` 的 `preset_snapshot_json`，执行期以快照为准、预设不动 | `schemas.py` `PresetOverride`；`preset_service.from_snapshot()` / `effective()` |
 | 弹窗键盘可达性 | 所有模态走 `Modal`：`role="dialog"` + `aria-modal` + 焦点陷阱 + 打开聚焦 / 关闭归还焦点 + Esc 仅关最上层 | `components/Modal.tsx`（`ConfirmDialog.tsx` 复用） |
 | 工作台二次确认 | 统一 `ConfirmDialog`，不出现原生 `window.confirm` | `App.tsx` 的 `confirmAction()` / `components/ConfirmDialog.tsx` |
 | 通知可访问性 | Toast 用 `role="status"`（普通）/ `role="alert"`（错误），可手动关闭、悬停/聚焦暂停 | `hooks/useToast.tsx` |

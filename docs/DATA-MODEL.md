@@ -207,11 +207,11 @@ CREATE INDEX idx_presets_system ON presets(is_system);
 - `version` 在 PUT 后自增，并写 `preset_versions` 快照（保留历史，可回溯）
 - **`is_builtin` 是派生字段，不在表里**：由「id 是否属于内置预设清单（`BUILTIN_PRESET_IDS`）」算出，
   仅用于 API 响应与 UI 展示「预设来源」（内置预设 = 随版本分发，升级时可能被刷新）
-- **两类预设的边界（2026-09-24 收口，2026-09-26 扩展 SUMMARY）**：`target_file_type = WORKLOG`
-  = 专供大模型处理工作日志（M15 的规则载体），`target_file_type = SUMMARY` = 专供大模型做记忆归纳
-  （M16 的规则载体）；二者只在「业务工具 → 日志标准化 / 日志总结」界面可见可编辑，其余类型供主工作台加载。
-  `list(scope='workbench')` 排除这两个类型（设置页「文档预设」与主工作台用它，见
-  `preset_service.LLM_ONLY_PRESET_TYPES`）；`list(target_file_type='WORKLOG' | 'SUMMARY')` 取对应预设
+- **两类预设的边界（v1.24 起）**：`target_file_type = WORKLOG` = 专供大模型处理工作日志（M15 的规则载体），
+  `target_file_type = SUMMARY` = 专供大模型做记忆归纳（M16 的规则载体）。
+  **全部预设（含这两类）统一在「业务工具 → 文档预设」维护**（`list()` 不传 `scope` 返回全部）；
+  日志标准化 / 日志总结只负责「调用」。`scope=workbench`（排除 `LLM_ONLY_PRESET_TYPES`）为兼容保留，
+  界面已不再使用；`list(target_file_type='WORKLOG' | 'SUMMARY')` 供上述两个界面按类型取用
 - `retired_at` 非空 = 已退役（当前为 `preset-wlog-summary`「工作日志汇总」，已并入 `preset-wlog-daily-std`）：
   `list()` 不再返回它，但行保留、`get()` 仍可取，避免历史批次 / AI 任务按 id 读取时报 404
 - 内置预设 id 前缀 `preset-`（如 `preset-soul-std`、`preset-agents-std`、`preset-mem-std`、
@@ -287,6 +287,7 @@ CREATE TABLE ai_jobs (
     agent_id            TEXT NOT NULL,
     file_path           TEXT NOT NULL,
     preset_id           TEXT NOT NULL,
+    preset_snapshot_json TEXT,                     -- 「仅本次生效」的预设覆盖快照（PresetOverride JSON）；非空时执行期以它为准
     provider_id         TEXT NOT NULL,
     status              TEXT NOT NULL,             -- pending|running|awaiting_confirm|applied|rejected|failed|superseded
     input_snapshot      TEXT,                      -- 原文件快照（生成时锁定）
@@ -369,6 +370,7 @@ CREATE TABLE daily_runs (
     date_to             TEXT NOT NULL,
     preset_id           TEXT NOT NULL,
     preset_version      INTEGER NOT NULL DEFAULT 1, -- 批次绑定预设版本，规则迭代后可追溯
+    preset_snapshot_json TEXT,                     -- 「仅本次生效」的预设覆盖快照（PresetOverride JSON）
     provider_id         TEXT NOT NULL,
     status              TEXT NOT NULL,             -- planned|awaiting_confirm|applied|partially_applied|
                                                    -- needs_review|rejected|failed|empty
@@ -448,6 +450,7 @@ CREATE TABLE summary_runs (
     date_to             TEXT NOT NULL,
     preset_id           TEXT NOT NULL,
     preset_version      INTEGER NOT NULL DEFAULT 1, -- 批次绑定预设版本，规则迭代后可追溯
+    preset_snapshot_json TEXT,                     -- 「仅本次生效」的预设覆盖快照（PresetOverride JSON）
     provider_id         TEXT NOT NULL,
     status              TEXT NOT NULL,             -- planned|awaiting_confirm|applied|
                                                    -- needs_review|rejected|failed|empty

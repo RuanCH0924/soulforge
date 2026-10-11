@@ -4,7 +4,7 @@
 > 项目拥有者不需要懂代码，把本文档丢给 AI，它就能理解项目全貌并逐步生成代码。
 > 开发方式：Vibe Coding（自然语言描述 → AI 生成代码 → 老板验收）
 >
-> **版本号**：唯一事实源为 `backend/app/__init__.py` 的 `__version__`（当前 `0.5.5`），
+> **版本号**：唯一事实源为 `backend/app/__init__.py` 的 `__version__`（当前 `0.5.6`），
 > 版本历史与发版流程见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ---
@@ -132,8 +132,8 @@ Soulforge 内置一套 lint 检查，发现违规主动提示：
 | **M12** | **LLM Provider 接入** | **2.5** | **✅** |
 | **M13** | **AI 自动整理** | **2.5** | **✅** |
 | **M14** | **超级同步（独立守护脚本）** | **2.5** | **✅** |
-| **M15** | **工作日志标准化（memory/ 日文件归并）** | **—** | **✅ P0 / P1 / P2 / P3 已交付 + 预设收口 + 空日决策 + 归因修正 + 预设边界**（P2 = 批次编排 + 确认执行 + 碎片清理 + 验收报告 + Tools 页「日志标准化」tab；P3 = 规则投递形态效率对比 + 运维手册；收口 = WORKLOG 预设合并为一个；空日决策 = 全天无内容时不产出日文件；归因修正 = 残留壳口径收窄到真壳 + 输出截断如实归因与重试；预设边界 = 日志预设只在日志标准化界面可见可编辑，见 [MEMORY-DAILY-STANDARDIZER-PLAN.md](MEMORY-DAILY-STANDARDIZER-PLAN.md)） |
-| **M16** | **工作日志总结（记忆归纳，一段时间 → 1 份综述）** | **—** | **✅ 已交付**（单表 `summary_runs` + `SummaryService` + `/api/summary-runs` 6 端点 + Tools 页「日志总结」tab；规则载体 = 内置预设 `preset-mem-summarize` / `target_file_type=SUMMARY`，契约来自 skill `memory-summarize` 模式 A；只读归纳、源文件默认不动，`cleanup-sources` 为写入后可选动作；见 [ARCHITECTURE.md](ARCHITECTURE.md) 3.13） |
+| **M15** | **工作日志标准化（memory/ 日文件归并）** | **—** | **✅ P0 / P1 / P2 / P3 已交付 + 预设收口 + 空日决策 + 归因修正 + 预设边界**（P2 = 批次编排 + 确认执行 + 碎片清理 + 验收报告 + 记忆加工页「日志标准化」tab；P3 = 规则投递形态效率对比 + 运维手册；收口 = WORKLOG 预设合并为一个；空日决策 = 全天无内容时不产出日文件；归因修正 = 残留壳口径收窄到真壳 + 输出截断如实归因与重试；预设边界 = 日志预设只在日志标准化界面可见可编辑，见 [MEMORY-DAILY-STANDARDIZER-PLAN.md](MEMORY-DAILY-STANDARDIZER-PLAN.md)） |
+| **M16** | **工作日志总结（记忆归纳，一段时间 → 1 份综述）** | **—** | **✅ 已交付**（单表 `summary_runs` + `SummaryService` + `/api/summary-runs` 6 端点 + 记忆加工页「日志总结」tab；规则载体 = 内置预设 `preset-mem-summarize` / `target_file_type=SUMMARY`，契约来自 skill `memory-summarize` 模式 A；只读归纳、源文件默认不动，`cleanup-sources` 为写入后可选动作；见 [ARCHITECTURE.md](ARCHITECTURE.md) 3.13） |
 
 ---
 
@@ -192,7 +192,7 @@ Diff 渲染用后端归一化 + 行级 diff（`diff_service`），前端 `DiffVi
 | 命令 | UI 入口 | 功能 |
 |---|---|---|
 | `GET /api/export/{id}` | Agent 详情 → 「导出」 | 导出 Prompt Pack 为 `.tar.gz` |
-| `GET /api/export/all` | 业务工具 → 「导出全部」 | 全部 Agent |
+| `GET /api/export/all` | 顶栏 → 「导出全部」 | 全部 Agent |
 
 ### 模块 M7：备份与回滚
 
@@ -253,29 +253,28 @@ Diff 渲染用后端归一化 + 行级 diff（`diff_service`），前端 `DiffVi
 > 旧的「YAML 规则 + 参考文档」模板在读取时**惰性兼容**（不写库），首次经新编辑器保存时落库为新形态。
 > 大模型处理**所有文档修改类任务**时，仅以「预设参考文档」与「修改要求」两项配置为核心参照依据。
 
-**端点**：`GET /api/presets`（`?target_file_type=` 按类型过滤 / `?scope=workbench` 排除大模型专用预设）、`GET/POST/PUT/DELETE /api/presets[/{id}]`、`POST /api/presets/from-document`（由当前文档生成）、`POST /api/presets/{id}/apply`、`POST /api/presets/{id}/apply/execute`。
+**端点**：`GET /api/presets`（`?target_file_type=` 按类型过滤；不传 `scope` 返回全部 —— 文档预设页用它）、`GET/POST/PUT/DELETE /api/presets[/{id}]`、`POST /api/presets/from-document`（由当前文档生成）、`POST /api/presets/{id}/apply`、`POST /api/presets/{id}/apply/execute`。
 
 **UI 入口**：
-- 系统配置页 → 「文档预设」 → 列表 + 新建/编辑/删除 + 版本历史/回溯（**不含 WORKLOG 类**）
-- 文件编辑页 → 「应用预设」按钮 → 选预设 → 生成 diff plan → 老板确认 → 写入（**不含 WORKLOG 类**）
+- 业务工具页 → 「文档预设」 → 列表 + 新建/编辑/删除 + 版本历史/回溯（**统一承载全部预设**，含 WORKLOG / SUMMARY；编辑器 **5 个类目**：预设名 / 使用文件类别 / 用途说明 / 预设参考文档 / 预设修改要求）
+- 文件编辑页 → 「应用预设」按钮 → 选预设 → **「预设确认与编辑」窗**（可「仅本次生效 / 更新预设 / 设为新预设」）→ 生成 diff plan → 老板确认 → 写入
 - 文件编辑页工具栏 → 「设为预设」按钮 → 填写参数（名称/适用类型/说明/章节层级/frontmatter）→ 存为预设
-- 业务工具 → 日志标准化 / 日志总结 → 预设信息栏「查看 / 编辑」→ 页内编辑工作日志预设（**只在这里**）
+- 记忆加工 → 日志标准化 / 日志总结 → **只负责调用预设**（信息栏只读，无编辑入口）；点「生成计划」先弹同一个「预设确认与编辑」窗
 
 **模板编辑器（共享组件 `PresetTemplateEditor`）**：**预设参考文档**（Markdown + 预览）+ **修改要求**
-（逐条文本）+ 折叠的「高级格式规则」（层级 / frontmatter）；普通用户全程不接触 YAML，
-也不再出现独立的「章节清单」面板。
+（逐条文本）；普通用户全程不接触 YAML，也不再出现独立的「章节清单」面板。
 
-**两类预设的边界（不得混淆）**：
+**三类预设的用途与取用（v1.24 起，编辑统一在文档预设）**：
 
 | 用途 | 判据 | 可见 / 可编辑的地方 |
 |---|---|---|
-| 供**大模型归并工作日志**（M15 的规则载体） | `target_file_type = WORKLOG` | 只在「业务工具 → 日志标准化」界面（预设信息栏 + 页内编辑弹窗）；取用方式 `GET /api/presets?target_file_type=WORKLOG` |
-| 供**大模型做记忆归纳**（M16 的规则载体） | `target_file_type = SUMMARY` | 只在「业务工具 → 日志总结」界面（预设信息栏 + 页内编辑弹窗）；取用方式 `GET /api/presets?target_file_type=SUMMARY` |
-| 供**主工作台加载**（应用预设 / AI 整理 / 设为预设） | 其余类型 | 设置页「文档预设」、编辑器「应用预设 / AI 整理」；取用方式 `GET /api/presets?scope=workbench` |
+| 供**大模型归并工作日志**（M15 的规则载体） | `target_file_type = WORKLOG` | **编辑**统一在「业务工具 → 文档预设」；日志标准化界面**只调用**（取用方式 `GET /api/presets?target_file_type=WORKLOG`） |
+| 供**大模型做记忆归纳**（M16 的规则载体） | `target_file_type = SUMMARY` | **编辑**统一在「业务工具 → 文档预设」；日志总结界面**只调用**（取用方式 `GET /api/presets?target_file_type=SUMMARY`） |
+| 供**主工作台加载**（应用预设 / AI 整理 / 设为预设） | 其余类型 | 业务工具「文档预设」、编辑器「应用预设 / AI 整理」；取用方式 `GET /api/presets`（文档预设页列出全部） |
 
-判据只有类型本身，没有额外的开关字段（常量 `preset_service.DAILY_PRESET_TYPE` / `SUMMARY_PRESET_TYPE`，
-主工作台排除集合 = `LLM_ONLY_PRESET_TYPES`）；两侧的过滤都在**后端**完成，
-前端不自己判断。`Preset.is_builtin`（是否随版本分发的内置预设）用于 UI 展示「预设来源」。
+判据只有类型本身，没有额外的开关字段（常量 `preset_service.DAILY_PRESET_TYPE` / `SUMMARY_PRESET_TYPE`）；
+「调用预设前必须经 `PresetConfirmModal` 再次确认与现场编辑」，编辑后可「仅本次生效 / 更新预设 / 设为新预设」。
+`Preset.is_builtin`（是否随版本分发的内置预设）用于 UI 展示「预设来源」。
 
 **「设为预设」语义**：以编辑器当前内容作**预设参考文档**，按参数生成预设（参考文档 + 结构化规则）；
 章节清单来自文档中指定层级的标题（扫描跳过围栏代码块）；
@@ -425,7 +424,7 @@ class LLMProvider(Protocol):
 | `MeaninglessLogArchive` | `backend/app/services/meaningless_log_archive.py` | 无意义日志的**删除前**备份归档（`<data_dir>/meaningless-log-backups/` + `index.jsonl`），保留 7 天，启动时清理过期项；与常规 `backups/`（30 天）分离 |
 | `DailyRunService` | `backend/app/services/daily_run_service.py` | 批次编排：创建（幂等键 / 天数与 token 上限 / 后台逐日生成）→ 确认执行（批次级写前预检 + 乐观锁 → 写入 + 备份 + 审计 → 碎片 `send2trash`，无意义碎片先归档再删）→ 验收报告（对磁盘真实文件核对 5 项） |
 | API | `backend/app/api/daily.py` | `/api/daily-runs` 6 个端点（见 [API.md](./API.md) 3.15） |
-| 前端 | `frontend/src/components/DailyStandardizerPanel.tsx` | Tools 页「日志标准化」tab：参数 → 逐日确认（默认全不勾选）→ 验收报告 |
+| 前端 | `frontend/src/components/DailyStandardizerPanel.tsx` | 记忆加工页「日志标准化」tab：参数 → 逐日确认（默认全不勾选）→ 验收报告 |
 | 对比台 | `backend/daily_form_bench.py` | P3 效率对比（三种规则投递形态 × N 次重复，只读、带 token 预算硬中止）；结论见 [M15-EFFICIENCY-REPORT.md](./M15-EFFICIENCY-REPORT.md) |
 
 **规则投递形态**（`DailyMergeService.plan_day(..., delivery=...)`，P3 定稿）：

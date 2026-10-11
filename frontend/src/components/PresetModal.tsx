@@ -22,12 +22,12 @@ interface PresetModalProps {
 }
 
 /**
- * 可在本页新建 / 编辑的适用类型：**不含 WORKLOG**。
- * WORKLOG 类预设专供大模型处理工作日志（M15 日志标准化），只在
- * 业务工具 → 日志标准化 界面里可见与编辑；本页列表也会排除它们（见 load()）。
+ * 可在本页新建 / 编辑的适用类型：**全集**（含 WORKLOG / SUMMARY）。
+ * 文档预设系统统一承载全部预设；日志标准化 / 日志总结只负责「调用」，
+ * 其规则载体（WORKLOG / SUMMARY）同样在本页维护。
  */
 const TARGET_TYPES: PresetTargetType[] = [
-  'SOUL', 'AGENTS', 'MEMORY', 'USER', 'IDENTITY', 'TOOLS', 'ANY',
+  'SOUL', 'AGENTS', 'MEMORY', 'USER', 'IDENTITY', 'TOOLS', 'WORKLOG', 'SUMMARY', 'ANY',
 ];
 
 /** 默认预设参考文档（新建预设时使用；规则走 DEFAULT_FORMAT_RULES） */
@@ -58,6 +58,7 @@ interface PresetDraft {
   targetType: PresetTargetType;
   description: string;
   templateMd: string;
+  styleRules: string;
   formatRules: PresetFormatRules;
 }
 
@@ -114,13 +115,14 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
   const [targetType, setTargetType] = useState<PresetTargetType>('ANY');
   const [description, setDescription] = useState('');
   const [templateMd, setTemplateMd] = useState(DEFAULT_TEMPLATE);
+  const [styleRules, setStyleRules] = useState('');
   const [formatRules, setFormatRules] = useState<PresetFormatRules>(DEFAULT_FORMAT_RULES);
 
   const load = () => {
     setLoading(true);
     api
-      // scope=workbench：排除「专供大模型处理工作日志」的预设（WORKLOG 类）
-      .listPresets(undefined, 'workbench')
+      // 文档预设系统统一承载全部预设（含 WORKLOG / SUMMARY 这类大模型专用预设）
+      .listPresets()
       .then(setPresets)
       .catch((e) => toast(`加载预设失败：${(e as Error).message}`, 'error'))
       .finally(() => setLoading(false));
@@ -134,8 +136,8 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
   // 编辑状态实时保存：表单任何变化都写入草稿
   useEffect(() => {
     if (!draftCtxRef.current || view !== 'edit') return;
-    writeDraft(draftCtxRef.current, { name, targetType, description, templateMd, formatRules });
-  }, [name, targetType, description, templateMd, formatRules, view]);
+    writeDraft(draftCtxRef.current, { name, targetType, description, templateMd, styleRules, formatRules });
+  }, [name, targetType, description, templateMd, styleRules, formatRules, view]);
 
   const applyDraft = (ctx: string, fallback: () => void) => {
     fallback();
@@ -145,6 +147,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
       setTargetType(d.targetType);
       setDescription(d.description);
       setTemplateMd(d.templateMd);
+      setStyleRules(d.styleRules ?? '');
       if (d.formatRules) setFormatRules(d.formatRules);
       toast('已恢复上次未保存的编辑内容', 'info');
     }
@@ -160,6 +163,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
       setTargetType('ANY');
       setDescription('');
       setTemplateMd(DEFAULT_TEMPLATE);
+      setStyleRules('');
       setFormatRules(DEFAULT_FORMAT_RULES);
     });
   };
@@ -176,6 +180,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
         setTargetType(detail.target_file_type);
         setDescription(detail.description ?? '');
         setTemplateMd(detail.template_md ?? templateFromPreset(detail));
+        setStyleRules(detail.style_rules.join('\n'));
         setFormatRules(detail.format_rules ?? DEFAULT_FORMAT_RULES);
       });
     } catch (e) {
@@ -219,6 +224,10 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
         description: description.trim() || undefined,
         template_md: templateMd,
         format_rules: formatRules,
+        style_rules: styleRules
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean),
       };
       if (creating) {
         await api.createPreset(body);
@@ -326,7 +335,7 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
             />
           </div>
           <div className="field">
-            <label>适用文件类型</label>
+            <label>使用文件类别</label>
             <select
               className="select"
               value={targetType}
@@ -338,9 +347,6 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
                 </option>
               ))}
             </select>
-            <div className="hint" style={{ marginTop: 4 }}>
-              工作日志（WORKLOG）类预设专供大模型归并日志使用，请在「业务工具 → 日志标准化」界面查看与编辑。
-            </div>
           </div>
           <div className="field">
             <label>用途说明</label>
@@ -354,6 +360,8 @@ export function PresetModal({ onClose, embedded }: PresetModalProps) {
           <PresetTemplateEditor
             reference={templateMd}
             onReferenceChange={setTemplateMd}
+            styleRules={styleRules}
+            onStyleRulesChange={setStyleRules}
           />
         </>
       ) : view === 'history' ? (

@@ -423,7 +423,7 @@ class PresetService:
              scope: str = "all") -> list[Preset]:
         """列出预设（已退役的内置预设不返回）
         scope=workbench → 排除大模型专用预设（WORKLOG / SUMMARY 类）
-        （设置页「文档预设」与主工作台「应用预设 / AI 整理」用它）"""
+        （业务工具「文档预设」与主工作台「应用预设 / AI 整理」用它）"""
 
     def get(self, preset_id: str) -> Preset: ...
 
@@ -460,11 +460,11 @@ class PresetService:
 - 预设与应用计划**解耦**：`apply_plan` 只读不写，生成纯计算结果
 - `apply_execute` 是唯一会写文件的入口，复用 `BackupService` 链路
 - 预设版本化：每次 `update` 自增 `version`，并写版本快照（可查看历史与回溯）
-- **两类预设的边界**（2026-09-24 收口，2026-09-26 扩展 SUMMARY）：`target_file_type = WORKLOG`
-  即「专供大模型处理工作日志」（常量 `DAILY_PRESET_TYPE`），`target_file_type = SUMMARY` 即
-  「专供大模型做记忆归纳」（常量 `SUMMARY_PRESET_TYPE`）；二者只在「业务工具 → 日志标准化 /
-  日志总结」界面可见可编辑，其余类型供主工作台加载。两侧过滤都在后端：
-  `SCOPE_WORKBENCH` 排除 `LLM_ONLY_PRESET_TYPES`（= WORKLOG + SUMMARY）
+- **两类预设的边界**（v1.24 起）：`target_file_type = WORKLOG` 即「专供大模型处理工作日志」
+  （常量 `DAILY_PRESET_TYPE`），`target_file_type = SUMMARY` 即「专供大模型做记忆归纳」
+  （常量 `SUMMARY_PRESET_TYPE`）。**全部预设（含这两类）统一在「业务工具 → 文档预设」维护**
+  （`list()` 不传 `scope` 返回全部）；日志标准化 / 日志总结只负责**调用**。
+  `SCOPE_WORKBENCH`（排除 `LLM_ONLY_PRESET_TYPES` = WORKLOG + SUMMARY）为兼容保留、界面已不用
 - `is_builtin`（是否随版本分发的内置预设）用于 UI 展示「预设来源」；
   历史字段 `is_system` 恒为 `false`（内置预设与用户预设同等可编辑、可删除）
 
@@ -708,9 +708,10 @@ UI 每 2.5s 轮询一次（满足 ≤ 3s 延迟）并支持手动刷新。
   skipped / empty / failed`（见 [DATA-MODEL.md](DATA-MODEL.md) 2.9）
 - **与 M13 隔离**：不复用 `ai_jobs`（保持单文件语义），批次独立两表 `daily_runs` / `daily_run_items`
 
-**规则载体（预设）**：`preset-wlog-daily-std`「工作日志日标准化」（`target_file_type=WORKLOG`），
-属于「大模型专用」预设——只在日志标准化界面可见可编辑（预设信息栏 + 页内编辑器，
-可改用途说明 / 模板文档 / `style_rules`），文档预设页与主工作台按 `scope=workbench` 排除（见 3.8）。
+**规则载体（预设）**：`preset-wlog-daily-std`「工作日志日标准化」（`target_file_type=WORKLOG`）。
+v1.24 起**全部预设统一在「业务工具 → 文档预设」维护**；本界面**只负责调用**（预设信息栏只读）。
+点「生成计划」先弹**「预设确认与编辑」窗** `PresetConfirmModal`，可现场编辑 5 个类目并选择
+「仅本次生效（`preset_override` 快照，存 `daily_runs.preset_snapshot_json`）/ 更新预设 / 设为新预设」。
 
 **API**：`/api/daily-runs` 6 个端点（创建 / 列表 / 详情 / 应用 / 拒绝 / 跳过 / 报告，见 [API.md](API.md) 3.15）；
 错误码 `DAILY_RUN_NOT_FOUND`（404）/ `DAILY_RUN_STATUS`（409）/ `DAILY_RUN_DISABLED`（403）/

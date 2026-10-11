@@ -7,6 +7,8 @@ import type { DiffHunk } from '../utils/unifiedDiff';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DiffHunkPicker } from './DiffHunkPicker';
 import { Modal } from './Modal';
+import { PresetConfirmModal } from './PresetConfirmModal';
+import type { PresetConfirmResult } from './PresetConfirmModal';
 import { RichDiffView } from './RichDiffView';
 
 interface ApplyPresetModalProps {
@@ -14,10 +16,18 @@ interface ApplyPresetModalProps {
   filePath: string;
   onClose: () => void;
   onDone: () => void;
+  /** 直达预设管理（跳「业务工具 → 文档预设」）；不传则不显示入口 */
+  onManagePresets?: () => void;
 }
 
 /** 文件编辑页「应用预设」：选预设 → 生成 plan → diff 预览 → 确认写入（绝不直接覆盖） */
-export function ApplyPresetModal({ agentId, filePath, onClose, onDone }: ApplyPresetModalProps) {
+export function ApplyPresetModal({
+  agentId,
+  filePath,
+  onClose,
+  onDone,
+  onManagePresets,
+}: ApplyPresetModalProps) {
   const { push: toast } = useToast();
   const [presets, setPresets] = useState<PresetSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,6 +37,8 @@ export function ApplyPresetModal({ agentId, filePath, onClose, onDone }: ApplyPr
   const [planning, setPlanning] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [applying, setApplying] = useState(false);
+  /** 调用预设前的确认 / 编辑窗 */
+  const [confirmPresetOpen, setConfirmPresetOpen] = useState(false);
   // 「按块接受」：从 unified_diff 解析出的 hunk 与逐块勾选状态（默认全接受）
   const [hunks, setHunks] = useState<DiffHunk[]>([]);
   const [accepted, setAccepted] = useState<boolean[]>([]);
@@ -37,8 +49,8 @@ export function ApplyPresetModal({ agentId, filePath, onClose, onDone }: ApplyPr
 
   useEffect(() => {
     api
-      // scope=workbench：日志标准化预设专供大模型归并工作日志，不在本处列出
-      .listPresets(undefined, 'workbench')
+      // 文档预设系统统一承载全部预设（含 WORKLOG / SUMMARY 这类大模型专用预设）
+      .listPresets()
       .then((list) => {
         setPresets(list);
         if (list.length > 0) setSelected(list[0].id);
@@ -48,11 +60,23 @@ export function ApplyPresetModal({ agentId, filePath, onClose, onDone }: ApplyPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const generate = async () => {
+  /** 「生成计划」→ 先弹「预设确认与编辑」窗（开始任务前的统一入口） */
+  const requestGenerate = () => {
     if (!selected) return;
+    setConfirmPresetOpen(true);
+  };
+
+  const generate = async (opts: PresetConfirmResult) => {
+    setConfirmPresetOpen(false);
+    const pid = opts.presetId ?? selected;
     setPlanning(true);
     try {
-      const p = await api.presetApplyPlan(selected, agentId, filePath, extra.trim() || undefined);
+      const p = await api.presetApplyPlan(
+        pid, agentId, filePath, extra.trim() || undefined, opts.override);
+      if (opts.presetId) {
+        setSelected(opts.presetId);
+        void api.listPresets().then(setPresets).catch(() => setPresets);
+      }
       setPlan(p);
       const parsed = parseUnifiedDiff(p.unified_diff);
       setHunks(parsed.hunks);
@@ -114,7 +138,7 @@ export function ApplyPresetModal({ agentId, filePath, onClose, onDone }: ApplyPr
             </button>
           </div>
         ) : (
-          <button className="btn btn-primary" onClick={generate} disabled={planning || !selected}>
+          <button className="btn btn-primary" onClick={requestGenerate} disabled={planning || !selected}>
             {planning && <span className="spinner" />}
             生成计划
           </button>
@@ -126,7 +150,20 @@ export function ApplyPresetModal({ agentId, filePath, onClose, onDone }: ApplyPr
           <div className="alert-banner info">
             应用预设会按预设结构补齐缺失章节，<b>不改动已有内容</b>；写入前自动备份原文件。走 plan + 确认两步。
           </div>
-          <div className="section-title">选择预设（{presets.length} 个）</div>
+          <div className="section-title">
+            选择预设（{presets.length} 个）
+            {onManagePresets && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                style={{ marginLeft: 8 }}
+                onClick={onManagePresets}
+                title="前往「业务工具 → 文档预设」新增 / 编辑预设"
+              >
+                管理预设
+              </button>
+            )}
+          </div>
           {loading ? (
             <div className="state-block">
               <div className="spinner-lg" />
@@ -134,8 +171,7 @@ export function ApplyPresetModal({ agentId, filePath, onClose, onDone }: ApplyPr
             </div>
           ) : presets.length === 0 ? (
             <div className="hint">
-              没有可用于主工作台的预设。工作日志（WORKLOG）类预设专供大模型归并日志，
-              请在「业务工具 → 日志标准化」界面使用。
+              还没有预设：点上方「管理预设」新建一个，或在「业务工具 → 文档预设」中维护。
             </div>
           ) : (
             <div className="checkbox-grid" style={{ maxHeight: 260 }}>
@@ -228,6 +264,17 @@ export function ApplyPresetModal({ agentId, filePath, onClose, onDone }: ApplyPr
             />
           )}
         </>
+      )}
+
+      {confirmPresetOpen && selected && (
+        <PresetConfirmModal
+          presetId={selected}
+          title="确认要应用的预设"
+          actionLabel="生成计划"
+          busy={planning}
+          onCancel={() => setConfirmPresetOpen(false)}
+          onConfirm={(r) => void generate(r)}
+        />
       )}
 
       {confirming && plan && (

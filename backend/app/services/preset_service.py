@@ -542,6 +542,48 @@ class PresetService:
         with self.db.session() as s:
             return self._row_to_detail(self._get_row(s, preset_id))
 
+    # ---------- 「仅本次生效」的覆盖快照 ----------
+
+    @staticmethod
+    def snapshot_of(preset: Preset) -> dict:
+        """把预设的 5 个核心类目 + 格式规则抽成可存储的覆盖快照。"""
+        return {
+            "name": preset.name,
+            "target_file_type": preset.target_file_type,
+            "description": preset.description,
+            "template_md": preset.template_md,
+            "format_rules": preset.format_rules,
+            "style_rules": preset.style_rules,
+        }
+
+    @classmethod
+    def from_snapshot(cls, snap: dict) -> Preset:
+        """由覆盖快照还原出一个**不入库**的 Preset（供任务执行期解析规则）。"""
+        format_rules = normalize_format_rules(snap.get("format_rules") or {})
+        template_md = snap.get("template_md")
+        # 章节由参考文档派生（与应用预设 / 派生规则同一口径），使「补齐缺失章节」可用
+        sections = derive_sections(template_md, format_rules) if template_md else []
+        return Preset(
+            id=str(snap.get("id") or "__override__"),
+            name=snap.get("name") or "（本次自定义）",
+            target_file_type=snap.get("target_file_type") or "ANY",  # type: ignore[arg-type]
+            description=snap.get("description"),
+            template_md=template_md,
+            format_rules=format_rules,
+            sections_json=[PresetSection(**sec) for sec in sections],
+            frontmatter_json={},
+            style_rules=snap.get("style_rules") or [],
+            is_system=False, is_builtin=False, version=0, created_at=0, updated_at=0,
+        )
+
+    def effective(self, preset_id: str, snapshot_json: str | None) -> Preset:
+        """解析某次任务实际生效的预设：有覆盖快照则用它，否则从库里取。"""
+        if snapshot_json:
+            snap = _parse_json(snapshot_json, None)
+            if isinstance(snap, dict) and snap:
+                return self.from_snapshot(snap)
+        return self.get(preset_id)
+
     def create(self, payload: PresetCreate) -> Preset:
         """创建用户预设，is_system=False，保存 v1 快照。template_md（参考文档）优先，sections 由其派生。"""
         now = int(time.time())
@@ -751,16 +793,19 @@ class PresetService:
         return rules
 
     def apply_plan(self, preset_id: str, agent_id: str, file_path: str,
-                   extra_instructions: str | None = None) -> PresetApplyPlan:
+                   extra_instructions: str | None = None,
+                   override: dict | None = None) -> PresetApplyPlan:
         """生成应用 plan（只读不写）：
 
         1. 解析模板规则（template_md → TemplateRules）
         2. 加载目标文档
         3. 按模板补齐缺失章节 → 机械性自动修正
         4. 格式校验（format_report），任何违规都展示给用户确认后再执行。
+
+        `override` 非空 = 「仅本次生效」的预设覆盖：按它解析规则，预设本身与库均不动。
         """
         self._cleanup_expired()
-        preset = self.get(preset_id)
+        preset = self.from_snapshot(override) if override else self.get(preset_id)
         rules = self.rules_for(preset)
         current = self.file_manager.read_text(agent_id, file_path)
         filled = self._fill_missing_sections(current, preset, heading_level=rules.section_heading_level)

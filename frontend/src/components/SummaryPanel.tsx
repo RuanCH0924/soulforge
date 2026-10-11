@@ -14,7 +14,8 @@ import type {
 } from '../types';
 import { formatBytes } from '../utils/format';
 import { ConfirmDialog } from './ConfirmDialog';
-import { DailyPresetEditor } from './DailyPresetEditor';
+import { PresetConfirmModal } from './PresetConfirmModal';
+import type { PresetConfirmResult } from './PresetConfirmModal';
 import { RichDiffView } from './RichDiffView';
 
 interface SummaryPanelProps {
@@ -62,7 +63,7 @@ function outputPathFor(from: string, to: string): string {
 }
 
 /**
- * 工作日志总结面板（M16 · 业务工具页内嵌）。
+ * 工作日志总结面板（M16 · 记忆加工页内嵌）。
  *
  * 三阶段：参数 → 归纳计划（含完整 diff）→ 验收报告。
  * 计划阶段只读不落盘；确认写入后产物落到 `memory/<范围>-记忆归纳.md`。
@@ -99,8 +100,8 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
   const [confirmApply, setConfirmApply] = useState(false);
   const [confirmReject, setConfirmReject] = useState(false);
   const [confirmCleanup, setConfirmCleanup] = useState(false);
-  /** 正在页内编辑的归纳预设 id（null = 未打开编辑器） */
-  const [editPresetId, setEditPresetId] = useState<string | null>(null);
+  /** 调用预设前的确认 / 编辑窗（开始任务前的唯一入口） */
+  const [confirmPresetOpen, setConfirmPresetOpen] = useState(false);
 
   useEffect(() => {
     Promise.all([api.listPresets('SUMMARY'), api.listLLMProviders()])
@@ -169,7 +170,8 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
     [agentId, loadHistory, loadRun],
   );
 
-  const createRun = useCallback(async () => {
+  /** 「生成计划」→ 先弹「预设确认与编辑」窗（开始任务前的唯一入口，不再有页内编辑器） */
+  const requestCreate = useCallback(() => {
     if (!agentId) {
       toast('请选择 Agent', 'warning');
       return;
@@ -186,30 +188,48 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
       toast('开始日期不能晚于结束日期', 'warning');
       return;
     }
-    setBusy(true);
-    try {
-      const r: SummaryRunCreateResult = await api.createSummaryRun({
-        agent_id: agentId,
-        date_from: dateFrom,
-        date_to: dateTo,
-        preset_id: presetId,
-        provider_id: providerId,
-        extra_instructions: extra.trim() || undefined,
-      });
-      setReport(null);
-      setRunId(r.run_id);
-      setStage('plan');
-      await loadRun(r.run_id);
-      void loadHistory(agentId);
-      if (r.reused) toast('与既有批次内容一致，已复用其结果（未重复调用 LLM）', 'info');
-      else if (r.status === 'empty') toast('该范围内没有可归纳的记录', 'info');
-      else toast(`已提交，正在归纳（共 ${r.source_count} 个来源）`, 'info');
-    } catch (e) {
-      toast(`创建批次失败：${(e as Error).message}`, 'error');
-    } finally {
-      setBusy(false);
+    if (!presetId) {
+      toast('请选择预设', 'warning');
+      return;
     }
-  }, [agentId, dateFrom, dateTo, presetId, providerId, extra, loadRun, loadHistory, toast]);
+    setConfirmPresetOpen(true);
+  }, [agentId, providerId, dateFrom, dateTo, presetId, toast]);
+
+  const doCreate = useCallback(
+    async (opts: PresetConfirmResult) => {
+      setConfirmPresetOpen(false);
+      setBusy(true);
+      try {
+        const r: SummaryRunCreateResult = await api.createSummaryRun({
+          agent_id: agentId,
+          date_from: dateFrom,
+          date_to: dateTo,
+          preset_id: opts.presetId ?? presetId,
+          provider_id: providerId,
+          extra_instructions: extra.trim() || undefined,
+          preset_override: opts.override ?? null,
+        });
+        setReport(null);
+        setRunId(r.run_id);
+        setStage('plan');
+        await loadRun(r.run_id);
+        void loadHistory(agentId);
+        if (opts.presetId) {
+          // 「设为新预设」后：选中新预设并刷新可选列表
+          setPresetId(opts.presetId);
+          void api.listPresets('SUMMARY').then(setPresets).catch(() => setPresets);
+        }
+        if (r.reused) toast('与既有批次内容一致，已复用其结果（未重复调用 LLM）', 'info');
+        else if (r.status === 'empty') toast('该范围内没有可归纳的记录', 'info');
+        else toast(`已提交，正在归纳（共 ${r.source_count} 个来源）`, 'info');
+      } catch (e) {
+        toast(`创建批次失败：${(e as Error).message}`, 'error');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [agentId, dateFrom, dateTo, presetId, providerId, extra, loadRun, loadHistory, toast],
+  );
 
   const loadReport = useCallback(async () => {
     if (!runId) return;
@@ -284,18 +304,8 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
   const canAct = run?.status === 'awaiting_confirm' && !generating;
   const canCleanup = Boolean(run?.applied_at) && !run?.cleanup_at;
 
-  /** 当前生效的归纳预设（下拉选中的那个）：信息栏与页内编辑器都用它 */
+  /** 当前生效的归纳预设（下拉选中的那个）：信息栏展示用 */
   const currentPreset = presets.find((p) => p.id === presetId);
-
-  const reloadPresets = useCallback(async () => {
-    try {
-      const ps = await api.listPresets('SUMMARY');
-      setPresets(ps);
-      if (!ps.some((p) => p.id === presetId)) setPresetId(ps[0]?.id ?? '');
-    } catch (e) {
-      toast(`刷新预设失败：${(e as Error).message}`, 'error');
-    }
-  }, [presetId, toast]);
 
   // ================= 参数 =================
   if (stage === 'setup') {
@@ -354,8 +364,8 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
         )}
 
         <div className="section-title">记忆归纳预设</div>
-        {/* 预设信息栏：说清「当前生效的是哪个预设、它从哪来、专供谁用」——
-            这类预设按边界不在设置页文档预设与主工作台「应用预设」里出现。 */}
+        {/* 预设信息栏：本页只做「调用」，编辑统一到「业务工具 → 文档预设」；
+            点「生成计划」后会再弹「预设确认与编辑」窗，可现场微调。 */}
         {currentPreset && (
           <div className="daily-preset-info">
             <div className="daily-preset-info-head">
@@ -369,17 +379,11 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
               <span className="muted text-sm">
                 来源：{currentPreset.is_builtin ? '内置预设（随版本分发）' : '用户自建'}
               </span>
-              <button
-                className="btn btn-sm ml-auto"
-                onClick={() => setEditPresetId(currentPreset.id)}
-              >
-                查看 / 编辑
-              </button>
             </div>
             <div className="daily-preset-info-hint">
-              该预设<b>专供大模型做记忆归纳</b>（把一段时间的记录归纳成单份综述），不用于主工作台的文件整理；
-              它不出现在「系统配置 → 文档预设」与主工作台「应用预设」中。修改保存后
-              <b>重新生成批次即生效</b>。
+              该预设<b>专供大模型做记忆归纳</b>（把一段时间的记录归纳成单份综述）。
+              本页只负责<b>调用</b>预设；预设的编辑统一在「业务工具 → 文档预设」进行。
+              点「生成计划」后会弹出<b>预设确认窗</b>，可现场微调（选择「仅本次生效 / 更新预设 / 设为新预设」）。
             </div>
           </div>
         )}
@@ -456,7 +460,7 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
         </div>
 
         <div className="daily-actions">
-          <button className="btn btn-primary" onClick={() => void createRun()} disabled={busy}>
+          <button className="btn btn-primary" onClick={requestCreate} disabled={busy}>
             {busy && <span className="spinner" />}
             生成计划
           </button>
@@ -498,31 +502,14 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
           </>
         )}
 
-        {editPresetId && (
-          <DailyPresetEditor
-            presetId={editPresetId}
-            titlePrefix="编辑记忆归纳预设"
-            notice={
-              <>
-                <div className="alert-title">本预设专供大模型做记忆归纳</div>
-                <ul className="alert-points">
-                  <li>
-                    不出现在主工作台与「文档预设」页，只在日志总结界面查看与编辑。
-                  </li>
-                  <li>
-                    保存后 <b>version +1</b> 并写入版本历史，可随时回溯。
-                  </li>
-                  <li>
-                    <b>重新生成批次即生效</b>；已生成的计划不会重算。
-                  </li>
-                </ul>
-              </>
-            }
-            onClose={() => setEditPresetId(null)}
-            onSaved={(saved) => {
-              toast(`预设已保存为 v${saved.version}；重新生成批次即生效`, 'success');
-              void reloadPresets();
-            }}
+        {confirmPresetOpen && (
+          <PresetConfirmModal
+            presetId={presetId}
+            title="确认记忆归纳预设"
+            actionLabel="生成计划"
+            busy={busy}
+            onCancel={() => setConfirmPresetOpen(false)}
+            onConfirm={(r) => void doCreate(r)}
           />
         )}
       </div>
@@ -679,7 +666,11 @@ export function SummaryPanel({ agents }: SummaryPanelProps) {
           {run && `批次 ${run.id} · ${RUN_STATUS_LABEL[run.status]} · ${run.tokens_used} tokens`}
           {run?.token_budget ? ` / 预算 ${run.token_budget}` : ''}
           {/* 批次创建时绑定的预设版本（改预设不会重算已生成的计划，故在此如实标注） */}
-          {run ? ` · 预设 v${run.preset_version}` : ''}
+          {run
+            ? run.preset_overridden
+              ? ' · 预设：本次自定义'
+              : ` · 预设 v${run.preset_version}`
+            : ''}
         </span>
       </div>
 

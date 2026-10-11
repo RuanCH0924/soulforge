@@ -16,9 +16,13 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 
 @router.post("/jobs", status_code=202)
 async def create_job(body: AIJobCreate, reg: Registry = Depends(get_registry)):
-    """创建 AI 整理任务（异步执行，立即返回 pending）。"""
+    """创建 AI 整理任务（异步执行，立即返回 pending）。
+
+    `preset_override` 非空 = 「仅本次生效」：覆盖内容随任务快照保存，预设本身不动。
+    """
     result = await reg.ai_jobs.create(
-        body.agent_id, body.file_path, body.preset_id, body.provider_id, body.extra_instructions)
+        body.agent_id, body.file_path, body.preset_id, body.provider_id,
+        body.extra_instructions, body.preset_override)
     return ok(result.model_dump())
 
 

@@ -343,6 +343,19 @@ export interface PresetVersionInfo {
   style_rules: string[];
 }
 
+/**
+ * 「仅本次生效」的预设覆盖（不落库）：调用预设的功能在开始任务前弹「预设确认窗」，
+ * 用户现场编辑后可选「仅本次生效」，把改动随任务快照保存，不改动预设本身。
+ */
+export interface PresetOverride {
+  name: string;
+  target_file_type: PresetTargetType;
+  description?: string | null;
+  template_md?: string | null;
+  format_rules?: PresetFormatRules;
+  style_rules?: string[];
+}
+
 // ---- Phase 2.5 · M12 LLM Provider ----
 export type LLMProtocol = 'openai-completions' | 'anthropic-messages';
 
@@ -395,6 +408,8 @@ export interface AIJobSummary {
   agent_id: string;
   file_path: string;
   preset_id: string;
+  /** true = 本任务用了「仅本次生效」的预设覆盖（预设本身未被改动） */
+  preset_overridden: boolean;
   provider_id: string;
   status: AIJobStatus;
   created_at: number;
@@ -515,6 +530,8 @@ export interface DailyRunSummary {
   date_to: string;
   preset_id: string;
   preset_version: number;
+  /** true = 本批次用了「仅本次生效」的预设覆盖（预设本身未被改动） */
+  preset_overridden: boolean;
   provider_id: string;
   status: DailyRunStatus;
   days_total: number;
@@ -613,6 +630,8 @@ export interface SummaryRunSummary {
   date_to: string;
   preset_id: string;
   preset_version: number;
+  /** true = 本批次用了「仅本次生效」的预设覆盖（预设本身未被改动） */
+  preset_overridden: boolean;
   provider_id: string;
   status: SummaryRunStatus;
   /** 产物路径：整月 → memory/YYYY-MM-记忆归纳.md；否则 memory/<起>_<止>-记忆归纳.md */

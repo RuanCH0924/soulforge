@@ -296,3 +296,26 @@ def test_date_path_traversal_rejected(prepared):
     res = _create(client, "2026-11-01/../x", "2026-11-30")
     assert res.status_code == 403
     assert res.json()["error"]["code"] == "UNSAFE_PATH"
+
+
+# ---------- 「仅本次生效」的预设覆盖（不落库） ----------
+
+
+def test_create_with_preset_override_marks_run_and_keeps_preset(prepared):
+    """preset_override = 「仅本次生效」：批次标记 overridden，预设本身不动。"""
+    client, registry = prepared
+    _write(registry, "memory/2026-11-01.md", "# 2026-11-01\n\n- 巡检完成\n")
+    override = {
+        "name": "本次自定义归纳", "target_file_type": "SUMMARY", "description": "临时",
+        "template_md": "# 记忆归纳\n\n## 一、完成的工作\n\n- 内容\n",
+        "format_rules": {"section_heading_level": 2, "require_frontmatter": False},
+        "style_rules": ["临时要求"],
+    }
+    created = _create(client, "2026-11-01", "2026-11-30",
+                      preset_override=override).json()["data"]
+    run = _wait_run(client, created["run_id"])
+    assert run["preset_overridden"] is True
+    # 预设未被改动（仍是 v1、原名）
+    detail = client.get(f"/api/presets/{PRESET_ID}").json()["data"]
+    assert detail["version"] == 1
+    assert detail["name"] == "工作日志总结（记忆归纳）"

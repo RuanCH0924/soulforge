@@ -733,3 +733,29 @@ def test_generated_preset_is_applicable(client):
     assert "## 核心边界" in plan["proposed_content"]
     assert plan["format_report"]["ok"] is True
 
+
+# ---------- 「仅本次生效」的预设覆盖（不落库） ----------
+
+def test_apply_plan_with_override_uses_override_and_keeps_preset(client):
+    """preset_override 只作用于本次 plan：按覆盖内容生成，预设本身与库均不动。"""
+    override = {
+        "name": "本次自定义",
+        "target_file_type": "SOUL",
+        "description": "临时调整",
+        "template_md": "# SOUL.md\n\n## 自定义章节甲\n\n- 内容\n",
+        "format_rules": {"section_heading_level": 2, "require_frontmatter": False},
+        "style_rules": ["临时要求"],
+    }
+    res = client.post("/api/presets/preset-soul-std/apply", json={
+        "agent_id": "alpha", "file_path": "SOUL.md", "preset_override": override,
+    })
+    assert res.status_code == 200
+    plan = res.json()["data"]
+    assert "## 自定义章节甲" in plan["proposed_content"]         # 用的是覆盖内容
+    assert "## 核心行为准则" not in plan["proposed_content"]     # 不是原预设的章节
+
+    detail = client.get("/api/presets/preset-soul-std").json()["data"]
+    assert detail["version"] == 1                                # 预设未被改动
+    assert detail["name"] == "SOUL 标准结构"
+
+

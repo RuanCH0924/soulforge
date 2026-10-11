@@ -421,7 +421,8 @@ class DailyMergeService:
     async def plan_day(self, agent_id: str, date: str, preset_id: str, provider_id: str,
                        extra_instructions: str | None = None,
                        delivery: str = DEFAULT_DELIVERY,
-                       screen_meaningless: bool = False) -> DailyMergePlan:
+                       screen_meaningless: bool = False,
+                       preset: Preset | None = None) -> DailyMergePlan:
         """产出某一天的归并计划（只读，不写盘、不删文件）。
 
         `delivery` 是规则投递形态（P3 效率对比用），默认取 `DEFAULT_DELIVERY`；
@@ -429,6 +430,8 @@ class DailyMergeService:
 
         `screen_meaningless=True` 时额外调用大模型做一次无意义日志判定（结果落在
         `meaningless_logs`，供 P2 在删除前做备份归档）；默认 `False`，保持既有行为。
+
+        `preset` 非空时直接用它（批次「仅本次生效」的覆盖快照）；否则按 `preset_id` 从库取。
         """
         if delivery not in DELIVERIES:
             raise BadRequestError(
@@ -439,7 +442,7 @@ class DailyMergeService:
             raise BadRequestError(
                 f"{date} 在 memory/ 顶层下没有符合 A/B/C 命名的工作日志来源，无需归并",
                 details={"agent_id": agent_id, "date": date})
-        preset = self.presets.get(preset_id)
+        preset = preset or self.presets.get(preset_id)
         self.llm.get_provider(provider_id)  # 不存在/禁用 → 404
         client = self.llm.get_client(provider_id)
 

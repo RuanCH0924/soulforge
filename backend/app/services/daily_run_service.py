@@ -114,7 +114,8 @@ class DailyRunService:
     def _row_to_summary(row: DailyRunRow) -> DailyRunSummary:
         return DailyRunSummary(
             id=row.id, agent_id=row.agent_id, date_from=row.date_from, date_to=row.date_to,
-            preset_id=row.preset_id, preset_version=row.preset_version, provider_id=row.provider_id,
+            preset_id=row.preset_id, preset_version=row.preset_version,
+            preset_overridden=bool(row.preset_snapshot_json), provider_id=row.provider_id,
             status=row.status, days_total=row.days_total, token_budget=row.token_budget,
             tokens_used=row.tokens_used, cost_estimate_usd=row.cost_estimate_usd, error=row.error,
             created_at=row.created_at, updated_at=row.updated_at, finished_at=row.finished_at,
@@ -221,9 +222,13 @@ class DailyRunService:
 
     @staticmethod
     def _idempotency_key(agent_id: str, date_from: str, date_to: str, preset_id: str,
-                         provider_id: str, day_payloads: list[dict]) -> str:
-        """批次键：与来源内容绑定——同范围同内容重复提交直接复用，不产生第二次 LLM 调用。"""
-        parts = [agent_id, date_from, date_to, preset_id, provider_id]
+                         provider_id: str, day_payloads: list[dict],
+                         preset_fingerprint: str = "") -> str:
+        """批次键：与来源内容绑定——同范围同内容重复提交直接复用，不产生第二次 LLM 调用。
+
+        `preset_fingerprint` 非空 = 用了「仅本次生效」的预设覆盖，纳入键以免与用原预设的批次混淆。
+        """
+        parts = [agent_id, date_from, date_to, preset_id, preset_fingerprint, provider_id]
         for day in day_payloads:
             parts.append(day["date"])
             for path in sorted(day["hashes"]):
@@ -241,6 +246,11 @@ class DailyRunService:
                                   details={"date_from": date_from, "date_to": date_to})
         preset = self.presets.get(payload.preset_id)          # 不存在 → 404
         provider = self.llm.get_provider(payload.provider_id)  # 不存在/禁用 → 404
+        # 「仅本次生效」的预设覆盖：存快照，执行期以快照为准，预设本身不动
+        snapshot_json = (
+            json.dumps(payload.preset_override.model_dump(), ensure_ascii=False)
+            if payload.preset_override is not None else None)
+        fingerprint = sha256_text(snapshot_json) if snapshot_json else ""
 
         # 只处理「需要整理」的日子：同日多来源，或唯一来源质量差（方案坑 1：不能只看文件数）
         days = [g for g in self.scanner.scan_range(agent_id, date_from, date_to) if g.needs_rework]
@@ -252,7 +262,8 @@ class DailyRunService:
 
         now = int(time.time())
         day_payloads = [self._day_payload(agent_id, g) for g in days]
-        key = self._idempotency_key(agent_id, date_from, date_to, preset.id, payload.provider_id, day_payloads)
+        key = self._idempotency_key(agent_id, date_from, date_to, preset.id, payload.provider_id,
+                                    day_payloads, fingerprint)
         with self.db.session() as s:
             existing = (s.query(DailyRunRow)
                         .filter(DailyRunRow.idempotency_key == key)
@@ -266,7 +277,8 @@ class DailyRunService:
             status = RUN_PLANNED if days else RUN_EMPTY
             s.add(DailyRunRow(
                 id=run_id, agent_id=agent_id, date_from=date_from, date_to=date_to,
-                preset_id=preset.id, preset_version=preset.version, provider_id=payload.provider_id,
+                preset_id=preset.id, preset_version=preset.version,
+                preset_snapshot_json=snapshot_json, provider_id=payload.provider_id,
                 status=status, idempotency_key=key, extra_instructions=payload.extra_instructions,
                 days_total=len(days), token_budget=provider.token_budget,
                 error=None if days else "该日期范围内没有需要整理的日子（无同日多来源，且无质量差的单来源）",
@@ -337,10 +349,14 @@ class DailyRunService:
             if run.status != RUN_PLANNED:
                 return
             agent_id, preset_id, provider_id = run.agent_id, run.preset_id, run.provider_id
+            preset_snapshot_json = run.preset_snapshot_json
             extra, budget = run.extra_instructions, run.token_budget
             base_tokens, base_cost = run.tokens_used, run.cost_estimate_usd
             if dates is None:
                 dates = [i.date for i in self._items_of(s, run_id)]
+
+        # 本次生效的预设：有「仅本次生效」快照则用它，否则从库里取（整个批次解析一次）
+        preset = self.presets.effective(preset_id, preset_snapshot_json)
 
         # 无意义日志自动删除开关：开启时才在计划阶段触发大模型筛选（见 §M15 扩展）
         screen = self.config.daily_standardizer.auto_delete_meaningless_logs
@@ -350,7 +366,7 @@ class DailyRunService:
             try:
                 plan = await self.merge.plan_day(
                     agent_id, date, preset_id, provider_id, extra,
-                    screen_meaningless=screen)
+                    screen_meaningless=screen, preset=preset)
             except Exception as e:  # 单日失败（LLM 报错 / 来源超限）不拖垮整批
                 logger.warning(f"批次 {run_id} 的第 {date} 天生成失败：{e}")
                 self._update_item(run_id, date, item_status=ITEM_FAILED, error=str(e))
@@ -622,7 +638,7 @@ class DailyRunService:
                     details={"run_id": run_id, "status": run.status})
             agent_id, preset_id = run.agent_id, run.preset_id
             items = self._items_of(s, run_id)
-        rules = self.presets.rules_for(self.presets.get(preset_id))
+        rules = self.presets.rules_for(self.presets.effective(preset_id, run.preset_snapshot_json))
 
         wanted = {self._validate_date("date", d) for d in payload.dates}
         targets = [i for i in items
@@ -755,7 +771,7 @@ class DailyRunService:
             run = self._get_row(s, run_id)
             items = self._items_of(s, run_id)
         agent_id, preset_id = run.agent_id, run.preset_id
-        rules = self.presets.rules_for(self.presets.get(preset_id))
+        rules = self.presets.rules_for(self.presets.effective(preset_id, run.preset_snapshot_json))
         validator = FormatValidator()
         workspace = Path(self.file_manager.require_agent(agent_id).workspace)
 

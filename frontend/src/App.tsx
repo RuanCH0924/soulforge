@@ -21,8 +21,11 @@ import { ViewToggle } from './components/ViewToggle';
 import type { BrowseMode } from './components/ViewToggle';
 import { DataPage } from './pages/DataPage';
 import type { DataTab } from './pages/DataPage';
+import { MemoryPage } from './pages/MemoryPage';
+import type { MemoryTab } from './pages/MemoryPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ToolsPage } from './pages/ToolsPage';
+import type { ToolsTab } from './pages/ToolsPage';
 import { useHashRoute } from './hooks/useHashRoute';
 import { useBackendOnline } from './hooks/useBackendOnline';
 import { useCoreCatalog } from './hooks/useCoreCatalog';
@@ -376,14 +379,18 @@ export default function App() {
     });
   }, []);
 
-  // ---- 路由（P2：四页面） ----
+  // ---- 路由（P2：五页面） ----
   const [route, navigate] = useHashRoute();
   const goWorkbench = useCallback(() => navigate('workbench'), [navigate]);
-  // ---- 数据中心的初始 tab（仅用于跨页跳转，如编辑器 lint 面板「查看规则」直接落到检查报告）----
+  // ---- 各页面的初始 tab（仅用于跨页跳转，如编辑器 lint 面板「查看规则」直接落到检查报告）----
   const [dataTab, setDataTab] = useState<DataTab>('stats');
+  const [toolsTab, setToolsTab] = useState<ToolsTab>('sync');
+  const [memoryTab, setMemoryTab] = useState<MemoryTab>('daily');
   useEffect(() => {
-    // 离开数据中心即复位，避免下次进来落到非默认 tab
+    // 离开该页面即复位，避免下次进来落到非默认 tab
     if (route !== 'data') setDataTab('stats');
+    if (route !== 'tools') setToolsTab('sync');
+    if (route !== 'memory') setMemoryTab('daily');
   }, [route]);
   // ---- 首次使用引导（P5：一次性提示快捷键；v3 起快捷键体系更新：Ctrl+B 让位给加粗） ----
   const [showIntro, setShowIntro] = useState(
@@ -1193,9 +1200,10 @@ export default function App() {
     () => [
       // 页面导航
       { type: 'action', id: 'nav-workbench', label: '前往主工作台', keywords: 'editor edit', group: '导航', onSelect: () => navigate('workbench') },
-      { type: 'action', id: 'nav-tools', label: '前往业务工具', keywords: 'sync diff batch import', group: '导航', onSelect: () => navigate('tools') },
+      { type: 'action', id: 'nav-tools', label: '前往业务工具', keywords: 'sync diff batch preset import', group: '导航', onSelect: () => navigate('tools') },
+      { type: 'action', id: 'nav-memory', label: '前往记忆加工', keywords: 'daily summary log memory', group: '导航', onSelect: () => navigate('memory') },
       { type: 'action', id: 'nav-data', label: '前往数据中心', keywords: 'stats audit lint', group: '导航', onSelect: () => navigate('data') },
-      { type: 'action', id: 'nav-settings', label: '前往系统配置', keywords: 'setting preset llm', group: '导航', onSelect: () => navigate('settings') },
+      { type: 'action', id: 'nav-settings', label: '前往系统配置', keywords: 'setting llm provider', group: '导航', onSelect: () => navigate('settings') },
       // 操作
       { type: 'action', id: 'rescan', label: '重新扫描 workspace', keywords: 'scan', group: '操作', onSelect: () => void rescan() },
       { type: 'action', id: 'search', label: '高级搜索文件内容', keywords: 'find', hint: 'Ctrl+K', group: '操作', onSelect: () => setModal('search') },
@@ -1203,10 +1211,12 @@ export default function App() {
       { type: 'action', id: 'cross-edit', label: '跨 Agent 批量编辑', keywords: 'batch', hint: 'Ctrl+Shift+E', group: '操作', onSelect: () => navigate('tools') },
       { type: 'action', id: 'diff', label: '对比两个 Agent', group: '操作', onSelect: () => navigate('tools') },
       { type: 'action', id: 'export-all', label: '导出全部 Agent', group: '操作', onSelect: () => void exportAll() },
-      { type: 'action', id: 'lint-all', label: '健康检查（全量 Lint）', group: '数据', onSelect: () => navigate('data') },
-      { type: 'action', id: 'stats', label: '统计面板', group: '数据', onSelect: () => navigate('data') },
-      { type: 'action', id: 'audit', label: '审计日志', group: '数据', onSelect: () => navigate('data') },
-      { type: 'action', id: 'preset', label: '管理文档预设', group: '管理', onSelect: () => navigate('settings') },
+      { type: 'action', id: 'lint-all', label: '健康检查（全量 Lint）', group: '数据', onSelect: () => { setDataTab('lint'); navigate('data'); } },
+      { type: 'action', id: 'stats', label: '统计面板', group: '数据', onSelect: () => { setDataTab('stats'); navigate('data'); } },
+      { type: 'action', id: 'audit', label: '审计日志', group: '数据', onSelect: () => { setDataTab('audit'); navigate('data'); } },
+      { type: 'action', id: 'daily', label: '工作日志标准化', keywords: 'daily worklog', group: '记忆', onSelect: () => { setMemoryTab('daily'); navigate('memory'); } },
+      { type: 'action', id: 'summary', label: '工作日志总结', keywords: 'summary memory', group: '记忆', onSelect: () => { setMemoryTab('summary'); navigate('memory'); } },
+      { type: 'action', id: 'preset', label: '管理文档预设', group: '管理', onSelect: () => { setToolsTab('presets'); navigate('tools'); } },
       { type: 'action', id: 'shortcuts', label: '键盘快捷键', keywords: 'shortcut key help', hint: '?', group: '管理', onSelect: () => setModal('shortcuts') },
       { type: 'action', id: 'settings', label: '打开系统设置', group: '管理', onSelect: () => navigate('settings') },
     ],
@@ -1227,6 +1237,7 @@ export default function App() {
         scanning={scanning}
         onOpenSearch={() => setPaletteOpen(true)}
         onRescan={() => void rescan()}
+        onExportAll={() => void exportAll()}
       />
 
       {!connected && (
@@ -1467,6 +1478,8 @@ export default function App() {
               navigate('workbench');
             }}
           />
+        ) : route === 'memory' ? (
+          <MemoryPage agents={agents} initialTab={memoryTab} />
         ) : (
           <ToolsPage
             agents={agents}
@@ -1474,7 +1487,7 @@ export default function App() {
             initialContent={activeTab?.content}
             onBack={goWorkbench}
             onDone={() => void handleDataChanged()}
-            onExportAll={() => void exportAll()}
+            initialTab={toolsTab}
           />
         )}
       </div>
@@ -1527,6 +1540,11 @@ export default function App() {
                 {...base}
                 filePath={tab.file.path}
                 onDone={() => void handleDataChanged(tab.key)}
+                onManagePresets={() => {
+                  closeModal();
+                  setToolsTab('presets');
+                  navigate('tools');
+                }}
               />
             );
           case 'ai-cleanup':

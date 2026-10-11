@@ -176,6 +176,8 @@ class AIJobRow(Base):
     agent_id: Mapped[str] = mapped_column(String, nullable=False)
     file_path: Mapped[str] = mapped_column(String, nullable=False)
     preset_id: Mapped[str] = mapped_column(String, nullable=False)
+    # 「仅本次生效」的预设覆盖快照（PresetOverride JSON）；非空时以它为准，预设本身不动
+    preset_snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_id: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)  # pending|running|awaiting_confirm|applied|rejected|failed|superseded
     input_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -216,6 +218,8 @@ class DailyRunRow(Base):
     date_to: Mapped[str] = mapped_column(String, nullable=False)
     preset_id: Mapped[str] = mapped_column(String, nullable=False)
     preset_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # 批次绑定的预设版本（可回溯）
+    # 「仅本次生效」的预设覆盖快照（PresetOverride JSON）；非空时以它为准，预设本身不动
+    preset_snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_id: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String, nullable=False)  # 同键重复提交 → 复用既有批次
@@ -300,6 +304,8 @@ class SummaryRunRow(Base):
     date_to: Mapped[str] = mapped_column(String, nullable=False)
     preset_id: Mapped[str] = mapped_column(String, nullable=False)
     preset_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # 「仅本次生效」的预设覆盖快照（PresetOverride JSON）；非空时以它为准，预设本身不动
+    preset_snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_id: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String, nullable=False)  # 同键重复提交 → 复用
@@ -356,6 +362,10 @@ class Database:
             "presets": [("template_md", "TEXT"), ("retired_at", "INTEGER"),
                         ("format_rules_json", "TEXT")],
             "daily_run_items": [("empty_reason", "TEXT"), ("meaningless_json", "TEXT")],
+            # 「仅本次生效」的预设覆盖快照（PresetOverride JSON）
+            "ai_jobs": [("preset_snapshot_json", "TEXT")],
+            "daily_runs": [("preset_snapshot_json", "TEXT")],
+            "summary_runs": [("preset_snapshot_json", "TEXT")],
             # 带 DEFAULT 的 NOT NULL 列：SQLite 会自动把存量行回填为默认值，无需额外 UPDATE
             "llm_providers": [("token_budget", "INTEGER NOT NULL DEFAULT 500000"),
                               ("reasoning_effort", "TEXT NOT NULL DEFAULT ''")],

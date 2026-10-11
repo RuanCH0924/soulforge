@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
-export type AppRoute = 'workbench' | 'tools' | 'data' | 'settings';
+export type AppRoute = 'workbench' | 'tools' | 'memory' | 'data' | 'settings';
 
-const VALID: AppRoute[] = ['workbench', 'tools', 'data', 'settings'];
+const VALID: AppRoute[] = ['workbench', 'tools', 'memory', 'data', 'settings'];
 
 function parse(hash: string): AppRoute {
   const seg = hash.replace(/^#\/?/, '').split('?')[0].toLowerCase();

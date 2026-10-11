@@ -9,6 +9,39 @@
 > `backend/pyproject.toml` 与 `frontend/package.json` 为静态字段，需手工同步，
 > 由 [backend/tests/test_version.py](backend/tests/test_version.py) 自动校验防漂移。
 
+## [0.5.6] - 2026-10-11
+
+> 一级导航 IA 调整 + 预设体系统一与调用前确认窗。不含对外 API 破坏性变更
+> （各创建 / 应用接口仅**新增可选字段** `preset_override`；新增 DB 列 `preset_snapshot_json`，存量库启动自动迁移）。
+
+### 变更
+
+- **一级导航 IA 调整**（按功能重要性重排）：
+  - 日志族（日志标准化 / 日志总结）从「业务工具」tab 提级为独立一级菜单「**记忆加工**」（`#/memory`），
+    与「改文件的确定性操作（同步 / 对比）」分离——前者是大模型加工（批次 / 计划 / 验收 / 预算 / 重试），
+    长期被平铺 tab 淹没。
+  - 「业务工具」内「同步 / 超级同步」两个同名近似 tab 收成一个入口 + 模式切换（`sync-mode-bar`）。
+  - 「文档预设」从「系统配置」迁到「业务工具」（预设是内容资产，不是系统配置）。
+  - 「导出全部」从业务工具页挪到顶栏（全局动作）。命令面板新增「记忆」分组与「前往记忆加工」。
+- **预设体系统一 + 调用前确认窗**：
+  - **文档预设页统一承载全部预设**（含 WORKLOG / SUMMARY 这类大模型专用预设），编辑器统一为 **5 个类目**：
+    预设名 / 使用文件类别 / 用途说明 / 预设参考文档 / 预设修改要求。
+  - **日志标准化 / 日志总结只负责「调用」预设**：移除页内编辑器（删除 `DailyPresetEditor.tsx`），
+    预设信息栏改为只读，编辑一律在「业务工具 → 文档预设」。
+  - 新增**跨页共享的「预设确认与编辑」窗** `PresetConfirmModal`：应用预设 / AI 整理 / 日志标准化 /
+    日志总结在开始任务前**必须经它**再次确认 + 现场编辑；编辑后可选「**仅本次生效**（后端
+    `preset_override` 快照，不落库）/ **更新预设**（v+1）/ **设为新预设**（v1）」。
+  - 主工作台「应用预设 / AI 整理」的预设下拉改为**列出全部**（不再排除 WORKLOG / SUMMARY）。
+    新增 DB 列 `ai_jobs` / `daily_runs` / `summary_runs`.`preset_snapshot_json`（存量库启动自动迁移）。
+
+### 文档
+
+- [UI-SPECS.md](docs/UI-SPECS.md) 升至 v1.24（一级导航 IA v1.23 + 预设体系统一与调用前确认窗 v1.24）；
+  [API.md](docs/API.md) 同步各创建 / 应用接口的 `preset_override`；
+  [DATA-MODEL.md](docs/DATA-MODEL.md) 同步 `preset_snapshot_json` 新列；
+  [DEVELOPMENT.md](docs/DEVELOPMENT.md) / [ARCHITECTURE.md](docs/ARCHITECTURE.md) / [ROADMAP.md](docs/ROADMAP.md)
+  同步页面路径与预设边界口径。
+
 ## [0.5.5] - 2026-10-10
 
 > 差异展示改版（渲染后富文本对比）+ LLM Provider 参数增强（单批 Token 预算 / 思考强度）+

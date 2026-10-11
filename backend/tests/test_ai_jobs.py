@@ -343,6 +343,32 @@ def test_regenerate_supersedes_old_job(client, monkeypatch):
     assert new["extra_instructions"] == "补上「核心边界」"
 
 
+# ---------- 「仅本次生效」的预设覆盖（不落库） ----------
+
+def test_create_job_with_preset_override_marks_task_and_keeps_preset(client, monkeypatch):
+    """preset_override = 「仅本次生效」：任务标记 overridden，预设本身不动。"""
+    _setup(client)
+    monkeypatch.setattr("app.services.llm_registry.LLMClient.chat", _fake_chat_good)
+    override = {
+        "name": "本次自定义", "target_file_type": "SOUL", "description": "临时",
+        "template_md": "# SOUL.md\n\n## 核心行为准则\n\n- 一句话\n",
+        "format_rules": {"section_heading_level": 2, "require_frontmatter": False},
+        "style_rules": ["临时要求"],
+    }
+    res = client.post("/api/ai/jobs", json={
+        "agent_id": "alpha", "file_path": "SOUL.md",
+        "preset_id": "preset-soul-std", "provider_id": PROVIDER["id"],
+        "preset_override": override,
+    })
+    assert res.status_code == 202
+    job = _wait_job(client, res.json()["data"]["job_id"])
+    assert job["preset_overridden"] is True
+    # 预设未被改动（仍是 v1、原名）
+    detail = client.get("/api/presets/preset-soul-std").json()["data"]
+    assert detail["version"] == 1
+    assert detail["name"] == "SOUL 标准结构"
+
+
 # ---------- 列表 ----------
 
 def test_list_jobs(client, monkeypatch):

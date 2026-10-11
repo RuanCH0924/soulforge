@@ -284,6 +284,8 @@ class PresetApplyRequest(BaseModel):
     agent_id: str
     file_path: str
     extra_instructions: str | None = None
+    # 「仅本次生效」覆盖：非空时按它生成 plan，不落库、不影响预设本身
+    preset_override: PresetOverride | None = None
 
 
 class PresetFromDocument(BaseModel):
@@ -356,6 +358,22 @@ class PresetVersionInfo(BaseModel):
     sections_json: list[PresetSection] = Field(default_factory=list)
     frontmatter_json: dict[str, str] = Field(default_factory=dict)
     style_rules: list[str] = Field(default_factory=list)
+
+
+class PresetOverride(BaseModel):
+    """「仅本次生效」的预设覆盖（不落库到 presets 表）。
+
+    调用预设的功能（日志标准化 / 日志总结 / AI 整理 / 应用预设）在开始任务前弹「预设确认窗」，
+    用户可现场编辑；若选择「仅本次生效」，就把编辑后的内容作为本模型随任务快照保存，
+    只作用于这一次任务，不改动预设本身。字段与 `Preset` 的 5 个核心类目一一对应。
+    """
+
+    name: str = Field(..., min_length=1, description="预设名")
+    target_file_type: PresetTargetType
+    description: str | None = Field(None, description="用途说明")
+    template_md: str | None = Field(None, description="预设参考文档（Markdown）")
+    format_rules: dict = Field(default_factory=dict, description="结构化格式规则（随预设携带）")
+    style_rules: list[str] = Field(default_factory=list, description="预设修改要求（逐条）")
 
 
 # ---------- Phase 2.5 · M12 LLM Provider 接入 ----------
@@ -456,6 +474,8 @@ class AIJobCreate(BaseModel):
     preset_id: str
     provider_id: str
     extra_instructions: str | None = None
+    # 「仅本次生效」覆盖：随任务快照保存，只作用于本任务
+    preset_override: PresetOverride | None = None
 
 
 class AIRegenerateRequest(BaseModel):
@@ -485,6 +505,8 @@ class AIJobSummary(BaseModel):
     agent_id: str
     file_path: str
     preset_id: str
+    # true = 本任务用了「仅本次生效」的预设覆盖（快照），预设本身未被改动
+    preset_overridden: bool = False
     provider_id: str
     status: AIJobStatus
     created_at: int
@@ -630,6 +652,8 @@ class DailyRunSummary(BaseModel):
     date_to: str
     preset_id: str
     preset_version: int = 1
+    # true = 本批次用了「仅本次生效」的预设覆盖（快照），预设本身未被改动
+    preset_overridden: bool = False
     provider_id: str
     status: str
     days_total: int = 0
@@ -654,6 +678,8 @@ class DailyRunCreate(BaseModel):
     preset_id: str = Field("preset-wlog-daily-std", description="技能预设（默认「工作日志日标准化」）")
     provider_id: str
     extra_instructions: str | None = None
+    # 「仅本次生效」覆盖：随批次快照保存，只作用于本批次
+    preset_override: PresetOverride | None = None
 
 
 class DailyRunCreateResult(BaseModel):
@@ -738,6 +764,8 @@ class SummaryRunSummary(BaseModel):
     date_to: str
     preset_id: str
     preset_version: int = 1
+    # true = 本批次用了「仅本次生效」的预设覆盖（快照），预设本身未被改动
+    preset_overridden: bool = False
     provider_id: str
     status: str
     output_path: str
@@ -776,6 +804,8 @@ class SummaryRunCreate(BaseModel):
     preset_id: str = Field("preset-mem-summarize", description="记忆归纳预设（默认「工作日志总结」）")
     provider_id: str
     extra_instructions: str | None = None
+    # 「仅本次生效」覆盖：随批次快照保存，只作用于本批次
+    preset_override: PresetOverride | None = None
 
 
 class SummaryRunCreateResult(BaseModel):

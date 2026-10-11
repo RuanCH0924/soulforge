@@ -2619,6 +2619,19 @@ table.audit-table {
   overflow: hidden;
 }
 
+/* 「同步」入口内的模式切换（普通 / 超级）：合并原两个并列 tab 后的二级选择器 */
+.sync-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px 0;
+  flex-wrap: wrap;
+}
+
+.sync-mode-bar .hint {
+  font-size: 12px;
+}
+
 .page-tabs {
   flex: none;
   display: flex;
@@ -3020,7 +3033,7 @@ table.audit-table {
   overflow: auto;
 }
 
-/* ---------- 工作日志标准化（业务工具页 · M15） ---------- */
+/* ---------- 工作日志标准化（记忆加工页 · M15） ---------- */
 .daily-std {
   display: flex;
   flex-direction: column;

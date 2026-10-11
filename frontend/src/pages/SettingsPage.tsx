@@ -1,15 +1,14 @@
 import { useState } from 'react';
 import { LLMProvidersModal } from '../components/LLMProvidersModal';
-import { PresetModal } from '../components/PresetModal';
 import { SettingsModal } from '../components/SettingsModal';
 
-type Tab = 'general' | 'llm' | 'presets';
+type Tab = 'general' | 'llm';
 
 interface SettingsPageProps {
   onBack: () => void;
 }
 
-/** 系统配置页（P2）：设置 / LLM Provider / 文档预设 三块，页面级承载 */
+/** 系统配置页（P2）：设置 / LLM Provider 两块，页面级承载（文档预设已迁到「业务工具」） */
 export function SettingsPage({ onBack }: SettingsPageProps) {
   const [tab, setTab] = useState<Tab>('general');
 
@@ -20,7 +19,6 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
           [
             ['general', '常规设置'],
             ['llm', 'LLM Provider'],
-            ['presets', '文档预设'],
           ] as [Tab, string][]
         ).map(([key, label]) => (
           <button
@@ -35,7 +33,6 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
       <div className="page-content">
         {tab === 'general' && <SettingsModal onClose={onBack} embedded />}
         {tab === 'llm' && <LLMProvidersModal onClose={onBack} embedded />}
-        {tab === 'presets' && <PresetModal onClose={onBack} embedded />}
       </div>
     </div>
   );

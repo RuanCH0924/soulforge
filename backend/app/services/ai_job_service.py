@@ -37,6 +37,7 @@ from app.models.schemas import (
     AIJobDiffPlan,
     AIJobSummary,
     Preset,
+    PresetOverride,
 )
 from app.services.audit_service import AuditService
 from app.services.backup_service import BackupService
@@ -83,7 +84,8 @@ class AIJobService:
     def _row_to_summary(self, row: AIJobRow) -> AIJobSummary:
         return AIJobSummary(
             id=row.id, agent_id=row.agent_id, file_path=row.file_path,
-            preset_id=row.preset_id, provider_id=row.provider_id, status=row.status,
+            preset_id=row.preset_id, preset_overridden=bool(row.preset_snapshot_json),
+            provider_id=row.provider_id, status=row.status,
             created_at=row.created_at, updated_at=row.updated_at,
             finished_at=row.finished_at, superseded_by=row.superseded_by,
         )
@@ -139,17 +141,26 @@ class AIJobService:
                 details={"file_path": file_path, "size_bytes": full.stat().st_size})
 
     async def create(self, agent_id: str, file_path: str, preset_id: str, provider_id: str,
-                     extra_instructions: str | None = None) -> AIJobCreateResult:
-        """创建任务（status=pending），提交后台队列执行。"""
+                     extra_instructions: str | None = None,
+                     preset_override: PresetOverride | None = None) -> AIJobCreateResult:
+        """创建任务（status=pending），提交后台队列执行。
+
+        `preset_override` 非空 = 「仅本次生效」：把覆盖内容随任务快照保存，
+        执行期以快照为准，预设本身不动。
+        """
         self._validate_target(agent_id, file_path)
         self.presets.get(preset_id)  # 不存在 → 404
         self.llm.get_provider(provider_id)  # 不存在/禁用 → 404
         now = int(time.time())
         job_id = f"job-{uuid.uuid4().hex}"
+        snapshot_json = (
+            json.dumps(preset_override.model_dump(), ensure_ascii=False)
+            if preset_override is not None else None)
         with self.db.session() as s:
             s.add(AIJobRow(
                 id=job_id, agent_id=agent_id, file_path=file_path,
-                preset_id=preset_id, provider_id=provider_id,
+                preset_id=preset_id, preset_snapshot_json=snapshot_json,
+                provider_id=provider_id,
                 status="pending", extra_instructions=extra_instructions,
                 created_at=now, updated_at=now,
             ))
@@ -241,9 +252,10 @@ class AIJobService:
                 row = self._get_row(s, job_id)
                 agent_id, file_path, preset_id, provider_id, extra = (
                     row.agent_id, row.file_path, row.preset_id, row.provider_id, row.extra_instructions)
+                preset_snapshot_json = row.preset_snapshot_json
 
             content = self.file_manager.read_text(agent_id, file_path)
-            preset = self.presets.get(preset_id)
+            preset = self.presets.effective(preset_id, preset_snapshot_json)
             rules = self._rules_for(preset)
             prompt = self._build_prompt(preset, content, extra)
 
@@ -305,6 +317,7 @@ class AIJobService:
             output = content if content is not None else (row.output_content or "")
             agent_id, file_path, provider_id = row.agent_id, row.file_path, row.provider_id
             preset_id = row.preset_id
+            preset_snapshot_json = row.preset_snapshot_json
             diff_plan_json = row.diff_plan_json
             total_tokens, cost_estimate_usd = row.total_tokens, row.cost_estimate_usd
 
@@ -322,7 +335,7 @@ class AIJobService:
                              "violations": [v.model_dump() for v in diff_plan.format_report.violations]})
         else:
             # 按块接受：对重建后的内容重新跑同一套模板格式校验
-            rules = self._rules_for(self.presets.get(preset_id))
+            rules = self._rules_for(self.presets.effective(preset_id, preset_snapshot_json))
             _, format_report = FormatValidator().validate_and_fix(output, rules)
             if not format_report.ok:
                 self._fail(job_id, "按块接受的输出未通过模板格式校验，拒绝写入")
@@ -389,7 +402,11 @@ class AIJobService:
             row = self._get_row(s, job_id)
             agent_id, file_path, preset_id, provider_id = (
                 row.agent_id, row.file_path, row.preset_id, row.provider_id)
-        new_result = await self.create(agent_id, file_path, preset_id, provider_id, extra_instructions)
+            snapshot_json = row.preset_snapshot_json
+        # 沿用上一次的「仅本次生效」覆盖（若有），保证重新生成仍按同一份配置
+        override = PresetOverride(**json.loads(snapshot_json)) if snapshot_json else None
+        new_result = await self.create(
+            agent_id, file_path, preset_id, provider_id, extra_instructions, override)
         with self.db.session() as s:
             row = self._get_row(s, job_id)
             row.status = "superseded"

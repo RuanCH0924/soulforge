@@ -212,7 +212,7 @@ export function SaveAsPresetModal({
         </label>
       </div>
 
-      <div className="hint">保存后可在「系统配置 → 文档预设」中查看、编辑版本与回溯。</div>
+      <div className="hint">保存后可在「业务工具 → 文档预设」中查看、编辑版本与回溯。</div>
     </Modal>
   );
 }

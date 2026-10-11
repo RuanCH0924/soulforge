@@ -35,6 +35,7 @@ import type {
   Preset,
   PresetApplyPlan,
   PresetApplyResult,
+  PresetOverride,
   PresetSummary,
   PresetTargetType,
   PresetVersionInfo,
@@ -186,9 +187,21 @@ export const api = {
   }) => request<Preset>('POST', '/api/presets/from-document', { json: body }),
   deletePreset: (id: string) =>
     request<{ id: string; deleted: boolean }>('DELETE', `/api/presets/${encodeURIComponent(id)}`),
-  presetApplyPlan: (presetId: string, agentId: string, filePath: string, extraInstructions?: string) =>
+  presetApplyPlan: (
+    presetId: string,
+    agentId: string,
+    filePath: string,
+    extraInstructions?: string,
+    presetOverride?: PresetOverride,
+  ) =>
     request<PresetApplyPlan>('POST', `/api/presets/${encodeURIComponent(presetId)}/apply`, {
-      json: { agent_id: agentId, file_path: filePath, extra_instructions: extraInstructions ?? null },
+      json: {
+        agent_id: agentId,
+        file_path: filePath,
+        extra_instructions: extraInstructions ?? null,
+        // 「仅本次生效」覆盖：非空时按它生成 plan，不改动预设本身
+        preset_override: presetOverride ?? null,
+      },
     }),
   presetApplyExecute: (presetId: string, planId: string, agentId: string, filePath: string) =>
     request<PresetApplyResult>('POST', `/api/presets/${encodeURIComponent(presetId)}/apply/execute`, {
@@ -237,6 +250,7 @@ export const api = {
     preset_id: string;
     provider_id: string;
     extra_instructions?: string;
+    preset_override?: PresetOverride | null;
   }) => request<AIJobCreateResult>('POST', '/api/ai/jobs', { json: body }),
   getAIJob: (jobId: string) => request<AIJob>('GET', `/api/ai/jobs/${encodeURIComponent(jobId)}`),
   listAIJobs: (params?: { agent_id?: string; status?: AIJobStatus; limit?: number }) =>
@@ -267,6 +281,7 @@ export const api = {
     preset_id?: string;
     provider_id: string;
     extra_instructions?: string;
+    preset_override?: PresetOverride | null;
   }) => request<DailyRunCreateResult>('POST', '/api/daily-runs', { json: body }),
   listDailyRuns: (params?: { agent_id?: string; status?: DailyRunStatus; limit?: number }) => {
     const q = new URLSearchParams();
@@ -302,6 +317,7 @@ export const api = {
     preset_id?: string;
     provider_id: string;
     extra_instructions?: string;
+    preset_override?: PresetOverride | null;
   }) => request<SummaryRunCreateResult>('POST', '/api/summary-runs', { json: body }),
   listSummaryRuns: (params?: { agent_id?: string; status?: SummaryRunStatus; limit?: number }) => {
     const q = new URLSearchParams();

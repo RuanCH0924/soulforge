@@ -8,6 +8,8 @@ import type { DiffHunk } from '../utils/unifiedDiff';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DiffHunkPicker } from './DiffHunkPicker';
 import { Modal } from './Modal';
+import { PresetConfirmModal } from './PresetConfirmModal';
+import type { PresetConfirmResult } from './PresetConfirmModal';
 import { RichDiffView } from './RichDiffView';
 
 interface ApplyAIModalProps {
@@ -32,6 +34,8 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
   const [generating, setGenerating] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [acting, setActing] = useState(false);
+  /** 调用预设前的确认 / 编辑窗 */
+  const [confirmPresetOpen, setConfirmPresetOpen] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [regenerateExtra, setRegenerateExtra] = useState('');
   // 「按块接受」：从 unified_diff 解析出的 hunk 与逐块勾选状态（默认全接受）
@@ -45,8 +49,8 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // scope=workbench：排除「专供大模型处理工作日志」的预设（那类只在日志标准化界面用）
-    Promise.all([api.listPresets(undefined, 'workbench'), api.listLLMProviders()])
+    // 文档预设系统统一承载全部预设（含 WORKLOG / SUMMARY 这类大模型专用预设）
+    Promise.all([api.listPresets(), api.listLLMProviders()])
       .then(([ps, lps]) => {
         setPresets(ps);
         const enabled = lps.filter((p) => p.enabled);
@@ -100,20 +104,31 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.id, job?.status]);
 
-  const generate = async () => {
+  /** 「生成」→ 先弹「预设确认与编辑」窗（开始任务前的统一入口） */
+  const requestGenerate = () => {
     if (!presetId || !providerId) {
       toast('请先选择预设和 Provider', 'warning');
       return;
     }
+    setConfirmPresetOpen(true);
+  };
+
+  const generate = async (opts: PresetConfirmResult) => {
+    setConfirmPresetOpen(false);
     setGenerating(true);
     try {
       const r = await api.createAIJob({
         agent_id: agentId,
         file_path: filePath,
-        preset_id: presetId,
+        preset_id: opts.presetId ?? presetId,
         provider_id: providerId,
         extra_instructions: extra.trim() || undefined,
+        preset_override: opts.override ?? null,
       });
+      if (opts.presetId) {
+        setPresetId(opts.presetId);
+        void api.listPresets().then(setPresets).catch(() => setPresets);
+      }
       setJob({ id: r.job_id, status: r.status } as AIJob);
       poll(r.job_id);
       toast('已提交 AI 整理任务，后台执行中…', 'info');
@@ -189,7 +204,7 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
       width={880}
       footer={
         !job ? (
-          <button className="btn btn-primary" onClick={generate} disabled={generating || loading}>
+          <button className="btn btn-primary" onClick={requestGenerate} disabled={generating || loading}>
             {generating && <span className="spinner" />}
             生成
           </button>
@@ -391,6 +406,17 @@ export function ApplyAIModal({ agentId, filePath, onClose, onDone }: ApplyAIModa
         <div className="state-block">
           <div className="alert-banner info">任务已{job.status === 'applied' ? '应用并写入' : job.status === 'rejected' ? '拒绝' : '被替换'}。</div>
         </div>
+      )}
+
+      {confirmPresetOpen && presetId && (
+        <PresetConfirmModal
+          presetId={presetId}
+          title="确认 AI 整理预设"
+          actionLabel="生成"
+          busy={generating}
+          onCancel={() => setConfirmPresetOpen(false)}
+          onConfirm={(r) => void generate(r)}
+        />
       )}
 
       {confirming && job && (

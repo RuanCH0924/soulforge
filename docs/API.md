@@ -23,7 +23,7 @@
 ```json
 {
   "data": { ... },
-  "meta": { "timestamp": 1754478710, "version": "0.5.5" }
+  "meta": { "timestamp": 1754478710, "version": "0.5.6" }
 }
 ```
 
@@ -660,11 +660,11 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 | 参数 | 说明 |
 |---|---|
 | `target_file_type` | 可选，按适用文件类型过滤（`SOUL` / `AGENTS` / `MEMORY` / `USER` / `IDENTITY` / `TOOLS` / `WORKLOG` / `SUMMARY` / `ANY`） |
-| `scope` | 可选，`all`（缺省）或 `workbench`。`workbench` = **主工作台 / 设置页用**：排除「专供大模型处理工作日志」的预设（即 `target_file_type` ∈ `WORKLOG` / `SUMMARY`），只留下供主工作台加载的预设。非法值 → `400 BAD_REQUEST` |
+| `scope` | 可选，`all`（缺省）或 `workbench`。`workbench` = **主工作台 / 文档预设页用**：排除「专供大模型处理工作日志」的预设（即 `target_file_type` ∈ `WORKLOG` / `SUMMARY`），只留下供主工作台加载的预设。非法值 → `400 BAD_REQUEST` |
 
 > 两类预设的边界（UI-SPECS §5.7）：`target_file_type=WORKLOG` 的预设是 M15 日志标准化的规则载体，
-> `target_file_type=SUMMARY` 的是 M16 记忆归纳的规则载体，二者都只在「业务工具 → 日志标准化 /
-> 日志总结」界面（及其 API）可见、可编辑；设置页「文档预设」与主工作台
+> `target_file_type=SUMMARY` 的是 M16 记忆归纳的规则载体，二者都只在「记忆加工 → 日志标准化 /
+> 日志总结」界面（及其 API）可见、可编辑；业务工具「文档预设」与主工作台
 > 「应用预设 / AI 整理」都传 `scope=workbench`，因此不会出现它们。对应界面按
 > `?target_file_type=WORKLOG`（或 `SUMMARY`）取（不传 `scope`）。
 
@@ -799,9 +799,15 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
 {
   "agent_id": "main",
   "file_path": "SOUL.md",
-  "extra_instructions": "保留『阅读策略』章节原内容不动"
+  "extra_instructions": "保留『阅读策略』章节原内容不动",
+  "preset_override": null
 }
 ```
+
+> `preset_override`（可选）：**「仅本次生效」的预设覆盖**。非空时按它解析规则生成 plan，
+> **不落库、不改动预设本身**；字段与预设 5 个核心类目一一对应
+> （`name` / `target_file_type` / `description` / `template_md` / `format_rules` / `style_rules`）。
+> 由前端「预设确认与编辑」窗在用户选择「仅本次生效」时下发。
 
 **响应**：
 
@@ -974,9 +980,13 @@ Content-Disposition: attachment; filename="soulforge-main-20260806-110000.tar.gz
   "file_path": "SOUL.md",
   "preset_id": "preset-soul-std",
   "provider_id": "openai-main",
-  "extra_instructions": "保留「阅读策略」章节原内容不动"
+  "extra_instructions": "保留「阅读策略」章节原内容不动",
+  "preset_override": null
 }
 ```
+
+> `preset_override`（可选）：**「仅本次生效」的预设覆盖**——随任务快照存入 `ai_jobs.preset_snapshot_json`，
+> 执行期以快照为准、预设本身不动；响应的 `preset_overridden` 标记该任务是否使用了覆盖。
 
 **响应**：`202 Accepted`：
 
@@ -1183,7 +1193,7 @@ python super_sync.py --once        # 只执行一轮（自检）
 
 ```json
 {
-  "data": { "status": "ok", "version": "0.5.5" }
+  "data": { "status": "ok", "version": "0.5.6" }
 }
 ```
 
@@ -1283,7 +1293,8 @@ python super_sync.py --once        # 只执行一轮（自检）
   "date_to": "2026-08-31",
   "preset_id": "preset-wlog-daily-std",
   "provider_id": "openai-main",
-  "extra_instructions": "把「端口巡检」相关条目合并到一节"
+  "extra_instructions": "把「端口巡检」相关条目合并到一节",
+  "preset_override": null
 }
 ```
 
@@ -1294,6 +1305,7 @@ python super_sync.py --once        # 只执行一轮（自检）
 | `preset_id` | — | 默认 `preset-wlog-daily-std`（内置「工作日志日标准化」） |
 | `provider_id` | ✅ | 必须存在且启用 |
 | `extra_instructions` | — | 附加指令 |
+| `preset_override` | — | **「仅本次生效」的预设覆盖**：随批次快照存入 `daily_runs.preset_snapshot_json`，执行期以快照为准；响应的 `preset_overridden` 标记该批次是否使用覆盖 |
 
 **响应**（`202`）：
 
@@ -1494,7 +1506,8 @@ token 用量按批次累计；**批次预算按当前 Provider 配置刷新**（
   "date_to": "2026-08-31",
   "preset_id": "preset-mem-summarize",
   "provider_id": "openai-main",
-  "extra_instructions": "「完成的工作」按项目分类"
+  "extra_instructions": "「完成的工作」按项目分类",
+  "preset_override": null
 }
 ```
 
@@ -1505,6 +1518,7 @@ token 用量按批次累计；**批次预算按当前 Provider 配置刷新**（
 | `preset_id` | — | 默认 `preset-mem-summarize`（内置「工作日志总结（记忆归纳）」） |
 | `provider_id` | ✅ | 必须存在且启用 |
 | `extra_instructions` | — | 附加指令 |
+| `preset_override` | — | **「仅本次生效」的预设覆盖**：随批次快照存入 `summary_runs.preset_snapshot_json`，执行期以快照为准；响应的 `preset_overridden` 标记该批次是否使用覆盖 |
 
 **响应**（`202`）：
 

@@ -346,7 +346,7 @@ export function EditorPane({
         <button
           className="btn"
           onClick={onSaveAsPreset}
-          title="把当前文档存为文档预设（结构模板），可在「系统配置 → 文档预设」中查看与管理"
+          title="把当前文档存为文档预设（结构模板），可在「业务工具 → 文档预设」中查看与管理"
         >
           设为预设
         </button>

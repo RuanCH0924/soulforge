@@ -183,7 +183,8 @@ class SummaryService:
     def _row_to_summary(row: SummaryRunRow) -> SummaryRunSummary:
         return SummaryRunSummary(
             id=row.id, agent_id=row.agent_id, date_from=row.date_from, date_to=row.date_to,
-            preset_id=row.preset_id, preset_version=row.preset_version, provider_id=row.provider_id,
+            preset_id=row.preset_id, preset_version=row.preset_version,
+            preset_overridden=bool(row.preset_snapshot_json), provider_id=row.provider_id,
             status=row.status, output_path=row.output_path, source_count=row.source_count,
             token_budget=row.token_budget, tokens_used=row.tokens_used,
             cost_estimate_usd=row.cost_estimate_usd, error=row.error, cleanup_at=row.cleanup_at,
@@ -269,9 +270,13 @@ class SummaryService:
     @staticmethod
     def _idempotency_key(agent_id: str, date_from: str, date_to: str, preset_id: str,
                          preset_version: int, provider_id: str, output_path: str,
-                         hashes: dict[str, str]) -> str:
-        """批次键：与来源与目标内容绑定——同范围同内容重复提交直接复用，不再调 LLM。"""
-        parts = [agent_id, date_from, date_to, preset_id, str(preset_version), provider_id, output_path]
+                         hashes: dict[str, str], preset_fingerprint: str = "") -> str:
+        """批次键：与来源与目标内容绑定——同范围同内容重复提交直接复用，不再调 LLM。
+
+        `preset_fingerprint` 非空 = 用了「仅本次生效」的预设覆盖，纳入键以免与用原预设的批次混淆。
+        """
+        parts = [agent_id, date_from, date_to, preset_id, str(preset_version),
+                 preset_fingerprint, provider_id, output_path]
         for path in sorted(hashes):
             parts.append(f"{path}:{hashes[path]}")
         return sha256_text("|".join(parts))
@@ -287,6 +292,11 @@ class SummaryService:
                                   details={"date_from": date_from, "date_to": date_to})
         preset = self.presets.get(payload.preset_id)          # 不存在 → 404
         provider = self.llm.get_provider(payload.provider_id)  # 不存在/禁用 → 404
+        # 「仅本次生效」的预设覆盖：存快照，执行期以快照为准，预设本身不动
+        snapshot_json = (
+            json.dumps(payload.preset_override.model_dump(), ensure_ascii=False)
+            if payload.preset_override is not None else None)
+        fingerprint = sha256_text(snapshot_json) if snapshot_json else ""
 
         cfg = self.config.summarizer
         span_days = (_date.fromisoformat(date_to) - _date.fromisoformat(date_from)).days + 1
@@ -304,7 +314,7 @@ class SummaryService:
         output_path = output_path_for(date_from, date_to)
         hashes = self._source_hashes(agent_id, [e["path"] for e in entries] + [output_path])
         key = self._idempotency_key(agent_id, date_from, date_to, preset.id, preset.version,
-                                    payload.provider_id, output_path, hashes)
+                                    payload.provider_id, output_path, hashes, fingerprint)
         now = int(time.time())
         with self.db.session() as s:
             existing = (s.query(SummaryRunRow)
@@ -319,7 +329,8 @@ class SummaryService:
             status = RUN_PLANNED if entries else RUN_EMPTY
             s.add(SummaryRunRow(
                 id=run_id, agent_id=agent_id, date_from=date_from, date_to=date_to,
-                preset_id=preset.id, preset_version=preset.version, provider_id=payload.provider_id,
+                preset_id=preset.id, preset_version=preset.version,
+                preset_snapshot_json=snapshot_json, provider_id=payload.provider_id,
                 status=status, idempotency_key=key, extra_instructions=payload.extra_instructions,
                 output_path=output_path, source_count=len(entries),
                 source_hashes_json=json.dumps(hashes, ensure_ascii=False),
@@ -434,12 +445,13 @@ class SummaryService:
             agent_id = run.agent_id
             date_from, date_to = run.date_from, run.date_to
             preset_id, provider_id = run.preset_id, run.provider_id
+            preset_snapshot_json = run.preset_snapshot_json
             extra, output_path = run.extra_instructions, run.output_path
             entries = _load_json(run.sources_json) or []
             budget = run.token_budget
 
         try:
-            preset = self.presets.get(preset_id)
+            preset = self.presets.effective(preset_id, preset_snapshot_json)
             rules = self.presets.rules_for(preset)
             client = self.llm.get_client(provider_id)
             style_block = self._style_block(preset)
@@ -590,7 +602,7 @@ class SummaryService:
             self._update_run(run_id, status=RUN_NEEDS_REVIEW, error="该批次没有生成内容（计划缺失）")
             return self.get(run_id)
 
-        rules = self.presets.rules_for(self.presets.get(preset_id))
+        rules = self.presets.rules_for(self.presets.effective(preset_id, run.preset_snapshot_json))
         problem = self._acceptance_error(content, rules)
         if problem:
             self._update_run(run_id, status=RUN_NEEDS_REVIEW, error=problem)
@@ -683,7 +695,8 @@ class SummaryService:
             details.append(error or f"未交付（{status}）")
         else:
             try:
-                rules = self.presets.rules_for(self.presets.get(preset_id))
+                rules = self.presets.rules_for(
+                    self.presets.effective(preset_id, run.preset_snapshot_json))
             except Exception as e:
                 details.append(f"预设读不到，无法核对章节：{e}")
                 rules = None

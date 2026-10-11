@@ -1,6 +1,6 @@
 import type { AppRoute } from '../hooks/useHashRoute';
 
-type NavIconName = 'workbench' | 'tools' | 'data' | 'settings';
+type NavIconName = 'workbench' | 'tools' | 'memory' | 'data' | 'settings';
 
 interface SideNavProps {
   route: AppRoute;
@@ -9,9 +9,10 @@ interface SideNavProps {
 
 const NAV: { route: AppRoute; label: string; icon: NavIconName; hint: string }[] = [
   { route: 'workbench', label: '主工作台', icon: 'workbench', hint: '日常编辑：Agent / 文件 / 编辑器' },
-  { route: 'tools', label: '业务工具', icon: 'tools', hint: '跨 Agent 协同：同步 / 对比 / 批量编辑 / 导出' },
+  { route: 'tools', label: '业务工具', icon: 'tools', hint: '跨 Agent 文件协作：同步 / 对比 / 批量编辑 / 文档预设' },
+  { route: 'memory', label: '记忆加工', icon: 'memory', hint: '大模型加工日志：日志标准化 / 日志总结' },
   { route: 'data', label: '数据中心', icon: 'data', hint: '统计 / 检查报告 / 审计日志' },
-  { route: 'settings', label: '系统配置', icon: 'settings', hint: '设置 / LLM Provider / 文档预设' },
+  { route: 'settings', label: '系统配置', icon: 'settings', hint: '设置 / LLM Provider' },
 ];
 
 /**
@@ -50,6 +51,18 @@ function NavIcon({ name }: { name: NavIconName }) {
           <path d="m14 6 3 3-3 3" />
           <path d="M20 15H7" />
           <path d="m10 12-3 3 3 3" />
+        </svg>
+      );
+    case 'memory':
+      // 日志文档 + 星芒：对应「大模型加工日志」
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="4" width="12.5" height="16" rx="2" />
+          <line x1="6.5" y1="8.5" x2="13" y2="8.5" />
+          <line x1="6.5" y1="12" x2="13" y2="12" />
+          <line x1="6.5" y1="15.5" x2="10.5" y2="15.5" />
+          <path d="M19 4.5v4.5" />
+          <path d="M16.75 6.75h4.5" />
         </svg>
       );
     case 'data':
