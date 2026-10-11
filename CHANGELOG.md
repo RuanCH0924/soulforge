@@ -9,6 +9,62 @@
 > `backend/pyproject.toml` 与 `frontend/package.json` 为静态字段，需手工同步，
 > 由 [backend/tests/test_version.py](backend/tests/test_version.py) 自动校验防漂移。
 
+## [0.5.7] - 2026-10-11
+
+> 前端动效与视觉体系（P5）+ MEMORY 组显示 `memory/` 子目录 + 文件树并发错位修复 + 工作台布局调整。
+> 不含对外 API 破坏性变更（无新增 / 变更接口与数据结构，无 DB 变更）。
+
+### 新增
+
+- **动效体系（P5）**（详见 [docs/UI-SPECS.md](docs/UI-SPECS.md) §六）：
+  - 新增动效曲线 token `--ease-out` / `--ease-in-out`；§六 由「场景表」升级为**口径表**
+    （曲线 / 时长 / 只动 `transform` 与 `opacity` / 减少动效口径）。
+  - **补全退场动画**：弹窗、编辑器侧栏面板、下拉菜单、Toast 关闭时先播退场再卸载
+    （退场一律快于入场：140 / 140 / 120 / 150ms）；`Modal` 与 `Dropdown` 把回调 `onClose` 延后到退场播完
+    （调用方零改动），新增通用 `hooks/usePresence.ts` 与 `.is-closing` 约定。
+  - **滑动指示器成体系**：一套机制（`hooks/useSlidingIndicator.ts` + `components/SlidingIndicator.tsx`）
+    **同时服务一级导航与全部二级菜单** —— 4 个页面的 tab 条、超级同步子页签、编辑器「编辑 / 预览」、
+    文件浏览模式、对比口径、同步模式、编辑窗口模式（共 10 处调用点）；页签选中态不再逐项加
+    `border-bottom`，分段控件不再逐项加分隔线。
+  - 其余可见动效：Agent 树入场错落（前 9 项 30ms 递增）、Toast 栈增删 FLIP 重排（WAAPI）、
+    按钮按压缩放 `scale(0.97)`、侧栏图标悬停微交互（仅精确指针设备）。
+- **视觉层次与一致性**：
+  - 三级分层阴影 token `--shadow-raise` / `--shadow-pop` / `--shadow-float`（深浅主题各一套），
+    浮层改「发丝描边 + 分层阴影」；新增发丝分隔线 token `--hairline`。
+  - 边界职责收口（§3.5）：**可交互控件**保留 `--border`，**容器与分隔**一律 `var(--hairline)`。
+  - 圆角全部收敛为 token 并明确层级（微元素 4 / 控件与列表行 6 / 卡片与面板 8 / 浮层 10 / 胶囊 999）；
+    12 个内容卡片补 `--shadow-raise`；统计值 / 表格 / 计数改**等宽数字**。
+- **MEMORY 组显示 `memory/` 子目录**：
+  - 后端 `classify_role()` 的 MEMORY 判据由「`memory/<文件>.md`（恰好两层）」放宽为
+    「`memory/` 下**任意深度**的 `.md`」——`memory/dreaming/rem/*.md`、`memory/<主题>/*.md`
+    此前被判成 `OTHER`，而 MEMORY / OTHER 默认隐藏，工作台里表现为「memory 目录不见了」。
+  - 前端文件树新增**组内目录树**（§5.8）：`memory/` 子目录显示为可折叠目录行（默认折叠 + 该目录文件数），
+    过滤时强制展开，行内只显示「相对当前目录」的文件名（完整路径在 `title`），键盘 `↑ ↓` 与树的可视顺序一致。
+
+### 变更
+
+- **工作台左栏头即浏览模式切换**：左栏头不再单列「列表名 + 条数」，改为切换控件本身靠左排
+  —— 静态「按」+ 滑块（`WorkSpace` / `CORE`）+ 静态「分类」，滑块既是交互控件、也是当前模式标题；
+  二级栏头两种浏览模式统一为 `[上下文][条数][＋新建][删除]`。
+- **二级栏工具槽位统一**：CORE 模式的中栏头补齐 `＋新建 / 删除`（与 Agent 模式共用
+  `components/PaneTools.tsx`，位置 / 尺寸 / 样式一致）。CORE 模式下 `＋新建` 恒置灰并用 `title`
+  说明理由（新建必须先确定写进哪个 Agent）；`删除` 只对「当前打开的、且属于当前 CORE 分类的那一行」生效。
+
+### 修复
+
+- **文件树与选中 Agent 不一致（并发缺陷）**：`selectAgent` / `refreshFiles` 在 `await` 之后未校验
+  响应是否过期，快速连点两个 Agent 时旧列表会覆盖新列表（旧请求的 `finally` 还会提前关掉新请求的
+  loading）→ 表现为「memory 里中文命名的目录 / 文档不显示」与「点文件报 *B workspace 下找不到 A 的路径*」。
+  修复：把「列表属于谁」当作**新鲜度令牌**，`await` 之后的列表写入 / 错误提示 / loading 三处都校验。
+
+### 文档
+
+- [UI-SPECS.md](docs/UI-SPECS.md) 升至 v1.32：新增 §3.5 圆角与边界层级规则、§5.8 二级栏与目录树，
+  §六 动效改为口径表，§十一 一致性核对表新增 20 余行；
+- [DATA-MODEL.md](docs/DATA-MODEL.md) 修正「role ↔ UI 显示」表（MEMORY / OTHER 实为默认隐藏）
+  并补 MEMORY 子目录判据说明；
+- [ROADMAP.md](docs/ROADMAP.md) 7.1 同步当前版本。
+
 ## [0.5.6] - 2026-10-11
 
 > 一级导航 IA 调整 + 预设体系统一与调用前确认窗。不含对外 API 破坏性变更

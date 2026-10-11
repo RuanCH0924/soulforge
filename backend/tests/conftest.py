@@ -46,6 +46,8 @@ def openclaw_dir(tmp_path: Path) -> Path:
     _write_md(alpha, "MEMORY.md", "# MEMORY\n\n长期事实：Alpha 是测试 Agent。")
     _write_md(alpha, "TOOLS.md", "# TOOLS\n\n可用工具。")
     _write_md(alpha, "memory/2026-08-05.md", "# 2026-08-05\n\n今日结论：……")
+    # memory/ 的子目录同样属于 MEMORY（真实结构：memory/dreaming/rem/2026-07-21.md）
+    _write_md(alpha, "memory/dreaming/rem/2026-07-21.md", "# 2026-07-21\n\nREM 记录。")
     # 敏感文件必须被排除
     _write_md(alpha, ".credentials.md", "secret=xxx")
     _write_md(alpha, ".hidden.md", "hidden")

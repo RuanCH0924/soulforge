@@ -14,8 +14,8 @@ def test_list_agents(client, openclaw_dir: Path):
     # alpha 的 Linux 路径被映射到 openclaw 根下的 workspace-alpha
     assert by_id["alpha"]["workspace"] == str((openclaw_dir / "workspace-alpha").resolve())
     assert by_id["beta"]["workspace"] == str((openclaw_dir / "workspace-beta").resolve())
-    # 文件数：alpha 有 7 个 md（含 memory + notes），排除 .credentials.md / .hidden.md
-    assert by_id["alpha"]["file_count"] == 8
+    # 文件数：alpha 有 9 个 md（含 memory 顶层 + memory 子目录 + notes），排除 .credentials.md / .hidden.md
+    assert by_id["alpha"]["file_count"] == 9
     assert by_id["beta"]["file_count"] == 2
 
 
@@ -48,6 +48,8 @@ def test_list_files_with_role(client):
     roles = {f["path"]: f["role"] for f in files}
     assert roles["SOUL.md"] == "CORE"
     assert roles["memory/2026-08-05.md"] == "MEMORY"
+    # memory/ 的子目录（任意深度）也属于 MEMORY，否则会掉进 OTHER 被默认隐藏
+    assert roles["memory/dreaming/rem/2026-07-21.md"] == "MEMORY"
     assert roles["notes/汇报风格.md"] == "OTHER"
     # 敏感文件不进列表
     assert ".credentials.md" not in roles

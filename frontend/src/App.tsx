@@ -11,12 +11,14 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { CoreAgentList, CoreCategoryList } from './components/CoreBrowser';
 import { FileTree } from './components/FileTree';
 import { HistoryModal } from './components/HistoryModal';
+import { PaneTools } from './components/PaneTools';
 import { SaveAsPresetModal } from './components/SaveAsPresetModal';
 import { SearchModal } from './components/SearchModal';
 import { ShortcutsModal } from './components/ShortcutsModal';
 import { StatusBar } from './components/StatusBar';
 import { TopBar } from './components/TopBar';
 import { SideNav } from './components/SideNav';
+import { SlidingIndicator } from './components/SlidingIndicator';
 import { ViewToggle } from './components/ViewToggle';
 import type { BrowseMode } from './components/ViewToggle';
 import { DataPage } from './pages/DataPage';
@@ -32,6 +34,7 @@ import { useCoreCatalog } from './hooks/useCoreCatalog';
 import { useSettings } from './hooks/useSettings';
 import { useLintScan } from './hooks/useLintScan';
 import { useToast } from './hooks/useToast';
+import { useSlidingIndicator } from './hooks/useSlidingIndicator';
 import type { AgentInfo, FileContent, FileInfo, StatsResult } from './types';
 
 // 懒加载编辑器：monaco 体积较大，按需分包，避免阻塞应用首屏
@@ -262,6 +265,8 @@ export default function App() {
   useEffect(() => {
     editorModeRef.current = editorMode;
   }, [editorMode]);
+  // 二级菜单的滑动底色块（与一级导航同一套动效）
+  const editorModeIndicator = useSlidingIndicator(editorMode, '.mode-toggle button.active', 'x');
 
   useEffect(() => {
     tabsRef.current = tabs;
@@ -428,11 +433,30 @@ export default function App() {
   // 当前激活的编辑窗口（用于文件树高亮与快捷键）
   const activeTab = tabs.find((t) => t.key === activeKey) ?? null;
 
+  /**
+   * CORE 模式下的「选中行」：当前编辑窗口里的文件恰好属于当前 CORE 分类时，
+   * 那一行就是选中项（判据与 CoreAgentList 的高亮完全一致），删除只对它生效。
+   */
+  const coreSelectedEntry = useMemo(() => {
+    if (browseMode !== 'core' || !coreCatalog.activeCore || !activeTab) return null;
+    const entries = coreCatalog.agentsByCore.get(coreCatalog.activeCore) ?? [];
+    return (
+      entries.find((e) => e.agentId === activeTab.agentId && e.path === activeTab.file?.path) ?? null
+    );
+  }, [browseMode, coreCatalog.activeCore, coreCatalog.agentsByCore, activeTab]);
+
   // ---- 数据加载 ----
+  /**
+   * 拉取某个 Agent 的文件列表。
+   * `filesAgentIdRef` 既是「当前列表属于谁」，也是并发请求的**新鲜度令牌**：
+   * 响应回来时若已被后续选择取代，必须丢弃，否则会出现
+   * 「文件树显示 A 的文件、选中的却是 B」→ 点文件报「B 下找不到 A 的路径」。
+   */
   const refreshFiles = useCallback(async (agentId: string) => {
     if (filesAgentIdRef.current !== agentId) return;
     try {
       const fs = await api.listFiles(agentId);
+      if (filesAgentIdRef.current !== agentId) return; // 已被后续选择取代
       setFiles(fs);
     } catch {
       // 静默失败，保持现有列表
@@ -454,11 +478,16 @@ export default function App() {
       setFilesLoading(true);
       try {
         const fs = await api.listFiles(agentId);
+        // 快速连点两个 Agent 时，先发出的请求可能后返回；
+        // 过期响应必须整包丢弃（列表 / 错误 / loading 三处都要挡），否则三者会各说各话。
+        if (filesAgentIdRef.current !== agentId) return;
         setFiles(fs);
       } catch (e) {
-        toast(`加载文件失败：${(e as Error).message}`, 'error');
+        if (filesAgentIdRef.current === agentId) {
+          toast(`加载文件失败：${(e as Error).message}`, 'error');
+        }
       } finally {
-        setFilesLoading(false);
+        if (filesAgentIdRef.current === agentId) setFilesLoading(false);
       }
     },
     [toast],
@@ -1284,11 +1313,12 @@ export default function App() {
             {!leftCollapsed && (
               <>
                 <div className="pane" style={{ width: leftWidth, flex: 'none' }}>
+                  {/* 左栏头 = 浏览模式切换，靠左：静态「按」+ 滑块（WorkSpace / CORE）+ 静态「分类」。
+                      滑块本身既是交互控件、也是当前模式的标题，故不再单列标题与条数。 */}
                   <div className="pane-header">
+                    <span className="browse-mode-affix">按</span>
                     <ViewToggle mode={browseMode} onChange={switchBrowseMode} />
-                    <span className="pane-header-title">
-                      {browseMode === 'core' ? 'CORE 分类' : 'Agent'}
-                    </span>
+                    <span className="browse-mode-affix">分类</span>
                   </div>
                   {browseMode === 'core' ? (
                     coreCatalog.loading && coreCatalog.coreTypes.length === 0 ? (
@@ -1346,6 +1376,21 @@ export default function App() {
                   onOpenFile={(a, p) => {
                     void openFile(a, p);
                   }}
+                  tools={
+                    <PaneTools
+                      createHint="CORE 分类视图不支持新建：新建必须先确定写进哪个 Agent，请切回 Agent 视图"
+                      onDelete={
+                        coreSelectedEntry
+                          ? () => void deleteDoc(coreSelectedEntry.agentId, coreSelectedEntry.path)
+                          : undefined
+                      }
+                      deleteHint={
+                        coreSelectedEntry
+                          ? `删除 ${coreSelectedEntry.agentId} 的 ${coreSelectedEntry.path}（移入回收站）`
+                          : '先在上方列表打开一个文件，再删除'
+                      }
+                    />
+                  }
                 />
               ) : (
                 <FileTree
@@ -1387,7 +1432,13 @@ export default function App() {
                 <div className="pane-header">
                   <span className="pane-header-title">编辑器</span>
                   <div className="editor-mode-toggle">
-                    <div className="mode-toggle" role="group" aria-label="编辑窗口模式">
+                    <div className="mode-toggle" role="group" aria-label="编辑窗口模式" ref={editorModeIndicator.containerRef}>
+                      <SlidingIndicator
+                        axis="x"
+                        variant="seg"
+                        box={editorModeIndicator.box}
+                        ready={editorModeIndicator.ready}
+                      />
                       <button
                         type="button"
                         className={editorMode === 'single' ? 'active' : ''}

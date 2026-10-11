@@ -33,12 +33,14 @@ export function AgentTree({
             </button>
           </div>
         ) : (
-          agents.map((agent) => {
+          agents.map((agent, index) => {
             const warn = warningCounts[agent.id] ?? 0;
             return (
               <div
                 key={agent.id}
                 className={`agent-node${agent.id === selectedAgentId ? ' selected' : ''}`}
+                /* 入场错落：前 9 项 30ms 递增（再长的列表统一 240ms，避免拖沓） */
+                style={{ animationDelay: `${Math.min(index, 8) * 30}ms` }}
                 onClick={() => onSelect(agent.id)}
                 title={`${agent.id}\n${agent.workspace}`}
               >

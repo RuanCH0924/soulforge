@@ -4,7 +4,7 @@
 > 项目拥有者不需要懂代码，把本文档丢给 AI，它就能理解项目全貌并逐步生成代码。
 > 开发方式：Vibe Coding（自然语言描述 → AI 生成代码 → 老板验收）
 >
-> **版本号**：唯一事实源为 `backend/app/__init__.py` 的 `__version__`（当前 `0.5.6`），
+> **版本号**：唯一事实源为 `backend/app/__init__.py` 的 `__version__`（当前 `0.5.7`），
 > 版本历史与发版流程见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ---

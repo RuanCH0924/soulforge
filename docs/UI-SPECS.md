@@ -38,6 +38,14 @@
 | v1.22 | 2026-10-10 | **LLM Provider 增强 + 批次重试**：① Provider 表/表单新增「单批 Token 预算」（默认 50 万，`0`=不限；批次预算改由所选 Provider 快照，全局 `config` 的 `token_budget` 移除）与「思考强度 reasoning_effort」（`不设置/低/中/高`，仅 OpenAI 兼容协议生效）；② 日志标准化计划页新增「重试失败的天」（`POST /api/daily-runs/{id}/retry`，同批次内重跑 failed/blocked 的日子、token 累计，且**预算按最新 Provider 配置刷新**）与「拒绝并重建」（作废当前批次 + 同参数新建） |
 | v1.23 | 2026-10-10 | **一级导航 IA 调整**：① **「日志标准化 / 日志总结」从业务工具提级为独立一级「记忆加工」**（新增 `pages/MemoryPage.tsx`，路由 `#/memory`；理由：它们属「大模型加工文档」族，与「同步 / 对比」这类确定性文件操作不是一族，平铺在第 5/6 个 tab 会被淹没）；② 业务工具内**「同步 / 超级同步」由两个并列 tab 合并为一个「同步」入口 + 模式切换**（普通同步 / 超级同步，`.sync-mode-bar`），消除同级近似项；③ **「文档预设」从系统配置迁到业务工具**（它是业务内容、不是系统配置），编辑器「应用预设」弹窗新增「管理预设」直达入口；④ **「导出全部」从业务工具 tab 栏移到顶栏**（回归全局动作）。SideNav 4 项 → 5 项；命令面板补「前往记忆加工 / 工作日志标准化 / 工作日志总结」，且「管理文档预设 / 统计面板 / 检查报告 / 审计日志」跳转改为落到对应 tab |
 | v1.24 | 2026-10-11 | **预设体系统一 + 调用前确认窗**：① **文档预设页统一承载全部预设**（含 WORKLOG / SUMMARY 这类大模型专用预设），并统一为 **5 个类目**：预设名 / 使用文件类别 / 用途说明 / 预设参考文档 / 预设修改要求；② **日志标准化 / 日志总结只负责「调用」预设**，移除页内编辑器（删除 `DailyPresetEditor.tsx`），编辑一律在「业务工具 → 文档预设」；③ 新增**共享「预设确认与编辑」窗** `PresetConfirmModal`：所有调用预设的功能（应用预设 / AI 整理 / 日志标准化 / 日志总结）在开始任务前都必须经它再次确认 + 现场编辑，编辑后可选 **「仅本次生效」/「更新预设」/「设为新预设」**（「仅本次生效」走后端 `preset_override` 快照，不落库）；④ 主工作台「应用预设 / AI 整理」的预设下拉改为**列出全部**（不再排除 WORKLOG / SUMMARY）。一致性核对表修订 3 行、新增 3 行 |
+| v1.25 | 2026-10-11 | **动效基础统一（P5 · 第一批：纯 CSS）**：① 新增动效曲线 token `--ease-out` / `--ease-in-out`（内置 `ease` / `ease-out` 太弱），并把 §六 从「四行场景表」升级为**口径表**（曲线 / 时长 / 频率 / 减少动效）；② 入场一律改 `--ease-out` 且浮层类统一 0.2s（Modal / Lint·大纲面板 / 移动端弹窗）；③ **命令面板（`Ctrl+K`）遮罩删除淡入动画**（键盘触发、每天上百次，按「高频动作不加动画」铁律）；④ **Toast 与下拉菜单由 keyframes 改为 `transition` + `@starting-style`**（可中断重定向），下拉同时修正展开原点为触发侧（`transform-origin: top`，不再从中心炸开）；⑤ 按钮按压反馈由 `translateY(0.5px)` 改为 `scale(0.97)` 并纳入 transform 过渡；⑥ 进度条由 `margin-left` 动画改为 `translateX`，常量运动改 `linear`；⑦ `prefers-reduced-motion` 由「全部归零」改为「**停位移/缩放、保留 opacity/color 的 120ms 短过渡**」（减少动态 ≠ 归零）。一致性核对表新增 6 行、修订 1 行 |
+| v1.26 | 2026-10-11 | **退场动效与 GPU 收口（P5 · 第二批：含 JS）**：① 全站补上**退场动画**（此前所有浮层都是「瞬间消失」，入场有过渡而退场没有 = 断裂感）——弹窗 / 编辑器侧栏面板 / 下拉菜单 / Toast 关闭时先挂 `.is-closing` 播退场再卸载，**退场一律快于入场**（140 / 140 / 120 / 150ms）；实现方式：`Modal` 与 `Dropdown` 把「回调 `onClose`」延后到退场播完（**调用方零改动**）、`useToast` 给通知打 `leaving` 标记、新增通用 `hooks/usePresence.ts`（布尔开关 → 挂载态 + 退场态，中途反悔可取消）供编辑器两个面板使用；② 相似度条占比由 `width` 改为 `scaleX`（`transform-origin: left`）——最后两处布局属性动画清零；③ `EditorPane` 大纲跳转的平滑滚动按 `prefers-reduced-motion` 降级为瞬时（JS 显式 `behavior:"smooth"` 不受 CSS `scroll-behavior` 约束）；④ 减少动效下**加载 spinner 例外保留旋转**（冻结会被误认为界面卡死）；⑤ 修正第一批的副作用：进度条不再设基础 `transform`，否则关掉动画时会被挪出轨道。一致性核对表新增 4 行 |
+| v1.27 | 2026-10-11 | **视觉层次与可见动效（P5 · 第三批：主工作台样板）**：前两批只把「已有动效做正确」，肉眼几乎无感；本批起**新增可见设计与动效**。① **视觉层次**——新增三级分层阴影 token `--shadow-raise` / `--shadow-pop` / `--shadow-float`（改造原单层大模糊阴影，深浅主题各一套）与发丝分隔线 token `--hairline`；弹窗 / 下拉 / Toast / 命令面板 / 编辑窗口改为「发丝描边 + 分层阴影」，顶栏 / 侧栏 / 状态栏 / 面板头的 1px 实线统一换发丝线（`inset` 阴影实现，盒高不变），分栏拖拽条由 4px 灰条改为透明热区、悬停才高亮；② **可见动效**——侧栏新增**可滑动活动指示器** `.side-nav-pill`（260ms，位置由 `SideNav.tsx` 量取激活项 rect 下发；激活项自身背景改透明）、Agent 树**入场错落**（前 9 项 30ms 递增）、Toast 栈增删 **FLIP 重排**（WAAPI，240ms）、侧栏图标悬停放大 1.08（仅精确指针设备）；③ **排版节奏**——顶栏品牌字重 700→650 并收紧字距、面板头字距 0.06→0.08em、文件树行高放宽（3px→4px）、状态栏 / Agent 文件数 / 文件大小改**等宽数字**（`tabular-nums`，数字变化不抖动）。一致性核对表新增 7 行 |
+| v1.28 | 2026-10-11 | **动效成体系 + 全站样式收敛（P5 · 第四批：铺开）**：① **二级菜单获得与一级导航同一套滑动动效**——把「量取激活项 → 滑动指示器」抽成一套机制（`hooks/useSlidingIndicator.ts` + `components/SlidingIndicator.tsx` + `global.css` 的 `.slide-indicator`）并**同时服务两级菜单**：一级导航用纵向底色块（`.slide-indicator-nav`）、二级页签用横向下划线（`.slide-indicator-tab`）、分段控件用横向底色块（`.slide-indicator-seg`），时长/曲线/首帧处理完全一致；覆盖全部二级菜单：4 个页面的 tab 条 + 超级同步的页签 + 编辑器「编辑/预览」+ 文件浏览模式 + 对比口径 + 同步模式 + 编辑窗口模式（共 10 处调用点）；**页签选中态不再逐项加 `border-bottom`，分段控件也不再逐项加分隔线**（底色/下划线统一交给指示器）。② **全站边界体系收口**：明确两类边界职责——**可交互控件**（按钮 / 输入 / 下拉 / 复选框组 / 分段控件 / 快捷键盘帽）保留 `--border`，**容器与分隔**（面板 / 卡片 / 表格 / 分区 / 内嵌区块 / 浮层描边）一律换 `--hairline`，共改约 50 处。③ **圆角收敛为 token**：全站 ~39 处硬编码圆角改为 `--radius-*`，并明确层级（微元素 4 / 控件与列表行 6 / 卡片与面板 8 / 浮层 10 / 胶囊 999），`.stat-card` 由 10px 归到卡片层 8px、`.agent-node .agent-icon` 由 5px 归到 4px。④ **卡片补抬升阴影**：12 个内容流卡片（统计卡 / 表格包裹 / 富文本差异 / 按块接受 / lint 清单与条目 / 日志日卡 / 超级同步三块 / 冲突行 / 代码块）补 `--shadow-raise`。⑤ **等宽数字铺开**：统计值 / 审计表 / 日志表 / CORE 计数补 `tabular-nums`。另：本批新增 §3.5 边界与圆角层级规则。一致性核对表新增 4 行、修订 1 行 |
+| v1.29 | 2026-10-11 | **MEMORY 组显示 memory 子目录（缺陷修复）**：① 后端 `classify_role()` 的 MEMORY 判据由「`memory/<文件>.md`（恰好两层）」放宽为「`memory/` 下**任意深度**的 `.md`」——真实结构如 `memory/dreaming/rem/2026-07-21.md`、`memory/<主题>/*.md` 此前被判成 OTHER，而 MEMORY / OTHER 默认隐藏 → 工作台里看起来「memory 目录不见了」；② 前端文件树新增**组内目录树**（见 §5.8）：同一 role 的文件按目录拆开渲染，`memory/` 的子目录显示为可折叠目录行（默认折叠 + 该目录文件数），过滤时强制展开，行内只显示相对当前目录的文件名，键盘 `↑ ↓` 顺序与树的可视顺序一致；③ 修正 DATA-MODEL.md 中「role ↔ UI 显示」表与实现不一致的 2 行（MEMORY / OTHER 实为默认隐藏）。一致性核对表新增 3 行 |
+| v1.30 | 2026-10-11 | **修复「文件树与选中 Agent 不一致」（并发缺陷）**：快速连点两个 Agent 时，先发出的 `listFiles` 可能后返回，而 `selectAgent` / `refreshFiles` 在 `await` 之后**没有校验响应是否过期** → 旧 Agent 的文件列表会覆盖新 Agent 的，并且旧请求的 `finally` 还会把新请求的 loading 提前关掉。后果是**文件树显示 A 的文件、选中的却是 B**：表现为「memory 里中文命名的目录 / 文档不显示」（其实显示的是另一个 Agent 的列表），以及点击文件报 `B workspace 下找不到 A 的路径`（如 `xiaozhi-contributor 下找不到 memory/contacts/ruan-jiemin.md`，该文件实际属于 `main`）。修复：把 `filesAgentIdRef` 同时当作**新鲜度令牌**，`await` 之后的列表写入 / 错误提示 / loading 三处都校验「是否仍是最新选择」，过期响应整包丢弃。一致性核对表新增 1 行 |
+| v1.31 | 2026-10-11 | **浏览模式滑块并入左栏头 + 二级栏工具槽位统一（布局调整）**：① **滑块并入左栏头同一行**——「Agent / CORE 分类」滑块**不单独占一行**（曾短暂试过横跨三栏的 36px 独立「工作台栏」，已废弃），改为与左栏头的 `列表名 + 条数` 排成**同一行**（顺序：标题 → 条数 → 滑块）；栏头内滑块比默认更紧凑（`padding: 2px 8px`），保证左栏最窄 180px 时标题仍可读。② **二级栏工具槽位两模式统一**——CORE 模式的中栏头此前只有「CORE 分类下拉 + 计数」，没有工具按钮；现抽出共享 `components/PaneTools.tsx`（`＋新建 / 删除`）供 Agent 模式（文件树）与 CORE 模式（CORE 列表）共用，位置 / 尺寸 / 样式逐像素一致（实测两模式按钮均为 50.02×21 与 36×21，x 相同）。③ **CORE 模式语义收口**：`＋新建` 恒置灰并用 `title` 说明（新建必须先确定写进哪个 Agent，指引切回 Agent 视图）；`删除` 只对「当前打开的、且属于当前 CORE 分类的那一行」生效（判据与列表高亮同源 `coreSelectedEntry`），未打开行时置灰；置灰改用 `aria-disabled` + `.is-off`（不用 `disabled`：理由写在 `title` 上，而 disabled 的按钮不弹 title）。§5.8 改写为「二级栏」条款；一致性核对表新增 3 行 |
+| v1.32 | 2026-10-11 | **左栏头即浏览模式切换（去标题与条数）**：① 左栏头不再单列「列表名 + 条数」，改为**切换控件本身靠左**——顺序为 静态「按」+ 滑块（`WorkSpace` / `CORE`）+ 静态「分类」，滑块既是交互控件、也是当前浏览模式的标题（`按 … 分类` 连读成一句）；② 滑块选项文案由 `Agent` / `CORE 分类` 改为 **`WorkSpace` / `CORE`**（表意更直接），两侧静态文字用 `.browse-mode-affix`；`.pane-header` 整体是 `text-transform: uppercase`，故滑块按钮与两侧静态文字都显式 `text-transform: none`，保证原样显示 `WorkSpace` / `CORE`；③ 切换控件紧贴左栏头左内边距起排（`margin: 0 6px`），左栏最窄 180px 仍够用。§1.1 结构要点、§4.2 与 §5.8 同步改写，一致性核对表修订 3 行 |
 
 ---
 
@@ -68,6 +76,7 @@
 |---|---|
 | SideNav（64px） | 固定 5 项全局导航：主工作台 / 业务工具 / 记忆加工 / 数据中心 / 系统配置。**跨页导航的唯一入口** |
 | TopBar（48px） | **仅全局动作**：品牌 + Agent 计数 + 命令面板入口 + 导出全部 + 重新扫描。**不承载导航类按钮** |
+| 左栏头 | **即浏览模式切换、靠左排**：静态「按」+ 滑块（`WorkSpace` / `CORE`）+ 静态「分类」；滑块既是交互控件、也是当前模式标题（**不单列标题与条数**，v1.32 定稿；曾短暂试过横跨三栏的独立横栏，已废弃） |
 | 三栏 | 左栏（Agent 树 / CORE 一级分类）+ 中栏（文件树 / CORE 二级列表）+ 编辑器；左右栏均可拖拽与折叠 |
 | StatusBar（28px） | 连接态 + 索引文件数 + 上次扫描 + lint 警告数 + 后端版本号；≤1280px 隐藏中间两项（索引文件数 / 上次扫描） |
 | 页面路由 | `#/workbench`、`#/tools`、`#/memory`、`#/data`、`#/settings`（hash 路由，刷新保持） |
@@ -143,8 +152,10 @@
 | 高度 | `--topbar-height` / `--statusbar-height` | 48px / 28px |
 | 圆角 | `--radius-sm` / `--radius-md` / `--radius-lg` / `--radius-xl` | 4px / 6px / 8px / 10px |
 | 字号 | `--font-size-xs` / `-sm` / `-md` / `-lg` / `-xl` | 11px / 12px / 14px / 15px / 20px |
-| 阴影 | `--shadow-pop` / `--shadow-float` | 浮层 / 强浮层（仅用于浮层，层级 ≤3） |
+| 阴影 | `--shadow-raise` / `--shadow-pop` / `--shadow-float` | 分层半透明阴影（卡片 / 下拉与 Toast / 弹窗与命令面板）；**仅用于浮层**，层级 ≤3，深浅主题各一套 |
+| 发丝分隔线 | `--hairline` | 浅色 `rgba(0,0,0,.07)` / 深色 `rgba(255,255,255,.09)`；替代 1px 实线边框（浮层描边 + 分栏边界） |
 | 字体 | `--font-main` / `--font-mono` | Inter 系 / JetBrains Mono 系 |
+| 动效曲线 | `--ease-out` / `--ease-in-out` | `cubic-bezier(0.23,1,0.32,1)` / `cubic-bezier(0.77,0,0.175,1)`（口径见 §六，入场禁用内置 `ease` / `ease-in`） |
 
 ### 3.4 语义色
 
@@ -152,6 +163,28 @@
 - ⚠️ 黄色 = 警告（lint 警告 / 未保存标记）
 - ❌ 红色 = 危险（删除 / 覆盖冲突 / 连接断开）
 - 🔵 蓝色 = 信息 / 链接 / 激活项
+
+### 3.5 圆角与边界层级规则（P5）
+
+**圆角只允许用 token，且按元素层级取值**（禁止再写硬编码 px）：
+
+| 层级 | Token | 用于 |
+|---|---|---|
+| 微元素 | `--radius-sm`（4px） | 焦点环、行内代码、快捷键键帽、小标签、小图标块 |
+| 控件与列表行 | `--radius-md`（6px） | 按钮、输入 / 下拉、树节点、菜单项、命令行、分段控件 |
+| 卡片与面板 | `--radius-lg`（8px） | 卡片、表格包裹、内嵌区块、代码块、小浮层（下拉 / Toast / 侧栏指示器） |
+| 浮层 | `--radius-xl`（10px） | 弹窗、命令面板 |
+| 胶囊 | `999px` | 徽章、计数、状态胶囊、筹码 |
+
+**边界按职责分两类，不得混用**：
+
+| 类别 | 取值 | 用于 |
+|---|---|---|
+| **控件边界** | `1px solid var(--border)` | 用户可输入 / 点击的方框：按钮、输入框、下拉、复选框组、搜索框、分段控件、键帽 |
+| **容器与分隔** | `var(--hairline)` | 面板 / 卡片 / 表格 / 分区 / 内嵌区块；顶栏 / 侧栏 / 状态栏 / 面板头的分隔（`inset` 阴影实现，盒高不变） |
+| **浮层** | `var(--hairline)` + `var(--shadow-pop)` / `var(--shadow-float)` | 浮在内容之上的表面：弹窗 / 下拉 / Toast / 命令面板 |
+
+**判据**：这个框是「能点、能输入的」→ 控件边界；只是「把内容框起来或分开」→ 容器发丝线。
 
 ---
 
@@ -178,7 +211,7 @@
 | `SideNav` | `components/SideNav.tsx` | 左侧 5 项全局导航（跨页导航唯一入口） |
 | `TopBar` | `components/TopBar.tsx` | 品牌 + Agent 计数 + 命令面板入口 + 导出全部 + 重新扫描 |
 | `StatusBar` | `components/StatusBar.tsx` | 底部状态栏；次要指标带 `metric-secondary` 语义 class；右端显示后端版本号（`v<版本>`，取自 `GET /api/health`） |
-| `ViewToggle` | `components/ViewToggle.tsx` | 浏览模式切换（Agent / CORE 分类） |
+| `ViewToggle` | `components/ViewToggle.tsx` | 浏览模式切换（选项 `WorkSpace` / `CORE`）；**即主工作台左栏头本身**，两侧由 `.browse-mode-affix` 补静态「按」/「分类」 |
 | `AgentTree` / `FileTree` | `components/` | Agent 树 / 文件树 |
 | `CoreBrowser` | `components/CoreBrowser.tsx` | `CoreCategoryList`（一级）+ `CoreAgentList`（二级，顶部可切换分类） |
 | `EditorPane` | `components/EditorPane.tsx` | Monaco 编辑窗口（懒加载分包）；路径栏含角色徽标与保存状态位 |
@@ -345,19 +378,63 @@
   （批次创建时记录的 `preset_version`）或 `预设：本次自定义`（该批次用了「仅本次生效」覆盖）——
   改预设不会回写已生成的计划
 
+### 5.8 二级栏：文件树（Agent 模式）/ CORE 列表（CORE 模式）
+
+**两级结构**：一级是 role 分组（CORE / MEMORY / SKILL / META / OTHER，由设置里的高级开关决定是否显示），二级是组内的**目录树**。
+
+**二级栏头（两种浏览模式必须同构）**：`[上下文] [条数] [+新建] [删除]`
+
+- **工具槽位一致**：CORE 模式的中栏头也有 `＋新建 / 删除` 两个按钮，且**位置、尺寸、样式与 Agent 模式逐像素一致**（共用 `components/PaneTools.tsx`，不各写一套）。
+- **CORE 模式的可用性**：`＋新建` 恒置灰 —— 新建必须先确定写进哪个 Agent，而 CORE 视图没有这个前提（`title` 说明并指引切回 Agent 视图）；`删除` 只对「**当前打开的、且属于当前 CORE 分类的那一行**」生效，未打开任何行时置灰（判据与列表高亮完全一致，见 `App.tsx` `coreSelectedEntry`）。
+- **置灰用 `aria-disabled` + `.is-off`，不用 `disabled`**：这里的置灰**要靠 `title` 解释原因**，而 `disabled` 的按钮在浏览器里不弹 `title`；不传 `onClick` 即为不可用。
+- 左栏头**本身就是浏览模式切换、靠左排**：静态「按」+ 滑块（`WorkSpace` / `CORE`）+ 静态「分类」。滑块既是交互控件、也是当前模式的标题，故**不再单列标题与条数**；两侧静态文字用 `.browse-mode-affix`，滑块比默认更紧凑（栏头内 `padding: 2px 8px`、`margin: 0 6px`），保证左栏最窄 180px 时仍可读。
+
+- **组内按目录建树**：同一 role 的文件先按目录拆开再渲染。`MEMORY` 的容器前缀是 `memory/`、`SKILL` 是 `skills/`；CORE / META / OTHER 是散落文件，平铺。
+- **`memory/` 的子目录必须可见**：`memory/dreaming/rem/2026-07-21.md`、`memory/<主题>/xxx.md` 这类多级结构在 MEMORY 组里显示为**可折叠的目录行**（目录名 + 该目录下文件数），而不是把完整路径拍平成一长串。
+- **目录默认折叠**：`memory/` 下可能有上百个文件，全部展开会把分组撑成一面墙；点目录行展开 / 收起（箭头 150ms `--ease-in-out`）。
+- **过滤时强制展开**：输入过滤词后忽略折叠状态，否则命中项藏在折叠目录里，看起来像「没查到」。
+- **行内只显示相对当前目录的文件名**，完整相对路径放 `title`（前缀已由目录层级表达）。
+- **键盘 `↑ ↓` 的顺序 = 树的可视顺序**（跳过折叠目录里的文件），与点击顺序一致。
+
 ---
 
 ## 六、动效
 
+**口径表**（曲线的唯一事实源是 `global.css` 的 `--ease-*` token，不得在组件里另写内置 easing）
+
+| 项 | 值 |
+|---|---|
+| 入场曲线 | `--ease-out` = `cubic-bezier(0.23, 1, 0.32, 1)`——起步快，**入场一律用它**；禁用内置 `ease`（太弱）与 `ease-in`（起步慢，最拖手感） |
+| 状态形变曲线 | `--ease-in-out` = `cubic-bezier(0.77, 0, 0.175, 1)`（原地形变，如文件树展开箭头） |
+| 悬停 / 纯变色 | 内置 `ease` 可用（无位移的纯颜色过渡不受本表约束） |
+| 常量运动 | `linear`（转圈、不定进度条） |
+| 入场时长 | 浮层类（Modal / 面板）**200ms**；Toast 200ms；下拉 **150ms**；按压反馈 160ms |
+| 退场时长 | **一律快于入场**（用户决定时慢、系统响应时快）：弹窗 / 面板 140ms、下拉 120ms、Toast 150ms；退场只动 `opacity` + `transform` |
+| 只动什么 | **只动 `transform` / `opacity`**（GPU）；不得动 `width` / `height` / `margin` / `padding` / `top` / `left` |
+| 减少动效 | `prefers-reduced-motion: reduce` → **停位移与缩放，保留透明度/颜色的 120ms 短过渡**（减少动态 ≠ 归零，有帮助理解的过渡要留；加载 spinner 例外，见核对表） |
+
 | 场景 | 动效 |
 |---|---|
 | 页面切换 | 无（保持工作流连贯） |
-| Toast 出现 | 顶部滑入，3 秒后自动消失 |
-| 危险操作确认 | Dialog 缩放淡入 |
-| Lint 警告出现 | 右侧滑入 |
-| 文件树展开/收起 | 200ms ease |
+| 命令面板（`Cmd/Ctrl+K`） | **无任何动画**——键盘触发、每天上百次的动作不加动画（与 Raycast 一致，避免与按键脱节） |
+| Toast 出现 / 消失 | 出现：顶部滑入 + 淡入，200ms；消失：原路向上淡出，150ms。用 `transition` + `@starting-style`（可被连续触发中断重定向），不用 keyframes |
+| 下拉菜单 | 展开：从触发按钮一侧（`transform-origin: top`）`scale(0.97) → 1` + 淡入，150ms；收起：120ms 原路缩回 |
+| 危险操作确认 / 弹窗 | 遮罩淡入 + 面板 `scale(0.96) → 1`，200ms；关闭：`scale(0.98)` + 淡出，140ms。Modal 保持**居中**展开，不做原点偏移 |
+| Lint / 大纲面板 | 展开：从右侧滑入，200ms；收起：向右滑出 + 淡出，140ms |
+| 文件树展开/收起 | 箭头 `150ms --ease-in-out` |
+| 按钮按压 | `:active` 缩到 **0.97**，160ms（所有可按元素，含 `.btn` 系列） |
+| 进度条 / 相似度条 | 二者占比都只用 `transform` 表达（相似度条 `scaleX` + `transform-origin: left`；不定进度条 `translateX` + `linear`），不得用 `width` / `margin-left` |
+| 侧栏活动指示器（一级导航） | 一块可滑动的圆角底色块在导航项之间移动，260ms `--ease-out`（首帧不加过渡）；只用 `transform: translateY` |
+| 二级菜单选中动效 | **与一级导航同一套机制**（`.slide-indicator`）：页签用底部下划线（横向滑动）、分段控件用底色块；时长 / 曲线 / 首帧处理与一级导航完全一致 |
+| Agent 树入场 | 错落出现：前 9 项 30ms 递增（上限 240ms），`opacity` + `translateY(4px)`，220ms；**只用于 Agent 树**（文件树会被反复过滤，不加错落） |
+| Toast 栈重排 | 增删后其余通知 FLIP 滑动 240ms（WAAPI）；reduced-motion 下直接跳位 |
+| 悬停微交互 | 侧栏图标悬停放大 1.08，160ms；**仅 `@media (hover: hover) and (pointer: fine)`**（触屏 tap 会产生假 hover） |
 
 **整体原则**：**少动效，专注工作流**。参考 Obsidian 哲学。
+
+- **按频率决定要不要动**：100+ 次/天（快捷键、命令面板）→ 不加；数十次/天（悬停、列表切换）→ 减到最轻；偶发（弹窗、抽屉、Toast）→ 标准动效。
+- **有入必有出**：出现有入场过渡的元素，消失时也必须播退场（否则是「啪」地消失）；退场时长一律短于入场。
+- 动效必须有理由（空间一致性 / 状态提示 / 反馈 / 避免突变），「好看」不是理由。
 
 ---
 
@@ -500,7 +577,32 @@
 | 弹窗键盘可达性 | 所有模态走 `Modal`：`role="dialog"` + `aria-modal` + 焦点陷阱 + 打开聚焦 / 关闭归还焦点 + Esc 仅关最上层 | `components/Modal.tsx`（`ConfirmDialog.tsx` 复用） |
 | 工作台二次确认 | 统一 `ConfirmDialog`，不出现原生 `window.confirm` | `App.tsx` 的 `confirmAction()` / `components/ConfirmDialog.tsx` |
 | 通知可访问性 | Toast 用 `role="status"`（普通）/ `role="alert"`（错误），可手动关闭、悬停/聚焦暂停 | `hooks/useToast.tsx` |
-| 键盘焦点可见 / 减少动效 | `:focus-visible` 焦点环 + `prefers-reduced-motion` | `styles/global.css` |
+| 键盘焦点可见 / 减少动效 | `:focus-visible` 焦点环 + `prefers-reduced-motion`：**只停位移/缩放，保留 opacity / color 的 120ms 短过渡**（不是全部归零） | `styles/global.css` |
+| 动效曲线 token | `--ease-out` = `cubic-bezier(.23,1,.32,1)`、`--ease-in-out` = `cubic-bezier(.77,0,.175,1)`；入场一律 `var(--ease-out)`，不得另写内置 `ease` / `ease-in` | `styles/global.css` `:root` + 各 `animation` / `transition` |
+| 动效时长 | 浮层 200ms / 下拉 150ms / 按压反馈 160ms（入场与缓动见 §六 口径表） | `styles/global.css` `.modal` `.lint-panel` `.outline-panel` `.dropdown-menu` `.btn` |
+| 命令面板无动画 | 命令面板遮罩与面板**不得有** `animation` / 入场过渡（键盘高频动作） | `styles/global.css` `.command-overlay` |
+| 高频元素用可中断动效 | Toast 与下拉菜单用 `transition` + `@starting-style`（不得退回 keyframes）；下拉展开原点为触发侧 `transform-origin: top` | `styles/global.css` `.toast` / `.dropdown-menu` |
+| 动效只动 GPU 属性 | 位移/缩放一律 `transform`（进度条用 `translateX`，不得用 `margin-left`；常量运动 `linear`） | `styles/global.css` `.progress-fill` / `@keyframes indeterminate` |
+| 退场动画 | 弹窗 / 面板 / 下拉 / Toast 关闭时先挂 `.is-closing` 播退场（140 / 140 / 120 / 150ms，短于入场）再卸载；开关类元素（如编辑器面板）用 `usePresence` 延期卸载 | `styles/global.css`「退场」段；`components/Modal.tsx` / `Dropdown.tsx`（延后回调 `onClose`）、`hooks/useToast.tsx`（`leaving`）、`hooks/usePresence.ts` |
+| 相似度条占比 | `scaleX` + `transform-origin: left`，不得用 `width` | `styles/global.css` `.similarity-fill`；`DiffModal.tsx` / `SyncModal.tsx` |
+| JS 平滑滚动与减少动效 | `scrollIntoView` 的 `behavior` 须按 `prefers-reduced-motion` 降级（JS 显式 `smooth` 不受 CSS `scroll-behavior` 约束） | `components/EditorPane.tsx` `scrollPreviewTo` |
+| 减少动效的加载指示器例外 | spinner 在 `prefers-reduced-motion` 下**仍旋转**（冻结会被误认为界面卡死） | `styles/global.css` `@media (prefers-reduced-motion: reduce)` 内的 `.spinner` / `.spinner-lg` |
+| 层级阴影 token | `--shadow-raise` / `--shadow-pop` / `--shadow-float` 为分层半透明阴影（不是单层大模糊）；浮层一律「发丝描边 + 阴影」，不再用 1px 实线边框 | `styles/global.css` `:root` + `[data-theme='dark']` |
+| 发丝分隔线 | 顶栏 / 侧栏 / 状态栏 / 面板头的分隔一律 `var(--hairline)`（`inset` 阴影实现，盒高不变）；分栏拖拽条为透明热区、悬停才高亮 | `styles/global.css` `--hairline` / `.topbar` / `.side-nav` / `.statusbar` / `.pane-header` / `.divider` |
+| 滑动指示器（一级 + 二级共用） | 一套机制：`hooks/useSlidingIndicator.ts` 量取激活项的 `offsetTop/offsetLeft` 与主轴长度 → `components/SlidingIndicator.tsx` → `.slide-indicator`（变体 `nav` / `seg` / `tab`）；一级导航纵向、二级菜单横向；**激活项自身背景必须保持 transparent**；二级菜单种类：页签 / 分段控件 | `hooks/useSlidingIndicator.ts`、`components/SlidingIndicator.tsx`、`styles/global.css`；调用点：`SideNav.tsx`、4 个 `pages/*.tsx`、`SuperSyncPanel.tsx`、`EditorPane.tsx`、`ViewToggle.tsx`、`DiffModal.tsx`、`App.tsx` |
+| 圆角层级 | 只用 token，禁止硬编码：微元素 `--radius-sm`(4) / 控件与列表行 `--radius-md`(6) / 卡片与面板 `--radius-lg`(8) / 浮层 `--radius-xl`(10) / 胶囊 `999px` | `styles/global.css`（规则见 §3.5） |
+| 边界职责 | **控件**（可点击 / 可输入）用 `1px solid var(--border)`，仅限 `.btn` / `.input,.select,.textarea` / `.filter-input` / `.topbar-search` / `.checkbox-grid` / `.mode-toggle` / `.view-toggle` / `.topbar-search .kbd`；**容器与分隔**一律 `var(--hairline)` | `styles/global.css`（规则见 §3.5） |
+| 卡片抬升阴影 | 内容流里的卡片 / 面板补 `box-shadow: var(--shadow-raise)`（统计卡 / 表格包裹 / 富文本差异 / 按块接受 / lint 清单与条目 / 日志日卡 / 超级同步三块 / 冲突行 / 代码块） | `styles/global.css` `.stat-card` `.table-wrap` `.rich-diff` `.hunk-picker` `.lint-rules` `.lint-item` `.daily-day` `.ss-status-card` `.ss-meta-grid` `.ss-matrix-wrap` `.import-conflict` `.md-preview pre` |
+| 列表入场错落 | **只用于 Agent 树**：前 9 项 30ms 递增（上限 240ms）；文件树 / 长列表不得加错落延迟 | `components/AgentTree.tsx` `animationDelay` + `@keyframes listIn` |
+| Toast 栈重排 | 增删后用 FLIP（WAAPI `animate`，240ms）让存活通知滑动；不得改用会占用入场 transition 的方案 | `hooks/useToast.tsx` `useLayoutEffect` |
+| 数字等宽 | 状态栏 / Agent 文件数 / 文件大小用 `font-variant-numeric: tabular-nums`（数字变化不抖动） | `styles/global.css` `.statusbar` / `.agent-node .agent-meta` / `.tree-file .file-size` |
+| MEMORY role 判据 | `memory/` 下**任意深度**的 `.md` 都算 MEMORY（含 `memory/dreaming/rem/*.md`、`memory/<主题>/*.md`），**不得只认恰好两层** | `backend/app/services/file_manager.py` `classify_role()` |
+| 文件树组内结构 | 组内按目录建树；`memory/` 子目录显示为可折叠目录行（默认折叠 + 显示该目录文件数）；**过滤时强制展开** | `components/FileTree.tsx`（`buildDirTree` / `isDirCollapsed` / `renderTree`）、`styles/global.css` `.tree-dir` |
+| 文件树行标签 | 行内只显示「相对当前目录」的文件名，完整相对路径仅放 `title` | `components/FileTree.tsx` `renderTree()` |
+| Agent 切换的列表并发 | 「列表属于谁」与「选中谁」必须同源：`selectAgent` / `refreshFiles` 在 `await` 之后须校验 `filesAgentIdRef`，过期响应**整包丢弃**（列表写入 / 错误提示 / loading 三处都要挡）。否则快速连点会出现「文件树显示 A、选中为 B」，点文件报「B 下找不到 A 的路径」 | `App.tsx` `selectAgent()` / `refreshFiles()` |
+| 浏览模式切换位置 | 左栏头**本身就是该切换控件、靠左排**（静态「按」+ 滑块 `WorkSpace`/`CORE` + 静态「分类」）；**不得再单列标题与条数**，也不得恢复 36px 独立「工作台栏」横栏；滑块内更紧凑（`padding: 2px 8px`、`margin: 0 6px`） | `App.tsx` 左栏头 `.pane-header` + `styles/global.css` `.pane-header .view-toggle` / `.browse-mode-affix` |
+| 二级栏工具槽位 | 两种浏览模式（Agent / CORE）的中栏头都必须是 `[上下文][条数][＋新建][删除]`，且尺寸位置一致（共用 `PaneTools`）；CORE 模式 `＋新建` 恒置灰并用 `title` 说明理由，`删除` 只对当前打开且属于该分类的行生效 | `components/PaneTools.tsx`、`App.tsx` `coreSelectedEntry`、`components/CoreBrowser.tsx` `tools` |
+| 栏头文案 | 滑块按钮文案为 `WorkSpace` / `CORE`（**不是** `Agent` / `CORE 分类`）；`.pane-header` 是 `uppercase`，故滑块按钮与两侧 `.browse-mode-affix` 均须显式 `text-transform: none`，原样显示 | `components/ViewToggle.tsx`、`styles/global.css` `.pane-header .view-toggle button` / `.browse-mode-affix` |
 | 保存冲突（409）恢复路径 | 弹「重新加载 / 覆盖保存 / 取消」三选一，不得只弹死胡同 toast（`覆盖保存` 走强制写入，旧版自动备份；`重新加载` 丢弃本地改动） | `App.tsx` 的 `conflictAction()` / `components/ConfirmDialog.tsx`（`secondaryText` / `onSecondary`） |
 | 排版工具类 | `.text-xs` / `.text-sm` 绑定 `--font-size-xs/sm`；`.ml-6` `.ml-8` `.ml-auto` / `.mt-6` `.mt-8` `.mt-12` / `.mb-8` / `.min-w-0`；高频纯排版样式不得写内联魔法数 | `styles/global.css`「排版工具类」段 |
 | 状态栏版本号来源 | `GET /api/health` 的 `data.version` | `App.tsx` 初始加载 effect；`components/StatusBar.tsx` `.statusbar-version` |

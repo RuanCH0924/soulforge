@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { useSlidingIndicator } from '../hooks/useSlidingIndicator';
 import { isRoleVisible, useSettings } from '../hooks/useSettings';
 import { useToast } from '../hooks/useToast';
 import { Modal } from './Modal';
 import { RichDiffView } from './RichDiffView';
+import { SlidingIndicator } from './SlidingIndicator';
 import type { AgentInfo, DiffMode, DiffResult, FileInfo } from '../types';
 import { similarityColor, similarityPercent } from '../utils/format';
 
@@ -28,6 +30,8 @@ export function DiffModal({ agents, initialAgent, onClose, embedded }: DiffModal
   const [file, setFile] = useState('');
   const [diff, setDiff] = useState<DiffResult | null>(null);
   const [mode, setMode] = useState<DiffMode>('ignore_whitespace');
+  // 二级菜单的滑动底色块（与一级导航同一套动效）
+  const modeIndicator = useSlidingIndicator<HTMLSpanElement>(mode, '.mode-toggle button.active', 'x');
   const [loading, setLoading] = useState(false);
   const [loadingFiles, setLoadingFiles] = useState(false);
 
@@ -124,7 +128,8 @@ export function DiffModal({ agents, initialAgent, onClose, embedded }: DiffModal
       headerless={embedded}
       footer={
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', width: '100%' }}>
-          <span className="mode-toggle" role="group" aria-label="对比口径">
+          <span className="mode-toggle" role="group" aria-label="对比口径" ref={modeIndicator.containerRef}>
+            <SlidingIndicator axis="x" variant="seg" box={modeIndicator.box} ready={modeIndicator.ready} />
             <button
               type="button"
               className={mode === 'ignore_whitespace' ? 'active' : ''}
@@ -220,7 +225,10 @@ export function DiffModal({ agents, initialAgent, onClose, embedded }: DiffModal
               {diff.agent_a} vs {diff.agent_b}
             </span>
             <div className="similarity-track">
-              <div className="similarity-fill" style={{ width: similarityPercent(diff.similarity) }} />
+              <div
+                className="similarity-fill"
+                style={{ transform: `scaleX(${diff.similarity})` }}
+              />
             </div>
             <span>{similarityPercent(diff.similarity)}</span>
           </div>

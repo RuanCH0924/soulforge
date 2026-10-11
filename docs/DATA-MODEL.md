@@ -512,8 +512,8 @@ def classify_role(workspace_root: Path, file_path: Path) -> str:
     if len(parts) == 1 and parts[0] in CORE_FILES:
         return "CORE"
 
-    # MEMORY 文件
-    if len(parts) >= 2 and parts[0] == "memory" and parts[1].endswith(".md"):
+    # MEMORY 文件：memory/ 下任意深度的 .md（含子目录，如 memory/dreaming/rem/2026-07-21.md）
+    if len(parts) >= 2 and parts[0] == "memory" and rel.suffix == ".md":
         return "MEMORY"
 
     # SKILL 文件
@@ -532,10 +532,14 @@ def classify_role(workspace_root: Path, file_path: Path) -> str:
 | role | UI 显示 |
 |---|---|
 | CORE | 默认显示，加粗图标 |
-| MEMORY | 默认显示，普通图标 |
+| MEMORY | 默认**隐藏**（高级开关「显示 MEMORY 文件」打开后显示）；打开后组内按目录树展开，`memory/` 的子目录显示为可折叠目录行 |
 | SKILL | 默认**隐藏**（高级开关打开后显示） |
 | META | 默认**隐藏**（高级开关打开后显示，且加红点警示） |
-| OTHER | 默认显示，但标灰（"未知文件"） |
+| OTHER | 默认**隐藏**（高级开关打开后显示，标灰「未知文件」） |
+
+> **MEMORY 必须覆盖子目录**：`memory/` 下常有多级结构（`memory/dreaming/rem/*.md`、
+> `memory/<主题>/*.md`）。若判据只认 `memory/<文件>.md`（恰好两层），
+> 这些文件会落到 OTHER 且默认隐藏 → 工作台里看起来「memory 目录不见了」。
 
 ---
 

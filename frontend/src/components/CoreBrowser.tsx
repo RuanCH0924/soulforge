@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { AgentInfo, FileInfo } from '../types';
 import { Dropdown } from './Dropdown';
 
@@ -86,6 +87,8 @@ interface CoreAgentListProps {
   /** 中栏直接切换 CORE 分类（M-06），与左栏高亮共用同一状态源 */
   onSelectCore: (type: string) => void;
   onOpenFile: (agentId: string, path: string) => void;
+  /** 二级栏工具槽位（＋新建 / 删除）——与 Agent 模式的文件树保持同一位置与样式 */
+  tools?: ReactNode;
 }
 
 /** 二级菜单（中栏）：包含「XXX.md」的 Agent 列表；顶部可切换 CORE 分类，点击条目打开关联文件 */
@@ -98,6 +101,7 @@ export function CoreAgentList({
   selectedPath,
   onSelectCore,
   onOpenFile,
+  tools,
 }: CoreAgentListProps) {
   const displayName = (id: string) => agents.find((a) => a.id === id)?.display_name || id;
   const entries = activeCore ? agentsByCore.get(activeCore) ?? [] : [];
@@ -123,9 +127,8 @@ export function CoreAgentList({
             onSelect: () => onSelectCore(type),
           }))}
         />
-        <span className="pane-header-title" style={{ marginLeft: 'auto', flex: 'none' }}>
-          {entries.length} 个
-        </span>
+        <span className="pane-header-count">{entries.length} 个</span>
+        {tools}
       </div>
       {!activeCore ? (
         <div className="hint" style={{ padding: '8px 12px' }}>

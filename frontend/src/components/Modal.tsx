@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 interface ModalProps {
@@ -20,6 +20,9 @@ interface ModalProps {
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/** 退场时长（ms）：与 global.css 里 .modal / .modal-overlay 的 .is-closing 过渡一致，退场快于入场 */
+const EXIT_MS = 140;
+
 /**
  * 当前打开的弹窗栈（仅顶层弹窗响应 Esc / Tab）。
  * 应用里存在「弹窗内再开确认框」的嵌套场景，必须让最上层对话框独占键盘交互，
@@ -38,6 +41,34 @@ export function Modal({ title, onClose, children, footer, width = 640, embedded,
     onCloseRef.current = onClose;
   }, [onClose]);
 
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+  const exitTimer = useRef<number | null>(null);
+
+  // 卸载时清掉尚未执行的退场定时器
+  useEffect(
+    () => () => {
+      if (exitTimer.current !== null) window.clearTimeout(exitTimer.current);
+    },
+    [],
+  );
+
+  /**
+   * 统一关闭入口。内嵌模式（页面区块）直接回调；
+   * 浮层模式先挂 .is-closing 播退场，140ms 后才回调 onClose ——
+   * 延时回调期间本组件仍然挂载，因此调用方无需任何改动即可获得退场动画。
+   */
+  const close = useCallback(() => {
+    if (embedded) {
+      onCloseRef.current();
+      return;
+    }
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setClosing(true);
+    exitTimer.current = window.setTimeout(() => onCloseRef.current(), EXIT_MS);
+  }, [embedded]);
+
   useEffect(() => {
     if (embedded) return;
     const panel = panelRef.current;
@@ -54,7 +85,7 @@ export function Modal({ title, onClose, children, footer, width = 640, embedded,
       if (openDialogs[openDialogs.length - 1] !== panel) return;
       if (e.key === 'Escape') {
         e.preventDefault();
-        onCloseRef.current();
+        close();
         return;
       }
       if (e.key !== 'Tab' || !panel) return;
@@ -82,7 +113,7 @@ export function Modal({ title, onClose, children, footer, width = 640, embedded,
       if (i >= 0) openDialogs.splice(i, 1);
       if (opener && document.contains(opener)) opener.focus();
     };
-  }, [embedded]);
+  }, [embedded, close]);
 
   if (embedded) {
     return (
@@ -103,13 +134,13 @@ export function Modal({ title, onClose, children, footer, width = 640, embedded,
 
   return (
     <div
-      className="modal-overlay"
+      className={`modal-overlay${closing ? ' is-closing' : ''}`}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) close();
       }}
     >
       <div
-        className="modal"
+        className={`modal${closing ? ' is-closing' : ''}`}
         style={{ width }}
         ref={panelRef}
         role="dialog"
@@ -119,7 +150,7 @@ export function Modal({ title, onClose, children, footer, width = 640, embedded,
       >
         <div className="modal-header">
           <h3 id={titleId}>{title}</h3>
-          <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="关闭对话框">
+          <button className="btn btn-ghost btn-sm" onClick={close} aria-label="关闭对话框">
             关闭
           </button>
         </div>

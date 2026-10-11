@@ -226,7 +226,10 @@ export function SyncModal({ agents, onClose, onDone, embedded }: SyncModalProps)
                     style={{ margin: 0, flex: 'none', minWidth: 120 }}
                   >
                     <div className="similarity-track">
-                      <div className="similarity-fill" style={{ width: similarityPercent(f.similarity) }} />
+                      <div
+                        className="similarity-fill"
+                        style={{ transform: `scaleX(${f.similarity})` }}
+                      />
                     </div>
                     <span>{similarityPercent(f.similarity)}</span>
                   </span>

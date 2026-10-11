@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
+import { useSlidingIndicator } from '../hooks/useSlidingIndicator';
 import { useToast } from '../hooks/useToast';
+import { SlidingIndicator } from './SlidingIndicator';
 import type {
   AgentInfo,
   FileInfo,
@@ -53,6 +55,8 @@ function localInputToUnix(value: string): number | undefined {
 export function SuperSyncPanel({ agents }: SuperSyncPanelProps) {
   const { push: toast } = useToast();
   const [sub, setSub] = useState<SubTab>('status');
+  // 二级菜单的滑动下划线（与一级导航同一套动效）
+  const tabIndicator = useSlidingIndicator(sub, '.page-tab.active', 'x');
 
   // ---- 状态 ----
   const [status, setStatus] = useState<SuperSyncStatus | null>(null);
@@ -315,7 +319,8 @@ export function SuperSyncPanel({ agents }: SuperSyncPanelProps) {
 
   return (
     <div className="super-sync">
-      <div className="page-tabs">
+      <div className="page-tabs" ref={tabIndicator.containerRef}>
+        <SlidingIndicator axis="x" variant="tab" box={tabIndicator.box} ready={tabIndicator.ready} />
         {(
           [
             ['status', '运行状态'],

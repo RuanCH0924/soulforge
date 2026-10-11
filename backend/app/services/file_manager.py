@@ -39,7 +39,9 @@ def classify_role(workspace_root: Path, file_path: Path) -> str:
     parts = rel.parts
     if len(parts) == 1 and parts[0] in CORE_FILES:
         return "CORE"
-    if len(parts) >= 2 and parts[0] == "memory" and parts[1].endswith(".md"):
+    # MEMORY：memory/ 下的 .md，**含任意深度的子目录**
+    # （真实结构如 memory/dreaming/rem/2026-07-21.md、memory/<主题>/xxx.md）
+    if len(parts) >= 2 and parts[0] == "memory" and rel.suffix == ".md":
         return "MEMORY"
     if len(parts) >= 3 and parts[0] == "skills" and parts[2] == "SKILL.md":
         return "SKILL"

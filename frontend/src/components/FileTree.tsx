@@ -3,6 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import type { FileInfo, FileRole } from '../types';
 import { isRoleVisible } from '../hooks/useSettings';
 import { formatBytes } from '../utils/format';
+import { PaneTools } from './PaneTools';
 
 interface FileTreeProps {
   agentId: string | null;
@@ -30,6 +31,63 @@ const GROUPS: { role: FileRole; label: string }[] = [
 
 const COLLAPSED_KEY = 'soulforge.filetree.collapsed';
 const WARN_ONLY_KEY = 'soulforge.filetree.warnOnly';
+
+/**
+ * 组内的目录树：把同一 role 的文件按「目录 → 文件」组织，供文件树折叠渲染。
+ * 目的：memory/ 下存在多级子目录（memory/dreaming/rem/*.md、memory/<主题>/*.md），
+ * 这些目录必须在 MEMORY 组里看得见，而不是把路径拍平成一行行。
+ */
+interface DirNode {
+  /** 目录名（根节点为空，不代表可视行） */
+  name: string;
+  /** 该目录的完整相对路径（根为容器前缀，如 'memory/'），兼作折叠状态与 React key */
+  path: string;
+  dirs: DirNode[];
+  files: FileInfo[];
+}
+
+/** 各组在 workspace 里的容器前缀；CORE / OTHER 是散落文件，没有统一容器 */
+const GROUP_ROOT: Partial<Record<FileRole, string>> = {
+  MEMORY: 'memory/',
+  SKILL: 'skills/',
+};
+
+function buildDirTree(items: FileInfo[], rootPrefix: string): DirNode {
+  const root: DirNode = { name: '', path: rootPrefix, dirs: [], files: [] };
+  const byPath = new Map<string, DirNode>([[rootPrefix, root]]);
+
+  for (const f of items) {
+    const rel = rootPrefix && f.path.startsWith(rootPrefix) ? f.path.slice(rootPrefix.length) : f.path;
+    const segs = rel.split('/');
+    segs.pop(); // 去掉文件名，剩下的才是目录层级
+    let node = root;
+    let acc = rootPrefix;
+    for (const seg of segs) {
+      acc = `${acc}${seg}/`;
+      let child = byPath.get(acc);
+      if (!child) {
+        child = { name: seg, path: acc, dirs: [], files: [] };
+        byPath.set(acc, child);
+        node.dirs.push(child);
+      }
+      node = child;
+    }
+    node.files.push(f);
+  }
+
+  const sortNode = (n: DirNode) => {
+    n.dirs.sort((a, b) => a.name.localeCompare(b.name));
+    n.files.sort((a, b) => a.path.localeCompare(b.path));
+    n.dirs.forEach(sortNode);
+  };
+  sortNode(root);
+  return root;
+}
+
+/** 目录下的文件总数（含更深层），用于目录行的计数 */
+function countFiles(node: DirNode): number {
+  return node.files.length + node.dirs.reduce((n, d) => n + countFiles(d), 0);
+}
 
 /** 分组折叠状态持久化（跨 Agent 共享，切 Agent 不再重置） */
 function loadCollapsed(): Record<string, boolean> {
@@ -64,6 +122,8 @@ export function FileTree({
     }
   });
   const [kbIndex, setKbIndex] = useState(-1);
+  /** 子目录折叠状态（按目录完整路径记录）；默认折叠，避免 memory/ 下上百个文件一屏铺满 */
+  const [dirCollapsed, setDirCollapsed] = useState<Record<string, boolean>>({});
   const listRef = useRef<HTMLDivElement | null>(null);
 
   // 高级开关变化时自动展开对应分组
@@ -98,11 +158,31 @@ export function FileTree({
   }, []);
 
   const q = filter.trim().toLowerCase();
+  // 过滤时强制展开目录：否则命中项会藏在默认折叠的子目录里，看起来像「没查到」
+  const filterActive = q.length > 0;
+  /** 目录默认折叠（memory/ 下可能有上百个文件），过滤时一律展开 */
+  const isDirCollapsed = useCallback(
+    (path: string) => !filterActive && (dirCollapsed[path] ?? true),
+    [filterActive, dirCollapsed],
+  );
+
+  /** 子目录展开 / 收起（默认折叠，所以取反时按「未记录 = 折叠」判断） */
+  const toggleDir = useCallback((path: string) => {
+    setDirCollapsed((c) => ({ ...c, [path]: !(c[path] ?? true) }));
+  }, []);
 
   // 可见的扁平文件列表（顺序与渲染一致），供键盘导航使用
   const { groups, flatPaths } = useMemo(() => {
-    const gs: { role: FileRole; label: string; items: FileInfo[] }[] = [];
+    const gs: { role: FileRole; label: string; items: FileInfo[]; tree: DirNode | null }[] = [];
     const flat: string[] = [];
+    // 与渲染同序：先递归子目录，再本级文件
+    const walk = (node: DirNode) => {
+      node.dirs.forEach((d) => {
+        if (isDirCollapsed(d.path)) return;
+        walk(d);
+      });
+      node.files.forEach((f) => flat.push(f.path));
+    };
     if (agentId && files.length > 0) {
       GROUPS.filter((g) => isRoleVisible(g.role, { showSkills, showMeta, showMemory, showOther })).forEach(
         (group) => {
@@ -113,13 +193,29 @@ export function FileTree({
             .sort((a, b) => a.path.localeCompare(b.path));
           if (items.length === 0) return;
           const isCollapsed = collapsed[group.role] ?? false;
-          gs.push({ role: group.role, label: group.label, items: isCollapsed ? [] : items });
-          if (!isCollapsed) items.forEach((f) => flat.push(f.path));
+          if (isCollapsed) {
+            gs.push({ role: group.role, label: group.label, items: [], tree: null });
+            return;
+          }
+          const tree = buildDirTree(items, GROUP_ROOT[group.role] ?? '');
+          gs.push({ role: group.role, label: group.label, items, tree });
+          walk(tree);
         },
       );
     }
     return { groups: gs, flatPaths: flat };
-  }, [agentId, files, collapsed, q, warnOnly, showSkills, showMeta, showMemory, showOther]);
+  }, [
+    agentId,
+    files,
+    collapsed,
+    q,
+    warnOnly,
+    showSkills,
+    showMeta,
+    showMemory,
+    showOther,
+    isDirCollapsed,
+  ]);
 
   // 过滤结果变化时重置键盘选中
   useEffect(() => {
@@ -154,25 +250,65 @@ export function FileTree({
 
   const hasFiles = agentId && files.length > 0;
 
+  /** 递归渲染组内的目录 / 文件行（深度决定缩进；与 flatPaths 保持同序） */
+  const renderTree = (node: DirNode, depth: number): ReactNode[] => {
+    const rows: ReactNode[] = [];
+    node.dirs.forEach((d) => {
+      const collapsedDir = isDirCollapsed(d.path);
+      rows.push(
+        <div
+          key={d.path}
+          className={`tree-dir${collapsedDir ? ' collapsed' : ''}`}
+          style={{ paddingLeft: 10 + depth * 12 }}
+          onClick={() => toggleDir(d.path)}
+          title={d.path}
+        >
+          <span className="caret">▼</span>
+          <span className="tree-dir-name">{d.name}</span>
+          <span className="count">{countFiles(d)}</span>
+        </div>,
+      );
+      if (!collapsedDir) rows.push(...renderTree(d, depth + 1));
+    });
+    node.files.forEach((f) => {
+      // 行内只显示「相对当前目录」的文件名（前缀已由目录层级表达），完整路径放在 title
+      const label = node.path && f.path.startsWith(node.path) ? f.path.slice(node.path.length) : f.path;
+      rows.push(
+        <div
+          key={f.path}
+          className={`tree-file${f.path === selectedPath ? ' selected' : ''}${
+            flatPaths[kbIndex] === f.path ? ' kb-active' : ''
+          }`}
+          style={{ paddingLeft: 22 + depth * 12 }}
+          onClick={() => onSelect(f.path)}
+          title={f.path}
+        >
+          <span className="file-icon">M↓</span>
+          <span className={`file-name${f.role === 'CORE' ? ' core' : ''}`}>{highlight(label, q)}</span>
+          {f.role === 'META' && <span className="meta-dot" title="META 文件，修改需谨慎" />}
+          {f.lint_warnings > 0 && (
+            <span className="warn-dot" title={`${f.lint_warnings} 条 lint 警告`} />
+          )}
+          <span className="file-size">{formatBytes(f.size_bytes)}</span>
+        </div>,
+      );
+    });
+    return rows;
+  };
+
   return (
     <>
       <div className="pane-header">
         <span className="pane-header-title">{agentId ? agentId : '文件'}</span>
         {agentId && (
-          <span className="filetree-tools">
-            <button type="button" className="tree-tool" onClick={onCreate} title="新建文档">
-              ＋ 新建
-            </button>
-            <button
-              type="button"
-              className="tree-tool"
-              disabled={!selectedPath}
-              onClick={() => selectedPath && onDelete(selectedPath)}
-              title={selectedPath ? `删除 ${selectedPath}（移入回收站）` : '先在下方选择一个文件'}
-            >
-              删除
-            </button>
-          </span>
+          <PaneTools
+            onCreate={onCreate}
+            createHint="新建文档（文件名可含子目录，如 notes/周报.md）"
+            onDelete={selectedPath ? () => onDelete(selectedPath) : undefined}
+            deleteHint={
+              selectedPath ? `删除 ${selectedPath}（移入回收站）` : '先在下方选择一个文件'
+            }
+          />
         )}
       </div>
 
@@ -230,26 +366,8 @@ export function FileTree({
                   </span>
                   <span className="count">{group.items.length || roleFiles.length}</span>
                 </div>
-                {group.items.map((f) => (
-                  <div
-                    key={f.path}
-                    className={`tree-file${f.path === selectedPath ? ' selected' : ''}${
-                      flatPaths[kbIndex] === f.path ? ' kb-active' : ''
-                    }`}
-                    onClick={() => onSelect(f.path)}
-                    title={f.path}
-                  >
-                    <span className="file-icon">M↓</span>
-                    <span className={`file-name${f.role === 'CORE' ? ' core' : ''}`}>
-                      {highlight(f.path, q)}
-                    </span>
-                    {f.role === 'META' && <span className="meta-dot" title="META 文件，修改需谨慎" />}
-                    {f.lint_warnings > 0 && (
-                      <span className="warn-dot" title={`${f.lint_warnings} 条 lint 警告`} />
-                    )}
-                    <span className="file-size">{formatBytes(f.size_bytes)}</span>
-                  </div>
-                ))}
+                {/* 组内按目录树渲染：memory/ 下的子目录显示为可折叠的目录行 */}
+                {group.tree && renderTree(group.tree, 0)}
               </div>
             );
           })

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { DailyStandardizerPanel } from '../components/DailyStandardizerPanel';
+import { SlidingIndicator } from '../components/SlidingIndicator';
 import { SummaryPanel } from '../components/SummaryPanel';
+import { useSlidingIndicator } from '../hooks/useSlidingIndicator';
 import type { AgentInfo } from '../types';
 
 export type MemoryTab = 'daily' | 'summary';
@@ -18,10 +20,13 @@ interface MemoryPageProps {
  */
 export function MemoryPage({ agents, initialTab }: MemoryPageProps) {
   const [tab, setTab] = useState<MemoryTab>(initialTab ?? 'daily');
+  // 二级菜单的滑动下划线（与一级导航同一套动效）
+  const tabIndicator = useSlidingIndicator(tab, '.page-tab.active', 'x');
 
   return (
     <div className="page">
-      <div className="page-tabs">
+      <div className="page-tabs" ref={tabIndicator.containerRef}>
+        <SlidingIndicator axis="x" variant="tab" box={tabIndicator.box} ready={tabIndicator.ready} />
         {(
           [
             ['daily', '日志标准化'],

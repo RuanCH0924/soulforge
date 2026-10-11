@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { CrossEditModal } from '../components/CrossEditModal';
 import { DiffModal } from '../components/DiffModal';
 import { PresetModal } from '../components/PresetModal';
+import { SlidingIndicator } from '../components/SlidingIndicator';
 import { SuperSyncPanel } from '../components/SuperSyncPanel';
 import { SyncModal } from '../components/SyncModal';
+import { useSlidingIndicator } from '../hooks/useSlidingIndicator';
 import type { AgentInfo } from '../types';
 
 export type ToolsTab = 'sync' | 'diff' | 'cross-edit' | 'presets';
@@ -33,9 +35,14 @@ export function ToolsPage({
   const [tab, setTab] = useState<ToolsTab>(initialTab ?? 'sync');
   const [syncMode, setSyncMode] = useState<SyncMode>('normal');
 
+  // 二级菜单的滑动动效：顶部页签用下划线、模式分段控件用底色块（与一级导航同一套机制）
+  const tabIndicator = useSlidingIndicator(tab, '.page-tab.active', 'x');
+  const modeIndicator = useSlidingIndicator(syncMode, '.mode-toggle button.active', 'x');
+
   return (
     <div className="page">
-      <div className="page-tabs">
+      <div className="page-tabs" ref={tabIndicator.containerRef}>
+        <SlidingIndicator axis="x" variant="tab" box={tabIndicator.box} ready={tabIndicator.ready} />
         {(
           [
             ['sync', '同步'],
@@ -57,7 +64,13 @@ export function ToolsPage({
         {tab === 'sync' && (
           <>
             <div className="sync-mode-bar">
-              <div className="mode-toggle" role="group" aria-label="同步模式">
+              <div className="mode-toggle" role="group" aria-label="同步模式" ref={modeIndicator.containerRef}>
+                <SlidingIndicator
+                  axis="x"
+                  variant="seg"
+                  box={modeIndicator.box}
+                  ready={modeIndicator.ready}
+                />
                 <button
                   type="button"
                   className={syncMode === 'normal' ? 'active' : ''}

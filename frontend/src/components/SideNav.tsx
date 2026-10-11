@@ -1,4 +1,6 @@
 import type { AppRoute } from '../hooks/useHashRoute';
+import { useSlidingIndicator } from '../hooks/useSlidingIndicator';
+import { SlidingIndicator } from './SlidingIndicator';
 
 type NavIconName = 'workbench' | 'tools' | 'memory' | 'data' | 'settings';
 
@@ -91,8 +93,16 @@ function NavIcon({ name }: { name: NavIconName }) {
 
 /** 左侧全局导航（P2）：固定 4 项，替代顶栏 12+ 入口 */
 export function SideNav({ route, onNavigate }: SideNavProps) {
+  // 活动指示器：一级导航的滑动块（与二级菜单共用同一套机制与动效）
+  const { containerRef, box, ready } = useSlidingIndicator<HTMLElement>(
+    route,
+    '.side-nav-item.active',
+    'y',
+  );
+
   return (
-    <nav className="side-nav" aria-label="主导航">
+    <nav className="side-nav" aria-label="主导航" ref={containerRef}>
+      <SlidingIndicator axis="y" variant="nav" box={box} ready={ready} />
       {NAV.map((n) => (
         <button
           key={n.route}

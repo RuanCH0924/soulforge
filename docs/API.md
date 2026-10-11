@@ -23,7 +23,7 @@
 ```json
 {
   "data": { ... },
-  "meta": { "timestamp": 1754478710, "version": "0.5.6" }
+  "meta": { "timestamp": 1754478710, "version": "0.5.7" }
 }
 ```
 
@@ -1193,7 +1193,7 @@ python super_sync.py --once        # 只执行一轮（自检）
 
 ```json
 {
-  "data": { "status": "ok", "version": "0.5.6" }
+  "data": { "status": "ok", "version": "0.5.7" }
 }
 ```
 

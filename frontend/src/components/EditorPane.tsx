@@ -3,13 +3,16 @@ import type { OnMount } from '@monaco-editor/react';
 import { KeyCode, KeyMod, MarkerSeverity, Selection, editor as monacoEditor } from 'monaco-editor';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
+import { usePresence } from '../hooks/usePresence';
 import { useSettings } from '../hooks/useSettings';
+import { useSlidingIndicator } from '../hooks/useSlidingIndicator';
 import { useToast } from '../hooks/useToast';
 import type { FileContent, LintWarning } from '../types';
 import { formatClock } from '../utils/format';
 import { scanHeadings } from '../utils/markdown';
 import '../monaco'; // 本地化加载 monaco（不依赖 CDN，避免加载转圈）
 import { MarkdownPreview } from './MarkdownPreview';
+import { SlidingIndicator } from './SlidingIndicator';
 
 type MonacoEditor = Parameters<OnMount>[0];
 type EditorMode = 'edit' | 'preview';
@@ -19,6 +22,9 @@ const VIEW_MODE_KEY = 'soulforge.editor.view';
 
 /** 文档 token 估算的提示阈值（超过则状态条转为警告色） */
 const TOKEN_WARN_THRESHOLD = 2000;
+
+/** 侧栏面板退场时长（ms）：与 global.css 里 .lint-panel / .outline-panel 的 .is-closing 过渡一致 */
+const PANEL_EXIT_MS = 140;
 
 interface EditorPaneProps {
   agentId: string | null;
@@ -119,8 +125,14 @@ export function EditorPane({
   const [linting, setLinting] = useState(false);
   const [warnings, setWarnings] = useState<LintWarning[]>([]);
   const [mode, setMode] = useState<EditorMode>(loadViewMode);
+  // 二级菜单的滑动底色块（与一级导航同一套动效）
+  const modeIndicator = useSlidingIndicator(mode, '.mode-toggle button.active', 'x');
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [cursor, setCursor] = useState({ line: 1, column: 1, selected: 0 });
+
+  /** 侧栏面板退场：卸载前先播 140ms 过渡（开关本身仍是 lintOpen / outlineOpen） */
+  const outlinePresence = usePresence(outlineOpen, PANEL_EXIT_MS);
+  const lintPresence = usePresence(lintOpen, PANEL_EXIT_MS);
 
   const modeRef = useRef<EditorMode>(mode);
   useEffect(() => {
@@ -159,7 +171,9 @@ export function EditorPane({
     const heads = previewHostRef.current?.querySelectorAll('h1, h2, h3, h4, h5, h6');
     const el = heads?.[index];
     if (el instanceof HTMLElement) {
-      el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      // 尊重系统「减少动态效果」：JS 显式 behavior:"smooth" 不受 CSS scroll-behavior 约束，必须自己判断
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      el.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
       return;
     }
     pendingJumpRef.current = line;
@@ -374,7 +388,8 @@ export function EditorPane({
         >
           大纲
         </button>
-        <div className="mode-toggle" role="tablist" aria-label="编辑器模式">
+        <div className="mode-toggle" role="tablist" aria-label="编辑器模式" ref={modeIndicator.containerRef}>
+          <SlidingIndicator axis="x" variant="seg" box={modeIndicator.box} ready={modeIndicator.ready} />
           <button
             type="button"
             className={mode === 'edit' ? 'active' : ''}
@@ -440,8 +455,8 @@ export function EditorPane({
           <MarkdownPreview markdown={content} onChange={onChange} hostRef={previewHostRef} />
         )}
 
-        {outlineOpen && (
-          <div className="outline-panel">
+        {outlinePresence.mounted && (
+          <div className={`outline-panel${outlinePresence.closing ? ' is-closing' : ''}`}>
             <div className="lint-panel-header">
               <span>文档大纲{outline.length > 0 ? `（${outline.length}）` : ''}</span>
               <button className="btn btn-ghost btn-sm" onClick={() => setOutlineOpen(false)}>
@@ -467,8 +482,8 @@ export function EditorPane({
           </div>
         )}
 
-        {lintOpen && (
-          <div className="lint-panel">
+        {lintPresence.mounted && (
+          <div className={`lint-panel${lintPresence.closing ? ' is-closing' : ''}`}>
             <div className="lint-panel-header">
               <span>Lint 检查{warnings.length > 0 ? `（${warnings.length} 条警告）` : ''}</span>
               <span style={{ display: 'flex', gap: 6, flex: 'none' }}>
